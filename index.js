@@ -24,8 +24,7 @@ Parli sempre in italiano, con tono gentile, sintetico e professionale.
 Sei al telefono, quindi:
 - le tue risposte devono essere brevi (massimo 2 frasi, 5–7 secondi di audio)
 - non fare monologhi, vai dritta al punto
-- alla fine di quasi ogni risposta fai una domanda chiara per far avanzare la conversazione,
-  TRANNENEL CASO in cui la prenotazione sia già confermata.
+- alla fine di quasi ogni risposta fai una domanda chiara per far avanzare la conversazione.
 
 CONTESTO:
 L’obiettivo principale è gestire prenotazioni:
@@ -62,16 +61,10 @@ Devi SEMPRE rispondere in questo formato JSON:
 Regole:
 - "reply_text" è la frase naturale che dirai al telefono.
 - "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione.
-- QUANDO "action" = "create_reservation":
-  -> "reply_text" deve essere SOLO una frase di conferma della prenotazione,
-     SENZA aggiungere domande finali (es. niente "Hai altre richieste?" o simili).
-  -> Esempio: "Perfetto Luca, la tua prenotazione è confermata per domani alle 20:00 per 2 persone. Ti aspettiamo."
 - In tutti gli altri casi usa l’action corrispondente al passo successivo (es. ask_time, ask_people…).
 - Se il cliente chiede solo informazioni (es. sul pesce o sui prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
 - Non aggiungere mai altro fuori dal JSON. Solo JSON valido.
 `;
-
-
 
 // Stato in memoria per ogni chiamata (CallSid -> conversazione)
 const conversations = new Map();
@@ -121,7 +114,7 @@ async function sendToCalendar(payload) {
   return data;
 }
 
-// Chiamata a GPT usando direttamente l'endpoint HTTP (come nel curl)
+// Chiamata a GPT usando l'endpoint HTTP chat/completions
 async function askGiulia(callId, userText) {
   const apiKey = process.env.OPENAI_API_KEY;
 
@@ -147,8 +140,8 @@ async function askGiulia(callId, userText) {
     },
     body: JSON.stringify({
       model: "gpt-5-nano",
-      messages: convo.messages
-      // ⚠️ niente temperature: gpt-5-nano non supporta valori diversi dal default
+      messages: convo.messages,
+      temperature: 0.4,
     }),
   });
 
@@ -199,9 +192,7 @@ app.post("/calendar", async (req, res) => {
     return res.status(200).json({ success: true, fromAppsScript: data });
   } catch (error) {
     console.error("Errore /calendar:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -219,8 +210,8 @@ app.post("/twilio", async (req, res) => {
   // ---- Modalità debug via curl (JSON in / out) ----
   if (isDebug) {
     try {
-      const receptionist = await askReceptionist(callId, text.trim());
-      return res.status(200).json(receptionist);
+      const giulia = await askGiulia(callId, text.trim());
+      return res.status(200).json(giulia);
     } catch (error) {
       console.error("Errore /twilio debug:", error);
       return res.status(500).json({
@@ -235,8 +226,7 @@ app.post("/twilio", async (req, res) => {
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
     const welcomeText =
-      `Ciao, sono ${RECEPTIONIST_NAME} di ${RESTAURANT_NAME}. ` +
-      `Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.`;
+      "Ciao, sono Giulia, la receptionist del ristorante. Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.";
 
     const twiml = `
       <Response>
@@ -257,14 +247,14 @@ app.post("/twilio", async (req, res) => {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
 
-    const receptionist = await askReceptionist(callId, userText);
+    const giulia = await askGiulia(callId, userText);
     const replyText =
-      receptionist.reply_text ||
+      giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
     // Se abbiamo tutto per creare una prenotazione, chiamiamo il Calendar
-    if (receptionist.action === "create_reservation" && receptionist.reservation) {
-      const { date, time, people, name } = receptionist.reservation;
+    if (giulia.action === "create_reservation" && giulia.reservation) {
+      const { date, time, people, name } = giulia.reservation;
 
       if (date && time && people && name) {
         try {
@@ -274,51 +264,6 @@ app.post("/twilio", async (req, res) => {
             data: date,
             ora: time,
           });
-          console.log("✅ Prenotazione creata:", receptionist.reservation);
-        } catch (calErr) {
-          console.error("❌ Errore nella creazione prenotazione:", calErr);
-        }
-      }
-    }
-
-    const shouldHangup = receptionist.action === "create_reservation";
-
-    let twiml;
-    if (shouldHangup) {
-      twiml = `
-        <Response>
-          <Say language="it-IT">${escapeXml(replyText)}</Say>
-          <Hangup/>
-        </Response>
-      `.trim();
-    } else {
-      twiml = `
-        <Response>
-          <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
-            <Say language="it-IT">${escapeXml(replyText)}</Say>
-          </Gather>
-          <Say language="it-IT">
-            Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie.
-          </Say>
-        </Response>
-      `.trim();
-    }
-
-    return res.status(200).type("text/xml").send(twiml);
-  } catch (error) {
-    console.error("Errore generale /twilio:", error);
-    const errorTwiml = `
-      <Response>
-        <Say language="it-IT">
-          Si è verificato un errore del server. Ti chiediamo di richiamare più tardi.
-        </Say>
-        <Hangup/>
-      </Response>
-    `.trim();
-    return res.status(500).type("text/xml").send(errorTwiml);
-  }
-});
-
           console.log("✅ Prenotazione creata da Giulia:", giulia.reservation);
         } catch (calErr) {
           console.error("❌ Errore nella creazione prenotazione:", calErr);
@@ -339,7 +284,7 @@ app.post("/twilio", async (req, res) => {
     } else {
       twiml = `
         <Response>
-          <Gather input="speech" action="${BASE_URL}/twilio" method="POST">
+          <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
             <Say language="it-IT">${escapeXml(replyText)}</Say>
           </Gather>
           <Say language="it-IT">
