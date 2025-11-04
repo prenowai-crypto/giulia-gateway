@@ -241,11 +241,13 @@ app.post("/calendar", async (req, res) => {
 
 // ---------- /twilio (voce + test debug) ----------
 app.post("/twilio", async (req, res) => {
-  const { CallSid, SpeechResult, text } = req.body || {};
+  // 👇 AGGIUNTO From per avere il numero chiamante
+  const { CallSid, SpeechResult, text, From } = req.body || {};
   const isDebug = !!text && !SpeechResult;
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
   console.log("📞 /twilio body:", req.body);
+  console.log("📲 Numero chiamante (From):", From);
 
   // ---- Modalità debug via curl (JSON in / out) ----
   if (isDebug) {
@@ -303,6 +305,7 @@ app.post("/twilio", async (req, res) => {
           persone: people,
           data: date,
           ora: time,
+          telefono: From, // 👈 PASSIAMO IL NUMERO A APPS SCRIPT
         })
           .then((data) => {
             console.log("✅ Prenotazione creata:", {
