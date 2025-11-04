@@ -5,7 +5,6 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
-import OpenAI from "openai";
 
 const app = express();
 
@@ -17,11 +16,6 @@ const APPS_SCRIPT_URL =
 
 // URL pubblico di questo server su Render
 const BASE_URL = "https://giulia-gateway.onrender.com";
-
-// Client OpenAI (usa la chiave messa in Environment su Render)
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 // Prompt "di sistema" di Giulia
 const SYSTEM_PROMPT = `
@@ -120,8 +114,15 @@ async function sendToCalendar(payload) {
   return data;
 }
 
-// Chiamata a GPT per una certa conversazione
+// Chiamata a GPT usando direttamente l'endpoint HTTP (come nel curl)
 async function askGiulia(callId, userText) {
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    console.error("❌ Manca OPENAI_API_KEY nelle Environment Variables di Render");
+    throw new Error("OPENAI_API_KEY non impostata");
+  }
+
   let convo = conversations.get(callId);
   if (!convo) {
     convo = {
@@ -131,20 +132,34 @@ async function askGiulia(callId, userText) {
 
   convo.messages.push({ role: "user", content: userText });
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5-nano", // modello economico; puoi cambiarlo se vuoi più qualità
-    messages: convo.messages,
-    temperature: 0.4,
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-5-nano",
+      messages: convo.messages,
+      temperature: 0.4,
+    }),
   });
 
-  const raw = completion.choices[0]?.message?.content?.trim() || "";
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("❌ Errore dalla API OpenAI:", response.status, errorText);
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const raw = data.choices?.[0]?.message?.content?.trim() || "";
   console.log("🧠 Risposta raw da GPT:", raw);
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    console.error("❌ JSON non valido, uso fallback:", e);
+    console.error("❌ JSON non valido restituito da GPT, uso fallback:", e);
     parsed = {
       reply_text:
         "Scusa, c'è stato un problema tecnico, puoi ripetere per favore?",
@@ -187,7 +202,6 @@ app.post("/calendar", async (req, res) => {
 //
 // - Se viene chiamato da Twilio: usa CallSid + SpeechResult
 // - Se lo chiami tu via curl con JSON { "text": "..." } → modalità debug (risposta JSON)
-// -----------------------------
 app.post("/twilio", async (req, res) => {
   const { CallSid, SpeechResult, text } = req.body || {};
   const isDebug = !!text && !SpeechResult;
@@ -202,9 +216,10 @@ app.post("/twilio", async (req, res) => {
       return res.status(200).json(giulia);
     } catch (error) {
       console.error("Errore /twilio debug:", error);
-      return res
-        .status(500)
-        .json({ error: "Errore interno chiamando GPT" });
+      return res.status(500).json({
+        error: "Errore interno chiamando GPT",
+        details: error.message,
+      });
     }
   }
 
