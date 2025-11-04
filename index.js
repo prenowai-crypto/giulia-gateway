@@ -1,5 +1,5 @@
 // ===============================
-// Giulia Gateway - GPT-5 + Calendar
+// Giulia Gateway - GPT + Calendar
 // ===============================
 
 import express from "express";
@@ -10,16 +10,20 @@ import OpenAI from "openai";
 const app = express();
 
 // ---------- CONFIG ----------
+
+// Web App di Google Apps Script per il Calendar
 const APPS_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMYLD4wfNopBN61SZRs46PfZFRs3Bn8kZMWPEgW8k_PWicCtj47Xfzy12vrCjWNqkRdA/exec";
 
+// URL pubblico di questo server su Render
 const BASE_URL = "https://giulia-gateway.onrender.com";
 
+// Client OpenAI (usa la chiave messa in Environment su Render)
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// prompt di Giulia
+// Prompt "di sistema" di Giulia
 const SYSTEM_PROMPT = `
 Sei Giulia, la receptionist di un ristorante italiano.
 Parli sempre in italiano, con tono gentile, sintetico e professionale.
@@ -68,7 +72,7 @@ Regole:
 - Non aggiungere mai altro fuori dal JSON. Solo JSON valido.
 `;
 
-// stato in memoria per ogni chiamata
+// Stato in memoria per ogni chiamata (CallSid -> conversazione)
 const conversations = new Map();
 
 // ---------- MIDDLEWARE ----------
@@ -78,7 +82,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ---------- HELPERS ----------
 
-// escape per XML Twilio
+// Escape per testo dentro XML (TwiML)
 function escapeXml(unsafe = "") {
   return unsafe
     .replace(/&/g, "&amp;")
@@ -88,7 +92,7 @@ function escapeXml(unsafe = "") {
     .replace(/'/g, "&apos;");
 }
 
-// manda i dati al Calendar via Apps Script
+// Invio dati a Google Apps Script per creare evento su Calendar
 async function sendToCalendar(payload) {
   console.log("📅 Invio dati a Apps Script:", payload);
 
@@ -116,7 +120,7 @@ async function sendToCalendar(payload) {
   return data;
 }
 
-// chiama GPT-5 per una certa chiamata
+// Chiamata a GPT per una certa conversazione
 async function askGiulia(callId, userText) {
   let convo = conversations.get(callId);
   if (!convo) {
@@ -128,7 +132,7 @@ async function askGiulia(callId, userText) {
   convo.messages.push({ role: "user", content: userText });
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4.1-mini", // puoi cambiare modello se vuoi
+    model: "gpt-5-nano", // modello economico; puoi cambiarlo se vuoi più qualità
     messages: convo.messages,
     temperature: 0.4,
   });
@@ -165,7 +169,7 @@ app.get("/", (req, res) => {
   res.status(200).send("✅ Giulia Gateway è attiva e funzionante su Render!");
 });
 
-// ---------- /calendar (REST) ----------
+// ---------- /calendar (REST per altri canali) ----------
 app.post("/calendar", async (req, res) => {
   try {
     console.log("📩 Richiesta su /calendar:", req.body);
@@ -179,12 +183,32 @@ app.post("/calendar", async (req, res) => {
   }
 });
 
-// ---------- /twilio (voce con GPT) ----------
+// ---------- /twilio (voce + test debug) ----------
+//
+// - Se viene chiamato da Twilio: usa CallSid + SpeechResult
+// - Se lo chiami tu via curl con JSON { "text": "..." } → modalità debug (risposta JSON)
+// -----------------------------
 app.post("/twilio", async (req, res) => {
-  const { CallSid, SpeechResult } = req.body || {};
-  const callId = CallSid || "unknown-call";
+  const { CallSid, SpeechResult, text } = req.body || {};
+  const isDebug = !!text && !SpeechResult;
+  const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
   console.log("📞 /twilio body:", req.body);
+
+  // ---- Modalità debug via curl (JSON in / out) ----
+  if (isDebug) {
+    try {
+      const giulia = await askGiulia(callId, text.trim());
+      return res.status(200).json(giulia);
+    } catch (error) {
+      console.error("Errore /twilio debug:", error);
+      return res
+        .status(500)
+        .json({ error: "Errore interno chiamando GPT" });
+    }
+  }
+
+  // ---- Flusso normale Twilio (voce) ----
 
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
@@ -234,7 +258,6 @@ app.post("/twilio", async (req, res) => {
       }
     }
 
-    // Se l'azione è "create_reservation" chiudiamo la chiamata dopo la conferma
     const shouldHangup = giulia.action === "create_reservation";
 
     let twiml;
@@ -246,7 +269,6 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
     } else {
-      // altrimenti restiamo in loop con Gather per la prossima frase
       twiml = `
         <Response>
           <Gather input="speech" action="${BASE_URL}/twilio" method="POST">
@@ -279,4 +301,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server attivo sulla porta ${PORT}`);
 });
-
