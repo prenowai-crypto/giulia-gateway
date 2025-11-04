@@ -1,6 +1,10 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
+// ===============================
+// Giulia Gateway - v1.0 (Render Ready, ESM format)
+// ===============================
+
+import express from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
 
 const app = express();
 
