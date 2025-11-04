@@ -194,6 +194,26 @@ async function askGiulia(callId, userText) {
     };
   }
 
+  // Rete di sicurezza: assicuriamoci che i campi base esistano sempre
+  if (!parsed || typeof parsed !== "object") {
+    parsed = {};
+  }
+  if (typeof parsed.reply_text !== "string" || !parsed.reply_text.trim()) {
+    parsed.reply_text =
+      "Scusa, non ho capito bene. Puoi ripetere per favore?";
+  }
+  if (!parsed.action) {
+    parsed.action = "none";
+  }
+  if (!parsed.reservation || typeof parsed.reservation !== "object") {
+    parsed.reservation = {
+      date: null,
+      time: null,
+      people: null,
+      name: null,
+    };
+  }
+
   convo.messages.push({ role: "assistant", content: raw });
   conversations.set(callId, convo);
 
@@ -202,7 +222,9 @@ async function askGiulia(callId, userText) {
 
 // ---------- ROUTE DI TEST ----------
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Receptionist AI Gateway è attivo e funzionante su Render!");
+  res
+    .status(200)
+    .send("✅ Receptionist AI Gateway è attivo e funzionante su Render!");
 });
 
 // ---------- /calendar (REST per altri canali) ----------
@@ -218,9 +240,6 @@ app.post("/calendar", async (req, res) => {
 });
 
 // ---------- /twilio (voce + test debug) ----------
-//
-// - Se viene chiamato da Twilio: usa CallSid + SpeechResult
-// - Se lo chiami tu via curl con JSON { "text": "..." } → modalità debug (risposta JSON)
 app.post("/twilio", async (req, res) => {
   const { CallSid, SpeechResult, text } = req.body || {};
   const isDebug = !!text && !SpeechResult;
@@ -274,22 +293,31 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
-    // Se abbiamo tutto per creare una prenotazione, chiamiamo il Calendar
+    // 🔹 NON aspettiamo più il Calendar: lo lanciamo in background
     if (giulia.action === "create_reservation" && giulia.reservation) {
-      const { date, time, people, name } = giulia.reservation;
+      const { date, time, people, name } = giulia.reservation || {};
 
       if (date && time && people && name) {
-        try {
-          await sendToCalendar({
-            nome: name,
-            persone: people,
-            data: date,
-            ora: time,
+        sendToCalendar({
+          nome: name,
+          persone: people,
+          data: date,
+          ora: time,
+        })
+          .then((data) => {
+            console.log("✅ Prenotazione creata:", {
+              reservation: giulia.reservation,
+              fromAppsScript: data,
+            });
+          })
+          .catch((calErr) => {
+            console.error("❌ Errore nella creazione prenotazione:", calErr);
           });
-          console.log("✅ Prenotazione creata:", giulia.reservation);
-        } catch (calErr) {
-          console.error("❌ Errore nella creazione prenotazione:", calErr);
-        }
+      } else {
+        console.warn(
+          "⚠️ create_reservation senza dati completi:",
+          giulia.reservation
+        );
       }
     }
 
