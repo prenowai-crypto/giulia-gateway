@@ -219,8 +219,8 @@ app.post("/twilio", async (req, res) => {
   // ---- Modalità debug via curl (JSON in / out) ----
   if (isDebug) {
     try {
-      const giulia = await askGiulia(callId, text.trim());
-      return res.status(200).json(giulia);
+      const receptionist = await askReceptionist(callId, text.trim());
+      return res.status(200).json(receptionist);
     } catch (error) {
       console.error("Errore /twilio debug:", error);
       return res.status(500).json({
@@ -235,11 +235,12 @@ app.post("/twilio", async (req, res) => {
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
     const welcomeText =
-      "Ciao, sono Giulia, la receptionist del ristorante. Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.";
+      `Ciao, sono ${RECEPTIONIST_NAME} di ${RESTAURANT_NAME}. ` +
+      `Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.`;
 
     const twiml = `
       <Response>
-        <Gather input="speech" action="${BASE_URL}/twilio" method="POST">
+        <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
           <Say language="it-IT">${escapeXml(welcomeText)}</Say>
         </Gather>
         <Say language="it-IT">
@@ -256,14 +257,14 @@ app.post("/twilio", async (req, res) => {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
 
-    const giulia = await askGiulia(callId, userText);
+    const receptionist = await askReceptionist(callId, userText);
     const replyText =
-      giulia.reply_text ||
+      receptionist.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
     // Se abbiamo tutto per creare una prenotazione, chiamiamo il Calendar
-    if (giulia.action === "create_reservation" && giulia.reservation) {
-      const { date, time, people, name } = giulia.reservation;
+    if (receptionist.action === "create_reservation" && receptionist.reservation) {
+      const { date, time, people, name } = receptionist.reservation;
 
       if (date && time && people && name) {
         try {
@@ -273,6 +274,51 @@ app.post("/twilio", async (req, res) => {
             data: date,
             ora: time,
           });
+          console.log("✅ Prenotazione creata:", receptionist.reservation);
+        } catch (calErr) {
+          console.error("❌ Errore nella creazione prenotazione:", calErr);
+        }
+      }
+    }
+
+    const shouldHangup = receptionist.action === "create_reservation";
+
+    let twiml;
+    if (shouldHangup) {
+      twiml = `
+        <Response>
+          <Say language="it-IT">${escapeXml(replyText)}</Say>
+          <Hangup/>
+        </Response>
+      `.trim();
+    } else {
+      twiml = `
+        <Response>
+          <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
+            <Say language="it-IT">${escapeXml(replyText)}</Say>
+          </Gather>
+          <Say language="it-IT">
+            Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie.
+          </Say>
+        </Response>
+      `.trim();
+    }
+
+    return res.status(200).type("text/xml").send(twiml);
+  } catch (error) {
+    console.error("Errore generale /twilio:", error);
+    const errorTwiml = `
+      <Response>
+        <Say language="it-IT">
+          Si è verificato un errore del server. Ti chiediamo di richiamare più tardi.
+        </Say>
+        <Hangup/>
+      </Response>
+    `.trim();
+    return res.status(500).type("text/xml").send(errorTwiml);
+  }
+});
+
           console.log("✅ Prenotazione creata da Giulia:", giulia.reservation);
         } catch (calErr) {
           console.error("❌ Errore nella creazione prenotazione:", calErr);
