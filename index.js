@@ -1,5 +1,5 @@
 // ===============================
-// Giulia Gateway - GPT + Calendar
+// Receptionist AI Gateway - GPT + Calendar
 // ===============================
 
 import express from "express";
@@ -10,6 +10,10 @@ const app = express();
 
 // ---------- CONFIG ----------
 
+// Nome generico (puoi cambiarlo per ogni ristorante)
+const RECEPTIONIST_NAME = "Receptionist";
+const RESTAURANT_NAME = "Ristorante";
+
 // Web App di Google Apps Script per il Calendar
 const APPS_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMYLD4wfNopBN61SZRs46PfZFRs3Bn8kZMWPEgW8k_PWicCtj47Xfzy12vrCjWNqkRdA/exec";
@@ -17,14 +21,14 @@ const APPS_SCRIPT_URL =
 // URL pubblico di questo server su Render
 const BASE_URL = "https://giulia-gateway.onrender.com";
 
-// Prompt "di sistema" di Giulia
+// Prompt "di sistema" della receptionist
 const SYSTEM_PROMPT = `
-Sei Giulia, la receptionist di un ristorante italiano.
+Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${RESTAURANT_NAME}.
 Parli sempre in italiano, con tono gentile, sintetico e professionale.
 Sei al telefono, quindi:
 - le tue risposte devono essere brevi (massimo 2 frasi, 5–7 secondi di audio)
 - non fare monologhi, vai dritta al punto
-- alla fine di quasi ogni risposta fai una domanda chiara per far avanzare la conversazione.
+- alla fine di quasi ogni risposta fai una domanda chiara per far avanzare la conversazione, TRANNENELLA RISPOSTA FINALE.
 
 CONTESTO:
 L’obiettivo principale è gestire prenotazioni:
@@ -37,6 +41,16 @@ GESTIONE CORREZIONI:
 - Non costringerlo mai a ripartire da zero: aggiorna solo il pezzo che va cambiato.
 - Se il cliente cambia argomento a metà (ad esempio da prenotazione a menù):
   -> rispondi alla nuova domanda, poi riportalo gentilmente alla prenotazione.
+
+GESTIONE ORARI:
+- Se il cliente dice un orario senza specificare "di mattina" o "di pomeriggio"
+  (es. "alle 8", "otto e mezza", "alle 9"),
+  interpreta l'orario come SERATA, tra le 18:00 e le 23:00.
+- Esempi:
+  - "alle 8" -> "20:00:00"
+  - "alle 9" -> "21:00:00"
+- Se il cliente specifica chiaramente "di mattina" o "di pomeriggio",
+  rispetta quello che dice.
 
 STILE DI RISPOSTA:
 - Usa frasi corte, niente discorsi lunghi.
@@ -63,7 +77,15 @@ Regole:
 - "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione.
 - In tutti gli altri casi usa l’action corrispondente al passo successivo (es. ask_time, ask_people…).
 - Se il cliente chiede solo informazioni (es. sul pesce o sui prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
-- Non aggiungere mai altro fuori dal JSON. Solo JSON valido.
+
+RISPOSTA FINALE (create_reservation):
+- Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
+  - conferma chiaramente la prenotazione (data, ora, persone, nome)
+  - NON fare altre domande
+  - chiudi con un saluto tipo: "Ti aspettiamo, buona serata."
+- Non chiedere "confermi?" o domande simili nella risposta finale.
+
+Non aggiungere mai altro fuori dal JSON. Solo JSON valido.
 `;
 
 // Stato in memoria per ogni chiamata (CallSid -> conversazione)
@@ -180,7 +202,7 @@ async function askGiulia(callId, userText) {
 
 // ---------- ROUTE DI TEST ----------
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Giulia Gateway è attiva e funzionante su Render!");
+  res.status(200).send("✅ Receptionist AI Gateway è attivo e funzionante su Render!");
 });
 
 // ---------- /calendar (REST per altri canali) ----------
@@ -225,7 +247,8 @@ app.post("/twilio", async (req, res) => {
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
     const welcomeText =
-      "Ciao, sono Giulia, la receptionist del ristorante. Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.";
+      `Ciao, sono ${RECEPTIONIST_NAME}, la receptionist di ${RESTAURANT_NAME}. ` +
+      `Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.`;
 
     const twiml = `
       <Response>
@@ -263,7 +286,7 @@ app.post("/twilio", async (req, res) => {
             data: date,
             ora: time,
           });
-          console.log("✅ Prenotazione creata da Giulia:", giulia.reservation);
+          console.log("✅ Prenotazione creata:", giulia.reservation);
         } catch (calErr) {
           console.error("❌ Errore nella creazione prenotazione:", calErr);
         }
@@ -274,6 +297,7 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
+      // Risposta finale: conferma + saluto, poi chiusura
       twiml = `
         <Response>
           <Say language="it-IT">${escapeXml(replyText)}</Say>
@@ -281,6 +305,7 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
     } else {
+      // Continua la conversazione
       twiml = `
         <Response>
           <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
