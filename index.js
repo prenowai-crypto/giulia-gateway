@@ -141,7 +141,6 @@ async function askGiulia(callId, userText) {
     body: JSON.stringify({
       model: "gpt-5-nano",
       messages: convo.messages,
-      temperature: 0.4,
     }),
   });
 
