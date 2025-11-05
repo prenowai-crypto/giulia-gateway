@@ -132,7 +132,6 @@ function addClosingSalute(text = "") {
 
   if (hasItalianSalute || hasEnglishSalute) return text;
 
-  // Heuristica stupidella: se vede "tomorrow" / "pm" ecc → saluto in inglese
   if (/\b(tomorrow|pm|am|book|table)\b/i.test(t)) {
     return text + " Thank you, have a nice evening.";
   }
@@ -321,11 +320,12 @@ app.post("/calendar", async (req, res) => {
 // ---------- /twilio ----------
 app.post("/twilio", async (req, res) => {
   const { CallSid, SpeechResult, text, From } = req.body || {};
+  const { postFinal } = req.query || {};
   const isDebug = !!text && !SpeechResult;
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
   console.log("📞 /twilio body:", req.body);
-  console.log("📲 Numero chiamante (From):", From);
+  console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
 
   // ---- Modalità debug via curl (JSON in/out) ----
   if (isDebug) {
@@ -339,6 +339,23 @@ app.post("/twilio", async (req, res) => {
         details: error.message,
       });
     }
+  }
+
+  // ---- Fase dopo la chiusura prenotazione (finestra 5 secondi) ----
+  if (SpeechResult && postFinal === "1") {
+    const userText = SpeechResult.trim();
+    console.log("👤 Utente dopo prenotazione:", userText);
+
+    const goodbyeTwiml = `
+      <Response>
+        <Say language="it-IT">
+          ${escapeXml("Grazie a te, buona serata.")}
+        </Say>
+        <Hangup/>
+      </Response>
+    `.trim();
+
+    return res.status(200).type("text/xml").send(goodbyeTwiml);
   }
 
   // ---- Flusso normale Twilio (voce) ----
@@ -380,6 +397,7 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
+    // Se è una prenotazione finale, invia al Calendar
     if (giulia.action === "create_reservation" && giulia.reservation) {
       const { date, time, people, name } = giulia.reservation || {};
 
@@ -412,13 +430,26 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
-      // garantiamo un saluto finale e una piccola pausa prima di chiudere
+      // garantiamo un saluto finale e poi una finestra di 5 secondi in ascolto
       const finalReply = addClosingSalute(replyText);
 
       twiml = `
         <Response>
-          <Say language="it-IT">${escapeXml(finalReply)}</Say>
-          <Pause length="1" />
+          <Gather
+            input="speech"
+            language="it-IT"
+            action="${BASE_URL}/twilio?postFinal=1"
+            method="POST"
+            timeout="5"
+            speechTimeout="auto"
+          >
+            <Say language="it-IT" bargeIn="true">
+              ${escapeXml(finalReply)}
+            </Say>
+          </Gather>
+          <Say language="it-IT">
+            Grazie ancora, a presto.
+          </Say>
           <Hangup/>
         </Response>
       `.trim();
