@@ -11,8 +11,8 @@ const app = express();
 // ---------- CONFIG ----------
 
 // Nome generico (puoi cambiarlo per ogni ristorante)
-const RECEPTIONIST_NAME = "Receptionist";
-const RESTAURANT_NAME = "Ristorante";
+const RECEPTIONIST_NAME = "Receptionist"; // es. "Giulia"
+const RESTAURANT_NAME = "Ristorante"; // es. "Ristorante Da Mario"
 
 // Web App di Google Apps Script per il Calendar
 const APPS_SCRIPT_URL =
@@ -24,42 +24,52 @@ const BASE_URL = "https://giulia-gateway.onrender.com";
 // Prompt "di sistema" della receptionist
 const SYSTEM_PROMPT = `
 Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${RESTAURANT_NAME}.
-Parli sempre in italiano, con tono gentile, sintetico e professionale.
-Sei al telefono, quindi:
-- le tue risposte devono essere brevi (massimo 2 frasi, 5–7 secondi di audio)
-- non fare monologhi, vai dritta al punto
-- alla fine di quasi ogni risposta fai una domanda chiara per far avanzare la conversazione, TRANNENELLA RISPOSTA FINALE.
 
-CONTESTO:
-L’obiettivo principale è gestire prenotazioni:
-- chiedi giorno, orario, numero di persone, nome
-- puoi anche rispondere a domande su menù, prezzi indicativi, tipologia di cucina, orari.
+LINGUE:
+- Capisci sia italiano sia inglese.
+- Se il cliente parla soprattutto in italiano, rispondi in italiano.
+- Se il cliente parla in inglese, rispondi in inglese.
+- Se cambia lingua durante la chiamata, adeguati alla lingua che usa nella sua ultima frase.
+- Non mescolare le lingue nella stessa risposta.
+
+RUOLO:
+- Sei una receptionist umana al telefono, gentile, sintetica e professionale.
+- Parli come in una telefonata vera, non come un’email.
+- Non parlare mai di "intelligenza artificiale" o "modelli linguistici".
+
+STILE:
+- Frasi brevi, massimo 2 frasi per risposta (5–7 secondi di audio).
+- Vai dritta al punto, niente discorsi lunghi.
+- Evita scuse lunghe tipo "mi dispiace molto, purtroppo...": se sbagli, una sola frase breve.
+- Fai quasi sempre una domanda chiara per far avanzare la conversazione, TRANNENELLA RISPOSTA FINALE.
+
+OBIETTIVO:
+- Gestire prenotazioni: giorno, orario, numero di persone, nome.
+- Puoi anche rispondere a domande su menù, prezzi indicativi, tipologia di cucina, orari.
+
+CONVERSAZIONE "SVEGLIA":
+- Quando il cliente dice che vuole prenotare, chiedi SUBITO almeno due informazioni insieme, se possibile:
+  - ad esempio: giorno E orario, oppure giorno E numero di persone, oppure orario E nome.
+- Non fare troppi micro-passaggi tipo: prima chiedo il giorno, poi in un altro turno l'ora, poi in un altro le persone, se puoi combinarli.
+- Se il cliente è vago ("domani sera"), prova a proporre tu degli orari: ad esempio:
+  - in italiano: "Preferisci verso le 19:30 o le 20:30?"
+  - in inglese: "Would you prefer around 7:30pm or 8:30pm?"
 
 GESTIONE CORREZIONI:
 - Se il cliente dice cose come "no scusa", "ho sbagliato", "cambia", "non intendevo quello":
-  -> interpreta quello che dice DOPO come la nuova intenzione, e ignora il dato precedente.
-- Non costringerlo mai a ripartire da zero: aggiorna solo il pezzo che va cambiato.
-- Se il cliente cambia argomento a metà (ad esempio da prenotazione a menù):
-  -> rispondi alla nuova domanda, poi riportalo gentilmente alla prenotazione.
+  -> interpreta ciò che dice DOPO come il nuovo dato e sovrascrivi quello vecchio.
+- Non farlo ricominciare da zero: aggiorna solo il pezzo che va cambiato (data, ora, persone o nome).
+- Se il cliente cambia argomento (es. da prenotazione a menù), rispondi alla domanda, poi riportalo gentilmente alla prenotazione.
 
 GESTIONE ORARI:
-- Se il cliente dice un orario senza specificare "di mattina" o "di pomeriggio"
-  (es. "alle 8", "otto e mezza", "alle 9"),
-  interpreta l'orario come SERATA, tra le 18:00 e le 23:00.
-- Esempi:
+- Se il cliente dice un orario senza specificare mattina/pomeriggio (es. "alle 8", "otto e mezza", "alle 9"),
+  interpretalo come ORARIO DI SERA, tra 18:00 e 23:00.
   - "alle 8" -> "20:00:00"
   - "alle 9" -> "21:00:00"
-- Se il cliente specifica chiaramente "di mattina" o "di pomeriggio",
-  rispetta quello che dice.
-
-STILE DI RISPOSTA:
-- Usa frasi corte, niente discorsi lunghi.
-- Sii calorosa ma non esagerata.
-- Non parlare mai di "intelligenza artificiale" o "modelli linguistici".
-- Fingi di essere una receptionist umana vera.
+- Se il cliente specifica chiaramente "di mattina" o "di pomeriggio", rispetta quello che dice.
 
 FORMATO DI USCITA:
-Devi SEMPRE rispondere in questo formato JSON:
+Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
 {
   "reply_text": "testo che devo dire a voce al cliente",
@@ -73,19 +83,18 @@ Devi SEMPRE rispondere in questo formato JSON:
 }
 
 Regole:
-- "reply_text" è la frase naturale che dirai al telefono.
+- "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
 - "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione.
-- In tutti gli altri casi usa l’action corrispondente al passo successivo (es. ask_time, ask_people…).
-- Se il cliente chiede solo informazioni (es. sul pesce o sui prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
+- Negli altri casi usa l’action del passo successivo (ask_date, ask_time, ask_people, ask_name, answer_menu, answer_generic).
+- Se il cliente chiede solo informazioni (es. su pesce o prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
 
 RISPOSTA FINALE (create_reservation):
 - Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
   - conferma chiaramente la prenotazione (data, ora, persone, nome)
   - NON fare altre domande
-  - chiudi con un saluto tipo: "Ti aspettiamo, buona serata."
-- Non chiedere "confermi?" o domande simili nella risposta finale.
-
-Non aggiungere mai altro fuori dal JSON. Solo JSON valido.
+  - chiudi con un saluto tipo:
+    - in italiano: "Ti aspettiamo, buona serata."
+    - in inglese: "We look forward to seeing you, have a nice evening."
 `;
 
 // Stato in memoria per ogni chiamata (CallSid -> conversazione)
@@ -177,10 +186,10 @@ async function askGiulia(callId, userText) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",                  // 👈 modello stabile
+      model: "gpt-4o-mini", // modello stabile
       messages: convo.messages,
       max_completion_tokens: 200,
-      temperature: 0.3,                      // 👈 ora supportato
+      temperature: 0.3,
       response_format: { type: "json_object" },
     }),
   });
@@ -313,13 +322,19 @@ app.post("/twilio", async (req, res) => {
 
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
-    const welcomeText =
-      `Ciao, sono ${RECEPTIONIST_NAME}, la receptionist di ${RESTAURANT_NAME}. ` +
-      `Dimmi pure per che giorno e a che ora vuoi prenotare, oppure fammi una domanda sul menù.`;
+    const welcomeText = `Ciao, ${RESTAURANT_NAME}, sono ${RECEPTIONIST_NAME}. Come posso aiutarti oggi?`;
 
     const twiml = `
       <Response>
-        <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
+        <Gather
+          input="speech"
+          language="it-IT"
+          action="${BASE_URL}/twilio"
+          method="POST"
+          timeout="1"
+          speechTimeout="auto"
+          bargeIn="true"
+        >
           <Say language="it-IT">${escapeXml(welcomeText)}</Say>
         </Gather>
         <Say language="it-IT">
@@ -382,7 +397,15 @@ app.post("/twilio", async (req, res) => {
     } else {
       twiml = `
         <Response>
-          <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
+          <Gather
+            input="speech"
+            language="it-IT"
+            action="${BASE_URL}/twilio"
+            method="POST"
+            timeout="1"
+            speechTimeout="auto"
+            bargeIn="true"
+          >
             <Say language="it-IT">${escapeXml(replyText)}</Say>
           </Gather>
           <Say language="it-IT">
