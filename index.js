@@ -92,7 +92,7 @@ RISPOSTA FINALE (create_reservation):
 - Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
   - conferma chiaramente la prenotazione (data, ora, persone, nome)
   - NON fare altre domande
-  - chiudi con un saluto tipo:
+  - chiudi con un saluto finale, ad esempio:
     - in italiano: "Ti aspettiamo, buona serata."
     - in inglese: "We look forward to seeing you, have a nice evening."
 `;
@@ -112,9 +112,32 @@ function escapeXml(unsafe = "") {
   return unsafe
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+// Aggiunge un saluto finale se manca (per le risposte di chiusura)
+function addClosingSalute(text = "") {
+  const t = text.toLowerCase();
+
+  const hasItalianSalute =
+    t.includes("buona serata") ||
+    t.includes("a presto") ||
+    t.includes("grazie");
+
+  const hasEnglishSalute =
+    t.includes("have a nice") ||
+    t.includes("see you") ||
+    t.includes("thank you");
+
+  if (hasItalianSalute || hasEnglishSalute) return text;
+
+  // Heuristica stupidella: se vede "tomorrow" / "pm" ecc → saluto in inglese
+  if (/\b(tomorrow|pm|am|book|table)\b/i.test(t)) {
+    return text + " Thank you, have a nice evening.";
+  }
+
+  return text + " Ti aspettiamo, buona serata.";
 }
 
 // Invio dati a Google Apps Script per creare evento su Calendar
@@ -353,7 +376,7 @@ app.post("/twilio", async (req, res) => {
     console.log("👤 Utente dice:", userText);
 
     const giulia = await askGiulia(callId, userText);
-    const replyText =
+    let replyText =
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
@@ -389,9 +412,13 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
+      // garantiamo un saluto finale e una piccola pausa prima di chiudere
+      const finalReply = addClosingSalute(replyText);
+
       twiml = `
         <Response>
-          <Say language="it-IT">${escapeXml(replyText)}</Say>
+          <Say language="it-IT">${escapeXml(finalReply)}</Say>
+          <Pause length="1" />
           <Hangup/>
         </Response>
       `.trim();
