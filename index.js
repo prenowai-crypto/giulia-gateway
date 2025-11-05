@@ -341,25 +341,6 @@ app.post("/twilio", async (req, res) => {
     }
   }
 
-  // ---- Fase dopo la chiusura prenotazione (finestra 5 secondi) ----
-  if (SpeechResult && postFinal === "1") {
-    const userText = SpeechResult.trim();
-    console.log("👤 Utente dopo prenotazione:", userText);
-
-    const goodbyeTwiml = `
-      <Response>
-        <Say language="it-IT">
-          ${escapeXml("Grazie a te, buona serata.")}
-        </Say>
-        <Hangup/>
-      </Response>
-    `.trim();
-
-    return res.status(200).type("text/xml").send(goodbyeTwiml);
-  }
-
-  // ---- Flusso normale Twilio (voce) ----
-
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
     const welcomeText = `Ciao, ${RESTAURANT_NAME}, sono ${RECEPTIONIST_NAME}. Come posso aiutarti oggi?`;
@@ -387,7 +368,36 @@ app.post("/twilio", async (req, res) => {
     return res.status(200).type("text/xml").send(twiml);
   }
 
-  // Turni successivi: abbiamo SpeechResult -> chiediamo a GPT
+  // QUI abbiamo sempre uno SpeechResult
+
+  // ---- Finestra finale: se è solo un "grazie", chiudiamo gentili senza GPT ----
+  if (postFinal === "1") {
+    const userTextRaw = SpeechResult.trim();
+    const lower = userTextRaw.toLowerCase();
+    console.log("👤 Utente dopo prenotazione:", userTextRaw);
+
+    const isThanksOnly =
+      /grazie|thank you|thanks/.test(lower) &&
+      !/cambia|change|sposta|modifica|orario|time/.test(lower);
+
+    if (isThanksOnly) {
+      const goodbyeTwiml = `
+        <Response>
+          <Say language="it-IT">
+            ${escapeXml("Grazie a te, buona serata.")}
+          </Say>
+          <Hangup/>
+        </Response>
+      `.trim();
+
+      return res.status(200).type("text/xml").send(goodbyeTwiml);
+    }
+
+    // Se NON è solo un grazie (es. "puoi cambiare la prenotazione..."),
+    // continuiamo nel flusso normale e passiamo la frase a GPT.
+  }
+
+  // ---- Flusso normale Twilio (voce) ----
   try {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
