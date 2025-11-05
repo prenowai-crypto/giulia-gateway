@@ -136,6 +136,7 @@ async function sendToCalendar(payload) {
   return data;
 }
 
+// ---------- GPT: funzione ottimizzata ----------
 // Chiamata a GPT usando l'endpoint HTTP chat/completions
 async function askGiulia(callId, userText) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -152,7 +153,15 @@ async function askGiulia(callId, userText) {
     };
   }
 
+  // Aggiungiamo il messaggio dell’utente
   convo.messages.push({ role: "user", content: userText });
+
+  // 🔹 Limitiamo la cronologia: system + ultimi 6 messaggi
+  if (convo.messages.length > 8) {
+    const systemMsg = convo.messages[0];
+    const recent = convo.messages.slice(-7);
+    convo.messages = [systemMsg, ...recent];
+  }
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -163,6 +172,8 @@ async function askGiulia(callId, userText) {
     body: JSON.stringify({
       model: "gpt-5-nano",
       messages: convo.messages,
+      max_tokens: 200,
+      temperature: 0.3,
     }),
   });
 
@@ -214,6 +225,7 @@ async function askGiulia(callId, userText) {
     };
   }
 
+  // Salviamo la risposta della AI nella cronologia
   convo.messages.push({ role: "assistant", content: raw });
   conversations.set(callId, convo);
 
