@@ -144,11 +144,57 @@ function addClosingSalute(text = "") {
   return text + " Ti aspettiamo, buona serata.";
 }
 
-// Normalizza la data della prenotazione per il Calendar (fix anno 2023 -> anno corrente)
-function normalizeReservationForCalendar(reservation = {}) {
+// Prende da tutta la conversazione parole tipo "domani", "dopodomani", "stasera"
+function inferDateFromConversation(callId) {
+  const convo = conversations.get(callId);
+  if (!convo || !Array.isArray(convo.messages)) return null;
+
+  const allUserText = convo.messages
+    .filter((m) => m.role === "user")
+    .map((m) => (m.content || "").toLowerCase())
+    .join(" ");
+
+  let offsetDays = null;
+
+  if (allUserText.includes("dopodomani")) {
+    offsetDays = 2;
+  } else if (allUserText.includes("domani")) {
+    offsetDays = 1;
+  } else if (
+    allUserText.includes("stasera") ||
+    allUserText.includes("questa sera")
+  ) {
+    offsetDays = 0;
+  }
+
+  if (offsetDays === null) return null;
+
+  const now = new Date();
+  const target = new Date(now);
+  target.setDate(now.getDate() + offsetDays);
+
+  const yyyy = target.getFullYear();
+  const mm = String(target.getMonth() + 1).padStart(2, "0");
+  const dd = String(target.getDate()).padStart(2, "0");
+
+  const inferred = `${yyyy}-${mm}-${dd}`;
+  console.log("📆 Data inferita dalla conversazione:", inferred);
+  return inferred;
+}
+
+// Normalizza la data della prenotazione per il Calendar
+function normalizeReservationForCalendar(reservation = {}, callId) {
   let { date, time, people, name } = reservation;
 
-  if (typeof date === "string") {
+  // se il modello ha messo "null" come stringa, trattalo come null
+  if (date === "null") date = null;
+
+  // 1) se riusciamo a capire "oggi/domani/dopodomani", usiamo quella
+  const inferred = inferDateFromConversation(callId);
+  if (inferred) {
+    date = inferred;
+  } else if (typeof date === "string") {
+    // 2) altrimenti, fai almeno il fix dell'anno (2023 -> anno corrente)
     const parts = date.split("-");
     if (parts.length === 3) {
       let [y, m, d] = parts.map((p) => p.trim());
@@ -369,7 +415,7 @@ app.post("/twilio", async (req, res) => {
 
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
-    const welcomeText = `Ciao, ${RESTAURANT_NAME}, sono ${RECEPTIONIST_NAME}. Come posso aiutarti oggi?`;
+    const welcomeText = `Ciao, sono ${RECEPTIONIST_NAME} del ${RESTAURANT_NAME}. Come posso aiutarti oggi?`;
 
     const twiml = `
       <Response>
@@ -433,7 +479,10 @@ app.post("/twilio", async (req, res) => {
 
     // Se è una prenotazione finale, invia al Calendar
     if (giulia.action === "create_reservation" && giulia.reservation) {
-      const normalizedRes = normalizeReservationForCalendar(giulia.reservation);
+      const normalizedRes = normalizeReservationForCalendar(
+        giulia.reservation,
+        callId
+      );
       const { date, time, people, name } = normalizedRes;
 
       if (date && time && people && name) {
