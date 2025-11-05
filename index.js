@@ -61,6 +61,10 @@ GESTIONE CORREZIONI:
 - Non farlo ricominciare da zero: aggiorna solo il pezzo che va cambiato (data, ora, persone o nome).
 - Se il cliente cambia argomento (es. da prenotazione a menù), rispondi alla domanda, poi riportalo gentilmente alla prenotazione.
 
+NOME:
+- Se il cliente ti ha già detto chiaramente il nome (es. "mi chiamo Marco", "sono Gianfrancesco"), NON chiederlo di nuovo.
+- In quel caso usa direttamente quel nome nella prenotazione, senza ripetere la domanda "come ti chiami?".
+
 GESTIONE ORARI:
 - Se il cliente dice un orario senza specificare mattina/pomeriggio (es. "alle 8", "otto e mezza", "alle 9"),
   interpretalo come ORARIO DI SERA, tra 18:00 e 23:00.
@@ -92,6 +96,7 @@ RISPOSTA FINALE (create_reservation):
 - Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
   - conferma chiaramente la prenotazione (data, ora, persone, nome)
   - NON fare altre domande
+  - NON usare frasi tipo "va bene?", "confermi?", "sei d'accordo?".
   - chiudi con un saluto finale, ad esempio:
     - in italiano: "Ti aspettiamo, buona serata."
     - in inglese: "We look forward to seeing you, have a nice evening."
@@ -137,6 +142,27 @@ function addClosingSalute(text = "") {
   }
 
   return text + " Ti aspettiamo, buona serata.";
+}
+
+// Normalizza la data della prenotazione per il Calendar (fix anno 2023 -> anno corrente)
+function normalizeReservationForCalendar(reservation = {}) {
+  let { date, time, people, name } = reservation;
+
+  if (typeof date === "string") {
+    const parts = date.split("-");
+    if (parts.length === 3) {
+      let [y, m, d] = parts.map((p) => p.trim());
+      const yearNum = parseInt(y, 10);
+      const currentYear = new Date().getFullYear();
+
+      if (!isNaN(yearNum) && yearNum < currentYear) {
+        y = String(currentYear);
+      }
+      date = `${y}-${m}-${d}`;
+    }
+  }
+
+  return { date, time, people, name };
 }
 
 // Invio dati a Google Apps Script per creare evento su Calendar
@@ -368,9 +394,7 @@ app.post("/twilio", async (req, res) => {
     return res.status(200).type("text/xml").send(twiml);
   }
 
-  // QUI abbiamo sempre uno SpeechResult
-
-  // ---- Finestra finale: se è solo un "grazie", chiudiamo gentili senza GPT ----
+  // ---- Gestione finestra finale: solo "grazie" → saluto e chiudi ----
   if (postFinal === "1") {
     const userTextRaw = SpeechResult.trim();
     const lower = userTextRaw.toLowerCase();
@@ -393,8 +417,8 @@ app.post("/twilio", async (req, res) => {
       return res.status(200).type("text/xml").send(goodbyeTwiml);
     }
 
-    // Se NON è solo un grazie (es. "puoi cambiare la prenotazione..."),
-    // continuiamo nel flusso normale e passiamo la frase a GPT.
+    // se NON è solo un grazie (es. "posso spostare domani alle 20:30?")
+    // continuiamo nel flusso normale qui sotto, passando il testo a GPT
   }
 
   // ---- Flusso normale Twilio (voce) ----
@@ -409,7 +433,8 @@ app.post("/twilio", async (req, res) => {
 
     // Se è una prenotazione finale, invia al Calendar
     if (giulia.action === "create_reservation" && giulia.reservation) {
-      const { date, time, people, name } = giulia.reservation || {};
+      const normalizedRes = normalizeReservationForCalendar(giulia.reservation);
+      const { date, time, people, name } = normalizedRes;
 
       if (date && time && people && name) {
         sendToCalendar({
@@ -421,7 +446,7 @@ app.post("/twilio", async (req, res) => {
         })
           .then((data) =>
             console.log("✅ Prenotazione creata:", {
-              reservation: giulia.reservation,
+              reservation: normalizedRes,
               fromAppsScript: data,
             })
           )
@@ -431,7 +456,7 @@ app.post("/twilio", async (req, res) => {
       } else {
         console.warn(
           "⚠️ create_reservation senza dati completi:",
-          giulia.reservation
+          normalizedRes
         );
       }
     }
@@ -440,7 +465,7 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
-      // garantiamo un saluto finale e poi una finestra di 5 secondi in ascolto
+      // saluto finale + finestra 5 secondi per eventuali ultime richieste
       const finalReply = addClosingSalute(replyText);
 
       twiml = `
