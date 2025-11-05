@@ -172,8 +172,9 @@ async function askGiulia(callId, userText) {
     body: JSON.stringify({
       model: "gpt-5-nano",
       messages: convo.messages,
-      max_tokens: 200,
+      max_completion_tokens: 200, // 🔁 sostituito max_tokens
       temperature: 0.3,
+      response_format: { type: "json_object" }, // 👉 aiuta a restituire JSON valido
     }),
   });
 
