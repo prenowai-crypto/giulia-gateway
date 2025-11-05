@@ -105,6 +105,9 @@ RISPOSTA FINALE (create_reservation):
 // Stato in memoria per ogni chiamata (CallSid -> conversazione)
 const conversations = new Map();
 
+// Nuova mappa: lingua della chiamata per Twilio STT/TTS (CallSid -> "it-IT" | "en-US")
+const callLanguages = new Map();
+
 // ---------- MIDDLEWARE ----------
 app.use(cors());
 app.use(bodyParser.json());
@@ -119,6 +122,36 @@ function escapeXml(unsafe = "") {
     .replace(/</g, "&lt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+// Leggi la lingua corrente della chiamata (default: it-IT)
+function getCallLanguage(callId) {
+  return callLanguages.get(callId) || "it-IT";
+}
+
+// Imposta/aggiorna la lingua della chiamata
+function setCallLanguage(callId, lang) {
+  if (!callId) return;
+  callLanguages.set(callId, lang);
+}
+
+// Rileva se l’utente sta chiedendo di passare all’inglese
+function maybeSwitchToEnglish(callId, userText) {
+  const t = (userText || "").toLowerCase();
+
+  const wantsEnglish =
+    t.includes("do you speak english") ||
+    t.includes("can we speak english") ||
+    t.includes("speak in english") ||
+    t.includes("english please") ||
+    t.includes("in english") ||
+    t.includes("parli inglese") ||
+    t.includes("parla inglese") ||
+    t.includes("in inglese");
+
+  if (wantsEnglish) {
+    setCallLanguage(callId, "en-US");
+  }
 }
 
 // Aggiunge un saluto finale se manca (per le risposte di chiusura)
@@ -413,8 +446,10 @@ app.post("/twilio", async (req, res) => {
     }
   }
 
-  // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
+  // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto (default IT)
   if (!SpeechResult) {
+    // Imposta lingua di default per la chiamata
+    setCallLanguage(callId, "it-IT");
     const welcomeText = `Ciao, sono ${RECEPTIONIST_NAME} del ${RESTAURANT_NAME}. Come posso aiutarti oggi?`;
 
     const twiml = `
@@ -446,15 +481,24 @@ app.post("/twilio", async (req, res) => {
     const lower = userTextRaw.toLowerCase();
     console.log("👤 Utente dopo prenotazione:", userTextRaw);
 
+    // aggiorna lingua se in questo ultimo turno chiede inglese
+    maybeSwitchToEnglish(callId, userTextRaw);
+    const currentLang = getCallLanguage(callId);
+
     const isThanksOnly =
       /grazie|thank you|thanks/.test(lower) &&
       !/cambia|change|sposta|modifica|orario|time/.test(lower);
 
     if (isThanksOnly) {
+      const goodbyeText =
+        currentLang === "en-US"
+          ? "Thank you, have a nice evening."
+          : "Grazie a te, buona serata.";
+
       const goodbyeTwiml = `
         <Response>
-          <Say language="it-IT">
-            ${escapeXml("Grazie a te, buona serata.")}
+          <Say language="${currentLang}">
+            ${escapeXml(goodbyeText)}
           </Say>
           <Hangup/>
         </Response>
@@ -471,6 +515,11 @@ app.post("/twilio", async (req, res) => {
   try {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
+
+    // Se in questo turno chiede l’inglese, switchiamo Twilio su en-US da ora in poi
+    maybeSwitchToEnglish(callId, userText);
+    const currentLang = getCallLanguage(callId);
+    const sayLang = currentLang; // stessa lingua per la voce
 
     const giulia = await askGiulia(callId, userText);
     let replyText =
@@ -521,18 +570,22 @@ app.post("/twilio", async (req, res) => {
         <Response>
           <Gather
             input="speech"
-            language="it-IT"
+            language="${currentLang}"
             action="${BASE_URL}/twilio?postFinal=1"
             method="POST"
             timeout="5"
             speechTimeout="auto"
           >
-            <Say language="it-IT" bargeIn="true">
+            <Say language="${sayLang}" bargeIn="true">
               ${escapeXml(finalReply)}
             </Say>
           </Gather>
-          <Say language="it-IT">
-            Grazie ancora, a presto.
+          <Say language="${sayLang}">
+            ${escapeXml(
+              currentLang === "en-US"
+                ? "Thank you again, goodbye."
+                : "Grazie ancora, a presto."
+            )}
           </Say>
           <Hangup/>
         </Response>
@@ -542,18 +595,22 @@ app.post("/twilio", async (req, res) => {
         <Response>
           <Gather
             input="speech"
-            language="it-IT"
+            language="${currentLang}"
             action="${BASE_URL}/twilio"
             method="POST"
             timeout="5"
             speechTimeout="auto"
           >
-            <Say language="it-IT" bargeIn="true">
+            <Say language="${sayLang}" bargeIn="true">
               ${escapeXml(replyText)}
             </Say>
           </Gather>
-          <Say language="it-IT">
-            Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie.
+          <Say language="${sayLang}">
+            ${escapeXml(
+              currentLang === "en-US"
+                ? "I didn't receive any answer. Please call us back if you still need help. Thank you."
+                : "Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie."
+            )}
           </Say>
         </Response>
       `.trim();
