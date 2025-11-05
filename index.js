@@ -331,11 +331,12 @@ app.post("/twilio", async (req, res) => {
           language="it-IT"
           action="${BASE_URL}/twilio"
           method="POST"
-          timeout="1"
+          timeout="5"
           speechTimeout="auto"
-          bargeIn="true"
         >
-          <Say language="it-IT">${escapeXml(welcomeText)}</Say>
+          <Say language="it-IT" bargeIn="true">
+            ${escapeXml(welcomeText)}
+          </Say>
         </Gather>
         <Say language="it-IT">
           Non ho ricevuto risposta. Ti chiediamo di richiamare più tardi. Grazie e buona serata.
@@ -402,11 +403,12 @@ app.post("/twilio", async (req, res) => {
             language="it-IT"
             action="${BASE_URL}/twilio"
             method="POST"
-            timeout="1"
+            timeout="5"
             speechTimeout="auto"
-            bargeIn="true"
           >
-            <Say language="it-IT">${escapeXml(replyText)}</Say>
+            <Say language="it-IT" bargeIn="true">
+              ${escapeXml(replyText)}
+            </Say>
           </Gather>
           <Say language="it-IT">
             Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie.
