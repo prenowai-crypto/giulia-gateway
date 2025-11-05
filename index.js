@@ -136,6 +136,17 @@ async function sendToCalendar(payload) {
   return data;
 }
 
+// ---------- GPT: helpers per JSON ----------
+
+function extractJsonFromText(text = "") {
+  // Cerca il primo blocco che sembra JSON
+  const match = text.match(/{[\s\S]*}/);
+  if (match) {
+    return match[0];
+  }
+  return text;
+}
+
 // ---------- GPT: funzione ottimizzata ----------
 async function askGiulia(callId, userText) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -152,8 +163,10 @@ async function askGiulia(callId, userText) {
     };
   }
 
+  // Aggiungiamo il messaggio dell’utente
   convo.messages.push({ role: "user", content: userText });
 
+  // 🔹 Limitiamo la cronologia: system + ultimi 6 messaggi
   if (convo.messages.length > 8) {
     const systemMsg = convo.messages[0];
     const recent = convo.messages.slice(-7);
@@ -169,8 +182,8 @@ async function askGiulia(callId, userText) {
     body: JSON.stringify({
       model: "gpt-5-nano",
       messages: convo.messages,
-      max_completion_tokens: 200, // ✅ corretto
-      response_format: { type: "json_object" }, // ✅ forza JSON valido
+      max_completion_tokens: 200,
+      response_format: { type: "json_object" }, // chiede espressamente JSON
     }),
   });
 
@@ -181,37 +194,79 @@ async function askGiulia(callId, userText) {
   }
 
   const data = await response.json();
-  const raw = data.choices?.[0]?.message?.content?.trim() || "";
-  console.log("🧠 Risposta raw da GPT:", raw);
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.error("❌ JSON non valido restituito da GPT, uso fallback:", e);
-    parsed = {
-      reply_text:
-        "Scusa, c'è stato un problema tecnico, puoi ripetere per favore?",
-      action: "none",
-      reservation: {
-        date: null,
-        time: null,
-        people: null,
-        name: null,
-      },
+  // content può essere stringa o array (nuovo formato)
+  const content = data.choices?.[0]?.message?.content;
+  let raw = "";
+
+  if (typeof content === "string") {
+    raw = content.trim();
+  } else if (Array.isArray(content)) {
+    raw = content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        if (part && typeof part.content === "string") return part.content;
+        return "";
+      })
+      .join("")
+      .trim();
+  }
+
+  console.log("🧠 Risposta raw da GPT:", raw || "<vuoto>");
+
+  // Fallback base
+  const fallback = {
+    reply_text:
+      "Scusa, c'è stato un problema tecnico, puoi ripetere per favore?",
+    action: "none",
+    reservation: {
+      date: null,
+      time: null,
+      people: null,
+      name: null,
+    },
+  };
+
+  let parsed = fallback;
+
+  if (!raw) {
+    console.warn("⚠️ Nessun contenuto nel messaggio GPT, uso fallback.");
+  } else {
+    const jsonCandidate = extractJsonFromText(raw);
+    try {
+      parsed = JSON.parse(jsonCandidate);
+    } catch (e) {
+      console.error("❌ JSON non valido restituito da GPT, uso fallback:", e);
+      parsed = fallback;
+    }
+  }
+
+  // Rete di sicurezza: assicuriamoci che i campi base esistano sempre
+  if (!parsed || typeof parsed !== "object") {
+    parsed = fallback;
+  }
+  if (typeof parsed.reply_text !== "string" || !parsed.reply_text.trim()) {
+    parsed.reply_text =
+      "Scusa, non ho capito bene. Puoi ripetere per favore?";
+  }
+  if (!parsed.action) {
+    parsed.action = "none";
+  }
+  if (!parsed.reservation || typeof parsed.reservation !== "object") {
+    parsed.reservation = {
+      date: null,
+      time: null,
+      people: null,
+      name: null,
     };
   }
 
-  if (!parsed || typeof parsed !== "object") parsed = {};
-  if (typeof parsed.reply_text !== "string" || !parsed.reply_text.trim()) {
-    parsed.reply_text = "Scusa, non ho capito bene. Puoi ripetere per favore?";
-  }
-  if (!parsed.action) parsed.action = "none";
-  if (!parsed.reservation || typeof parsed.reservation !== "object") {
-    parsed.reservation = { date: null, time: null, people: null, name: null };
-  }
-
-  convo.messages.push({ role: "assistant", content: raw });
+  // Salviamo la risposta della AI nella cronologia
+  convo.messages.push({
+    role: "assistant",
+    content: raw || JSON.stringify(parsed),
+  });
   conversations.set(callId, convo);
 
   return parsed;
@@ -245,6 +300,7 @@ app.post("/twilio", async (req, res) => {
   console.log("📞 /twilio body:", req.body);
   console.log("📲 Numero chiamante (From):", From);
 
+  // ---- Modalità debug via curl (JSON in/out) ----
   if (isDebug) {
     try {
       const giulia = await askGiulia(callId, text.trim());
@@ -258,6 +314,9 @@ app.post("/twilio", async (req, res) => {
     }
   }
 
+  // ---- Flusso normale Twilio (voce) ----
+
+  // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
     const welcomeText =
       `Ciao, sono ${RECEPTIONIST_NAME}, la receptionist di ${RESTAURANT_NAME}. ` +
@@ -277,6 +336,7 @@ app.post("/twilio", async (req, res) => {
     return res.status(200).type("text/xml").send(twiml);
   }
 
+  // Turni successivi: abbiamo SpeechResult -> chiediamo a GPT
   try {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
@@ -286,6 +346,7 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
+    // Se è una create_reservation, mandiamo a Calendar in background
     if (giulia.action === "create_reservation" && giulia.reservation) {
       const { date, time, people, name } = giulia.reservation || {};
 
@@ -307,7 +368,10 @@ app.post("/twilio", async (req, res) => {
             console.error("❌ Errore nella creazione prenotazione:", calErr)
           );
       } else {
-        console.warn("⚠️ create_reservation senza dati completi:", giulia.reservation);
+        console.warn(
+          "⚠️ create_reservation senza dati completi:",
+          giulia.reservation
+        );
       }
     }
 
@@ -315,6 +379,7 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
+      // Risposta finale: conferma + saluto, poi chiusura
       twiml = `
         <Response>
           <Say language="it-IT">${escapeXml(replyText)}</Say>
@@ -322,6 +387,7 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
     } else {
+      // Continua la conversazione
       twiml = `
         <Response>
           <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
