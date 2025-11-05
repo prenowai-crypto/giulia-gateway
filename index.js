@@ -139,11 +139,8 @@ async function sendToCalendar(payload) {
 // ---------- GPT: helpers per JSON ----------
 
 function extractJsonFromText(text = "") {
-  // Cerca il primo blocco che sembra JSON
   const match = text.match(/{[\s\S]*}/);
-  if (match) {
-    return match[0];
-  }
+  if (match) return match[0];
   return text;
 }
 
@@ -180,10 +177,11 @@ async function askGiulia(callId, userText) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-5-nano",
+      model: "gpt-4o-mini",                  // 👈 modello stabile
       messages: convo.messages,
       max_completion_tokens: 200,
-      response_format: { type: "json_object" }, // chiede espressamente JSON
+      temperature: 0.3,                      // 👈 ora supportato
+      response_format: { type: "json_object" },
     }),
   });
 
@@ -194,8 +192,8 @@ async function askGiulia(callId, userText) {
   }
 
   const data = await response.json();
+  console.log("📦 FULL OpenAI response:", JSON.stringify(data, null, 2));
 
-  // content può essere stringa o array (nuovo formato)
   const content = data.choices?.[0]?.message?.content;
   let raw = "";
 
@@ -215,7 +213,6 @@ async function askGiulia(callId, userText) {
 
   console.log("🧠 Risposta raw da GPT:", raw || "<vuoto>");
 
-  // Fallback base
   const fallback = {
     reply_text:
       "Scusa, c'è stato un problema tecnico, puoi ripetere per favore?",
@@ -242,7 +239,6 @@ async function askGiulia(callId, userText) {
     }
   }
 
-  // Rete di sicurezza: assicuriamoci che i campi base esistano sempre
   if (!parsed || typeof parsed !== "object") {
     parsed = fallback;
   }
@@ -262,7 +258,6 @@ async function askGiulia(callId, userText) {
     };
   }
 
-  // Salviamo la risposta della AI nella cronologia
   convo.messages.push({
     role: "assistant",
     content: raw || JSON.stringify(parsed),
@@ -346,7 +341,6 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
-    // Se è una create_reservation, mandiamo a Calendar in background
     if (giulia.action === "create_reservation" && giulia.reservation) {
       const { date, time, people, name } = giulia.reservation || {};
 
@@ -379,7 +373,6 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
-      // Risposta finale: conferma + saluto, poi chiusura
       twiml = `
         <Response>
           <Say language="it-IT">${escapeXml(replyText)}</Say>
@@ -387,7 +380,6 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
     } else {
-      // Continua la conversazione
       twiml = `
         <Response>
           <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
