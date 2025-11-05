@@ -27,10 +27,10 @@ Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${R
 
 LINGUE:
 - Capisci sia italiano sia inglese.
-- Devi SEMPRE rispondere nella stessa lingua usata dal cliente nel suo ULTIMO messaggio.
 - Se il cliente parla soprattutto in italiano, rispondi in italiano.
 - Se il cliente parla in inglese, rispondi in inglese.
-- NON mescolare mai le due lingue nella stessa risposta.
+- Se cambia lingua durante la chiamata, adeguati alla lingua che usa nella sua ultima frase.
+- Non mescolare le lingue nella stessa risposta.
 
 RUOLO:
 - Sei una receptionist umana al telefono, gentile, sintetica e professionale.
@@ -41,7 +41,7 @@ STILE:
 - Frasi brevi, massimo 2 frasi per risposta (5–7 secondi di audio).
 - Vai dritta al punto, niente discorsi lunghi.
 - Evita scuse lunghe tipo "mi dispiace molto, purtroppo...": se sbagli, una sola frase breve.
-- Fai quasi sempre una domanda chiara per far avanzare la conversazione, TRANNE NELLA RISPOSTA FINALE.
+- Fai quasi sempre una domanda chiara per far avanzare la conversazione, TRANNENELLA RISPOSTA FINALE.
 
 OBIETTIVO:
 - Gestire prenotazioni: giorno, orario, numero di persone, nome.
@@ -62,7 +62,7 @@ GESTIONE CORREZIONI:
 - Se il cliente cambia argomento (es. da prenotazione a menù), rispondi alla domanda, poi riportalo gentilmente alla prenotazione.
 
 NOME:
-- Se il cliente ti ha già detto chiaramente il nome (es. "mi chiamo Marco", "sono Gianfrancesco", "my name is Mark"), NON chiederlo di nuovo.
+- Se il cliente ti ha già detto chiaramente il nome (es. "mi chiamo Marco", "sono Gianfrancesco"), NON chiederlo di nuovo.
 - In quel caso usa direttamente quel nome nella prenotazione, senza ripetere la domanda "come ti chiami?".
 
 GESTIONE ORARI:
@@ -97,16 +97,13 @@ RISPOSTA FINALE (create_reservation):
   - conferma chiaramente la prenotazione (data, ora, persone, nome)
   - NON fare altre domande
   - NON usare frasi tipo "va bene?", "confermi?", "sei d'accordo?".
-  - chiudi con un saluto finale, SOLO nella lingua della conversazione, ad esempio:
+  - chiudi con un saluto finale, ad esempio:
     - in italiano: "Ti aspettiamo, buona serata."
     - in inglese: "We look forward to seeing you, have a nice evening."
 `;
 
 // Stato in memoria per ogni chiamata (CallSid -> conversazione)
 const conversations = new Map();
-
-// Stato "tecnico" per ogni chiamata (es. lingua preferita)
-const callState = new Map();
 
 // ---------- MIDDLEWARE ----------
 app.use(cors());
@@ -120,27 +117,28 @@ function escapeXml(unsafe = "") {
   return unsafe
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
 }
 
-// Aggiunge un saluto finale coerente con la lingua della chiamata
-function addClosingSalute(text = "", lang = "it-IT") {
+// Aggiunge un saluto finale se manca (per le risposte di chiusura)
+function addClosingSalute(text = "") {
   const t = text.toLowerCase();
 
-  const hasSalute =
+  const hasItalianSalute =
     t.includes("buona serata") ||
     t.includes("a presto") ||
-    t.includes("grazie") ||
+    t.includes("grazie");
+
+  const hasEnglishSalute =
     t.includes("have a nice") ||
     t.includes("see you") ||
     t.includes("thank you");
 
-  if (hasSalute) return text;
+  if (hasItalianSalute || hasEnglishSalute) return text;
 
-  if (lang.startsWith("en")) {
-    return text + " We look forward to seeing you, have a nice evening.";
+  if (/\b(tomorrow|pm|am|book|table)\b/i.test(t)) {
+    return text + " Thank you, have a nice evening.";
   }
 
   return text + " Ti aspettiamo, buona serata.";
@@ -160,12 +158,11 @@ function inferDateFromConversation(callId) {
 
   if (allUserText.includes("dopodomani")) {
     offsetDays = 2;
-  } else if (allUserText.includes("domani") || allUserText.includes("tomorrow")) {
+  } else if (allUserText.includes("domani")) {
     offsetDays = 1;
   } else if (
     allUserText.includes("stasera") ||
-    allUserText.includes("questa sera") ||
-    allUserText.includes("tonight")
+    allUserText.includes("questa sera")
   ) {
     offsetDays = 0;
   }
@@ -189,12 +186,15 @@ function inferDateFromConversation(callId) {
 function normalizeReservationForCalendar(reservation = {}, callId) {
   let { date, time, people, name } = reservation;
 
+  // se il modello ha messo "null" come stringa, trattalo come null
   if (date === "null") date = null;
 
+  // 1) se riusciamo a capire "oggi/domani/dopodomani", usiamo quella
   const inferred = inferDateFromConversation(callId);
   if (inferred) {
     date = inferred;
   } else if (typeof date === "string") {
+    // 2) altrimenti, fai almeno il fix dell'anno (2023 -> anno corrente)
     const parts = date.split("-");
     if (parts.length === 3) {
       let [y, m, d] = parts.map((p) => p.trim());
@@ -211,7 +211,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   return { date, time, people, name };
 }
 
-// Invio dati a Google Apps Script per creare/aggiornare evento su Calendar
+// Invio dati a Google Apps Script per creare evento su Calendar
 async function sendToCalendar(payload) {
   console.log("📅 Invio dati a Apps Script:", payload);
 
@@ -280,7 +280,7 @@ async function askGiulia(callId, userText) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "gpt-4o-mini", // modello stabile
       messages: convo.messages,
       max_completion_tokens: 200,
       temperature: 0.3,
@@ -391,27 +391,13 @@ app.post("/calendar", async (req, res) => {
 
 // ---------- /twilio ----------
 app.post("/twilio", async (req, res) => {
-  const { CallSid, SpeechResult, text, From, Language } = req.body || {};
+  const { CallSid, SpeechResult, text, From } = req.body || {};
   const { postFinal } = req.query || {};
   const isDebug = !!text && !SpeechResult;
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
-  // ---- gestiamo lingua per questa chiamata ----
-  let lang = "it-IT";
-  const stored = callState.get(callId);
-  if (stored?.lang) {
-    lang = stored.lang;
-  }
-
-  if (Language) {
-    if (/^en/i.test(Language)) lang = "en-US";
-    else if (/^it/i.test(Language)) lang = "it-IT";
-  }
-
-  callState.set(callId, { lang });
   console.log("📞 /twilio body:", req.body);
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
-  console.log("🌍 Lingua rilevata per la chiamata:", lang);
 
   // ---- Modalità debug via curl (JSON in/out) ----
   if (isDebug) {
@@ -429,31 +415,24 @@ app.post("/twilio", async (req, res) => {
 
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
-    const welcomeText =
-      lang.startsWith("en")
-        ? `Hi, this is ${RECEPTIONIST_NAME} from ${RESTAURANT_NAME}. How can I help you today?`
-        : `Ciao, sono ${RECEPTIONIST_NAME} del ${RESTAURANT_NAME}. Come posso aiutarti oggi?`;
+    const welcomeText = `Ciao, sono ${RECEPTIONIST_NAME} del ${RESTAURANT_NAME}. Come posso aiutarti oggi?`;
 
     const twiml = `
       <Response>
         <Gather
           input="speech"
-          language="${lang}"
+          language="it-IT"
           action="${BASE_URL}/twilio"
           method="POST"
           timeout="5"
           speechTimeout="auto"
         >
-          <Say language="${lang}" bargeIn="true">
+          <Say language="it-IT" bargeIn="true">
             ${escapeXml(welcomeText)}
           </Say>
         </Gather>
-        <Say language="${lang}">
-          ${escapeXml(
-            lang.startsWith("en")
-              ? "I didn't receive any answer. Please call us again later. Thank you and have a nice evening."
-              : "Non ho ricevuto risposta. Ti chiediamo di richiamare più tardi. Grazie e buona serata."
-          )}
+        <Say language="it-IT">
+          Non ho ricevuto risposta. Ti chiediamo di richiamare più tardi. Grazie e buona serata.
         </Say>
       </Response>
     `.trim();
@@ -472,14 +451,10 @@ app.post("/twilio", async (req, res) => {
       !/cambia|change|sposta|modifica|orario|time/.test(lower);
 
     if (isThanksOnly) {
-      const goodbyeText = lang.startsWith("en")
-        ? "Thank you, have a nice evening."
-        : "Grazie a te, buona serata.";
-
       const goodbyeTwiml = `
         <Response>
-          <Say language="${lang}">
-            ${escapeXml(goodbyeText)}
+          <Say language="it-IT">
+            ${escapeXml("Grazie a te, buona serata.")}
           </Say>
           <Hangup/>
         </Response>
@@ -487,7 +462,9 @@ app.post("/twilio", async (req, res) => {
 
       return res.status(200).type("text/xml").send(goodbyeTwiml);
     }
-    // altrimenti continuiamo nel flusso normale qui sotto
+
+    // se NON è solo un grazie (es. "posso spostare domani alle 20:30?")
+    // continuiamo nel flusso normale qui sotto, passando il testo a GPT
   }
 
   // ---- Flusso normale Twilio (voce) ----
@@ -498,9 +475,7 @@ app.post("/twilio", async (req, res) => {
     const giulia = await askGiulia(callId, userText);
     let replyText =
       giulia.reply_text ||
-      (lang.startsWith("en")
-        ? "Sorry, I didn't catch that. Could you repeat, please?"
-        : "Scusa, non ho capito bene. Puoi ripetere per favore?");
+      "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
     // Se è una prenotazione finale, invia al Calendar
     if (giulia.action === "create_reservation" && giulia.reservation) {
@@ -540,28 +515,24 @@ app.post("/twilio", async (req, res) => {
     let twiml;
     if (shouldHangup) {
       // saluto finale + finestra 5 secondi per eventuali ultime richieste
-      const finalReply = addClosingSalute(replyText, lang);
+      const finalReply = addClosingSalute(replyText);
 
       twiml = `
         <Response>
           <Gather
             input="speech"
-            language="${lang}"
+            language="it-IT"
             action="${BASE_URL}/twilio?postFinal=1"
             method="POST"
             timeout="5"
             speechTimeout="auto"
           >
-            <Say language="${lang}" bargeIn="true">
+            <Say language="it-IT" bargeIn="true">
               ${escapeXml(finalReply)}
             </Say>
           </Gather>
-          <Say language="${lang}">
-            ${escapeXml(
-              lang.startsWith("en")
-                ? "Thank you again, goodbye."
-                : "Grazie ancora, a presto."
-            )}
+          <Say language="it-IT">
+            Grazie ancora, a presto.
           </Say>
           <Hangup/>
         </Response>
@@ -571,22 +542,18 @@ app.post("/twilio", async (req, res) => {
         <Response>
           <Gather
             input="speech"
-            language="${lang}"
+            language="it-IT"
             action="${BASE_URL}/twilio"
             method="POST"
             timeout="5"
             speechTimeout="auto"
           >
-            <Say language="${lang}" bargeIn="true">
+            <Say language="it-IT" bargeIn="true">
               ${escapeXml(replyText)}
             </Say>
           </Gather>
-          <Say language="${lang}">
-            ${escapeXml(
-              lang.startsWith("en")
-                ? "I didn't receive any answer. If you still need something, please call us again. Thank you."
-                : "Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie."
-            )}
+          <Say language="it-IT">
+            Non ho ricevuto risposta. Se hai ancora bisogno, richiamaci pure. Grazie.
           </Say>
         </Response>
       `.trim();
@@ -595,15 +562,10 @@ app.post("/twilio", async (req, res) => {
     return res.status(200).type("text/xml").send(twiml);
   } catch (error) {
     console.error("Errore generale /twilio:", error);
-
-    const errorText = lang.startsWith("en")
-      ? "A server error occurred. Please call us again later."
-      : "Si è verificato un errore del server. Ti chiediamo di richiamare più tardi.";
-
     const errorTwiml = `
       <Response>
-        <Say language="${lang}">
-          ${escapeXml(errorText)}
+        <Say language="it-IT">
+          Si è verificato un errore del server. Ti chiediamo di richiamare più tardi.
         </Say>
         <Hangup/>
       </Response>
