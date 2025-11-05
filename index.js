@@ -137,7 +137,6 @@ async function sendToCalendar(payload) {
 }
 
 // ---------- GPT: funzione ottimizzata ----------
-// Chiamata a GPT usando l'endpoint HTTP chat/completions
 async function askGiulia(callId, userText) {
   const apiKey = process.env.OPENAI_API_KEY;
 
@@ -153,10 +152,8 @@ async function askGiulia(callId, userText) {
     };
   }
 
-  // Aggiungiamo il messaggio dell’utente
   convo.messages.push({ role: "user", content: userText });
 
-  // 🔹 Limitiamo la cronologia: system + ultimi 6 messaggi
   if (convo.messages.length > 8) {
     const systemMsg = convo.messages[0];
     const recent = convo.messages.slice(-7);
@@ -172,9 +169,8 @@ async function askGiulia(callId, userText) {
     body: JSON.stringify({
       model: "gpt-5-nano",
       messages: convo.messages,
-      max_completion_tokens: 200, // 🔁 sostituito max_tokens
-      temperature: 0.3,
-      response_format: { type: "json_object" }, // 👉 aiuta a restituire JSON valido
+      max_completion_tokens: 200, // ✅ corretto
+      response_format: { type: "json_object" }, // ✅ forza JSON valido
     }),
   });
 
@@ -206,27 +202,15 @@ async function askGiulia(callId, userText) {
     };
   }
 
-  // Rete di sicurezza: assicuriamoci che i campi base esistano sempre
-  if (!parsed || typeof parsed !== "object") {
-    parsed = {};
-  }
+  if (!parsed || typeof parsed !== "object") parsed = {};
   if (typeof parsed.reply_text !== "string" || !parsed.reply_text.trim()) {
-    parsed.reply_text =
-      "Scusa, non ho capito bene. Puoi ripetere per favore?";
+    parsed.reply_text = "Scusa, non ho capito bene. Puoi ripetere per favore?";
   }
-  if (!parsed.action) {
-    parsed.action = "none";
-  }
+  if (!parsed.action) parsed.action = "none";
   if (!parsed.reservation || typeof parsed.reservation !== "object") {
-    parsed.reservation = {
-      date: null,
-      time: null,
-      people: null,
-      name: null,
-    };
+    parsed.reservation = { date: null, time: null, people: null, name: null };
   }
 
-  // Salviamo la risposta della AI nella cronologia
   convo.messages.push({ role: "assistant", content: raw });
   conversations.set(callId, convo);
 
@@ -240,7 +224,7 @@ app.get("/", (req, res) => {
     .send("✅ Receptionist AI Gateway è attivo e funzionante su Render!");
 });
 
-// ---------- /calendar (REST per altri canali) ----------
+// ---------- /calendar ----------
 app.post("/calendar", async (req, res) => {
   try {
     console.log("📩 Richiesta su /calendar:", req.body);
@@ -252,9 +236,8 @@ app.post("/calendar", async (req, res) => {
   }
 });
 
-// ---------- /twilio (voce + test debug) ----------
+// ---------- /twilio ----------
 app.post("/twilio", async (req, res) => {
-  // 👇 AGGIUNTO From per avere il numero chiamante
   const { CallSid, SpeechResult, text, From } = req.body || {};
   const isDebug = !!text && !SpeechResult;
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
@@ -262,7 +245,6 @@ app.post("/twilio", async (req, res) => {
   console.log("📞 /twilio body:", req.body);
   console.log("📲 Numero chiamante (From):", From);
 
-  // ---- Modalità debug via curl (JSON in / out) ----
   if (isDebug) {
     try {
       const giulia = await askGiulia(callId, text.trim());
@@ -276,9 +258,6 @@ app.post("/twilio", async (req, res) => {
     }
   }
 
-  // ---- Flusso normale Twilio (voce) ----
-
-  // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto
   if (!SpeechResult) {
     const welcomeText =
       `Ciao, sono ${RECEPTIONIST_NAME}, la receptionist di ${RESTAURANT_NAME}. ` +
@@ -298,7 +277,6 @@ app.post("/twilio", async (req, res) => {
     return res.status(200).type("text/xml").send(twiml);
   }
 
-  // Turni successivi: abbiamo SpeechResult -> chiediamo a GPT
   try {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
@@ -308,7 +286,6 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
 
-    // 🔹 NON aspettiamo più il Calendar: lo lanciamo in background
     if (giulia.action === "create_reservation" && giulia.reservation) {
       const { date, time, people, name } = giulia.reservation || {};
 
@@ -318,22 +295,19 @@ app.post("/twilio", async (req, res) => {
           persone: people,
           data: date,
           ora: time,
-          telefono: From, // 👈 PASSIAMO IL NUMERO A APPS SCRIPT
+          telefono: From,
         })
-          .then((data) => {
+          .then((data) =>
             console.log("✅ Prenotazione creata:", {
               reservation: giulia.reservation,
               fromAppsScript: data,
-            });
-          })
-          .catch((calErr) => {
-            console.error("❌ Errore nella creazione prenotazione:", calErr);
-          });
+            })
+          )
+          .catch((calErr) =>
+            console.error("❌ Errore nella creazione prenotazione:", calErr)
+          );
       } else {
-        console.warn(
-          "⚠️ create_reservation senza dati completi:",
-          giulia.reservation
-        );
+        console.warn("⚠️ create_reservation senza dati completi:", giulia.reservation);
       }
     }
 
@@ -341,7 +315,6 @@ app.post("/twilio", async (req, res) => {
 
     let twiml;
     if (shouldHangup) {
-      // Risposta finale: conferma + saluto, poi chiusura
       twiml = `
         <Response>
           <Say language="it-IT">${escapeXml(replyText)}</Say>
@@ -349,7 +322,6 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
     } else {
-      // Continua la conversazione
       twiml = `
         <Response>
           <Gather input="speech" language="it-IT" action="${BASE_URL}/twilio" method="POST">
