@@ -154,52 +154,6 @@ function maybeSwitchToEnglish(callId, userText) {
   }
 }
 
-// 🆕 --- UTIL TIME/FORMATTING ---
-
-const pad2 = (n) => String(n).padStart(2, "0");
-
-// Converte "HH:MM:SS" in {h,m}
-function parseTimeHM(timeStr) {
-  if (!timeStr) return null;
-  const [h, m] = timeStr.split(":").map((x) => parseInt(x, 10));
-  if (isNaN(h) || isNaN(m)) return null;
-  return { h, m };
-}
-
-function toTimeHMS(h, m) {
-  return `${pad2(h)}:${pad2(m)}:00`;
-}
-
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
-}
-
-// Ritorna due proposte orarie vicino alla richiesta, rispettando fascia 18–22/23
-function suggestAltTimes(timeStr) {
-  const fallback = [toTimeHMS(19, 0), toTimeHMS(21, 0)]; // 19:00 e 21:00
-  const t = parseTimeHM(timeStr);
-  if (!t) return fallback;
-
-  const alt1H = clamp(t.h - 1, 18, 22);
-  const alt2H = clamp(t.h + 1, 18, 22);
-  const a = toTimeHMS(alt1H, t.m);
-  const b = toTimeHMS(alt2H, t.m);
-  // Evita duplicati (es. se 18 e 18)
-  return a === b ? [a, toTimeHMS(clamp(alt2H + 1, 18, 22), t.m)] : [a, b];
-}
-
-// Formatta "HH:MM:SS" per voce (it: 21:00, en: 9:00 PM)
-function formatTimeForLang(hms, lang) {
-  if (!hms) return lang === "en-US" ? "7:00 PM" : "19:00";
-  const { h, m } = parseTimeHM(hms) || { h: 20, m: 0 };
-  if (lang === "en-US") {
-    const ampm = h >= 12 ? "PM" : "AM";
-    const hr12 = ((h + 11) % 12) + 1;
-    return `${hr12}:${pad2(m)} ${ampm}`;
-  }
-  return `${pad2(h)}:${pad2(m)}`;
-}
-
 // Aggiunge un saluto finale se manca (per le risposte di chiusura)
 function addClosingSalute(text = "") {
   const t = text.toLowerCase();
@@ -223,7 +177,7 @@ function addClosingSalute(text = "") {
   return text + " Ti aspettiamo, buona serata.";
 }
 
-// 🆕 Prende da tutta la conversazione parole tipo "domani/tomorrow", "dopodomani/day after tomorrow", "stasera/tonight"
+// Prende da tutta la conversazione parole tipo "domani", "dopodomani", "stasera"
 function inferDateFromConversation(callId) {
   const convo = conversations.get(callId);
   if (!convo || !Array.isArray(convo.messages)) return null;
@@ -235,21 +189,13 @@ function inferDateFromConversation(callId) {
 
   let offsetDays = null;
 
-  if (
-    allUserText.includes("dopodomani") ||
-    allUserText.includes("day after tomorrow")
-  ) {
+  if (allUserText.includes("dopodomani")) {
     offsetDays = 2;
-  } else if (
-    allUserText.includes("domani") ||
-    allUserText.includes("tomorrow")
-  ) {
+  } else if (allUserText.includes("domani")) {
     offsetDays = 1;
   } else if (
     allUserText.includes("stasera") ||
-    allUserText.includes("questa sera") ||
-    allUserText.includes("tonight") ||
-    allUserText.includes("this evening")
+    allUserText.includes("questa sera")
   ) {
     offsetDays = 0;
   }
@@ -276,7 +222,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   // se il modello ha messo "null" come stringa, trattalo come null
   if (date === "null") date = null;
 
-  // 1) se riusciamo a capire "oggi/domani/dopodomani" (anche EN), usiamo quella
+  // 1) se riusciamo a capire "oggi/domani/dopodomani", usiamo quella
   const inferred = inferDateFromConversation(callId);
   if (inferred) {
     date = inferred;
@@ -593,53 +539,60 @@ app.post("/twilio", async (req, res) => {
 
       if (date && time && people && name) {
         try {
-          const calendarRes = await sendToCalendar({
-            nome: name,
-            persone: people,
-            data: date,
-            ora: time,
-            telefono: From,
-          });
-
-          // 🔴 Slot pieno: non confermare la prenotazione, proponi un altro orario
-          if (!calendarRes.success && calendarRes.reason === "slot_full") {
-            slotFull = true;
-            console.log("⛔ Prenotazione rifiutata per capienza:", calendarRes);
-
-            // 🆕 proposte di orario alternative basate sull'orario richiesto
-            const [altA, altB] = suggestAltTimes(time);
-            const altAFormatted = formatTimeForLang(altA, currentLang);
-            const altBFormatted = formatTimeForLang(altB, currentLang);
-
+          // 🔴 NUOVA LOGICA: da 45 coperti in su è evento privato → niente Calendar
+          if (people >= 45) {
             if (currentLang === "en-US") {
               replyText =
-                `I'm sorry, we are fully booked at that time. ` +
-                `Would you like to try ${altAFormatted} or ${altBFormatted}?`;
+                "For groups of 45 people or more we handle bookings as private events. Please send an email to prenowai@gmail.com with the date, time and number of people.";
             } else {
               replyText =
-                `Mi dispiace, a quell'ora siamo al completo. ` +
-                `Vuoi provare alle ${altAFormatted} oppure alle ${altBFormatted}?`;
+                "Per prenotazioni da 45 coperti in su le gestiamo come evento privato. Ti chiediamo di mandare una mail a prenowai@gmail.com con data, orario e numero di persone.";
             }
 
-            action = "ask_time"; // chiedi nuovo orario/giorno, non chiudere la chiamata
-          } else if (calendarRes && calendarRes.success) {
-            console.log("✅ Prenotazione creata:", {
-              reservation: normalizedRes,
-              fromAppsScript: calendarRes,
-            });
+            // non chiamiamo il Calendar e non lasciamo create_reservation
+            action = "none";
           } else {
-            console.error(
-              "❌ Errore nella creazione prenotazione (non slot_full):",
-              calendarRes
-            );
-            if (currentLang === "en-US") {
-              replyText =
-                "I'm sorry, there was a problem with your booking. Could we try a different time or another day?";
+            const calendarRes = await sendToCalendar({
+              nome: name,
+              persone: people,
+              data: date,
+              ora: time,
+              telefono: From,
+            });
+
+            // 🔴 Slot pieno: non confermare la prenotazione, proponi un altro orario
+            if (!calendarRes.success && calendarRes.reason === "slot_full") {
+              slotFull = true;
+              console.log("⛔ Prenotazione rifiutata per capienza:", calendarRes);
+
+              if (currentLang === "en-US") {
+                replyText =
+                  "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
+              } else {
+                replyText =
+                  "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+              }
+
+              action = "ask_time"; // chiedi nuovo orario/giorno, non chiudere la chiamata
+            } else if (calendarRes && calendarRes.success) {
+              console.log("✅ Prenotazione creata:", {
+                reservation: normalizedRes,
+                fromAppsScript: calendarRes,
+              });
             } else {
-              replyText =
-                "Mi dispiace, c'è stato un problema con la prenotazione. Possiamo provare con un altro orario o un altro giorno?";
+              console.error(
+                "❌ Errore nella creazione prenotazione (non slot_full):",
+                calendarRes
+              );
+              if (currentLang === "en-US") {
+                replyText =
+                  "I'm sorry, there was a problem with your booking. Could we try a different time or another day?";
+              } else {
+                replyText =
+                  "Mi dispiace, c'è stato un problema con la prenotazione. Possiamo provare con un altro orario o un altro giorno?";
+              }
+              action = "ask_time";
             }
-            action = "ask_time";
           }
         } catch (calErr) {
           console.error("❌ Errore nella creazione prenotazione:", calErr);
