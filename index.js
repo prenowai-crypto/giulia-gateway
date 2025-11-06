@@ -5,6 +5,7 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
+import nodemailer from "nodemailer";
 
 const app = express();
 
@@ -20,6 +21,54 @@ const APPS_SCRIPT_URL =
 
 // URL pubblico di questo server su Render
 const BASE_URL = "https://giulia-gateway.onrender.com";
+
+// Email proprietario / gestione eventi
+const OWNER_EMAIL = "prenowai@gmail.com";
+
+// Transporter per inviare email al proprietario
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.MAIL_USER,
+    pass: process.env.MAIL_PASS,
+  },
+});
+
+// invio mail al proprietario per gruppi grandi (evento)
+async function sendOwnerEmail({ name, people, date, time, phone }) {
+  if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
+    console.warn(
+      "⚠️ MAIL_USER o MAIL_PASS non impostate, salto invio email al proprietario."
+    );
+    return;
+  }
+
+  const mailOptions = {
+    from: process.env.MAIL_USER,
+    to: OWNER_EMAIL,
+    subject: `Richiesta evento grande: ${people} coperti`,
+    text:
+      `Ciao,\n\n` +
+      `è arrivata una richiesta telefonica per una prenotazione considerata evento (sopra soglia coperti).\n\n` +
+      `Dettagli richiesta:\n` +
+      `- Nome: ${name}\n` +
+      `- Persone: ${people}\n` +
+      `- Data: ${date}\n` +
+      `- Ora: ${time}\n` +
+      (phone ? `- Telefono: ${phone}\n` : "") +
+      `\nLa prenotazione NON è stata inserita in calendario perché supera la soglia coperti.\n` +
+      `Il cliente è stato invitato a scrivere una mail a ${OWNER_EMAIL} con tutti i dettagli per gestire l'evento.\n\n` +
+      `A presto,\n` +
+      `Receptionist AI\n`,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log("✉️ Email inviata al proprietario per evento grande.");
+  } catch (err) {
+    console.error("❌ Errore nell'invio email al proprietario:", err);
+  }
+}
 
 // Prompt "di sistema" della receptionist
 const SYSTEM_PROMPT = `
@@ -538,20 +587,30 @@ app.post("/twilio", async (req, res) => {
       const { date, time, people, name } = normalizedRes;
 
       if (date && time && people && name) {
-        try {
-          // 🔴 NUOVA LOGICA: da 45 coperti in su è evento privato → niente Calendar
-          if (people >= 45) {
-            if (currentLang === "en-US") {
-              replyText =
-                "For groups of 45 people or more we handle bookings as private events. Please send an email to prenowai@gmail.com with the date, time and number of people.";
-            } else {
-              replyText =
-                "Per prenotazioni da 45 coperti in su le gestiamo come evento privato. Ti chiediamo di mandare una mail a prenowai@gmail.com con data, orario e numero di persone.";
-            }
+        // 🔴 CASO EVENTO: sopra i 45 coperti → niente Calendar, mail al proprietario + messaggio al cliente
+        if (people >= 45) {
+          // invia mail al proprietario con i dettagli
+          await sendOwnerEmail({
+            name,
+            people,
+            date,
+            time,
+            phone: From,
+          });
 
-            // non chiamiamo il Calendar e non lasciamo create_reservation
-            action = "none";
+          if (currentLang === "en-US") {
+            replyText =
+              "For bookings over 40 people we treat it as a private event. Please send an email to prenowai@gmail.com with all the details so the restaurant can handle it directly.";
           } else {
+            replyText =
+              "Per prenotazioni sopra i 40 coperti le gestiamo come evento privato. Ti chiedo di mandare una mail a prenowai@gmail.com con tutti i dettagli così il ristorante può gestirla direttamente.";
+          }
+
+          // non creiamo la prenotazione sul calendario
+          action = "none";
+        } else {
+          // ✅ flusso normale: invio al Calendar
+          try {
             const calendarRes = await sendToCalendar({
               nome: name,
               persone: people,
@@ -563,7 +622,10 @@ app.post("/twilio", async (req, res) => {
             // 🔴 Slot pieno: non confermare la prenotazione, proponi un altro orario
             if (!calendarRes.success && calendarRes.reason === "slot_full") {
               slotFull = true;
-              console.log("⛔ Prenotazione rifiutata per capienza:", calendarRes);
+              console.log(
+                "⛔ Prenotazione rifiutata per capienza:",
+                calendarRes
+              );
 
               if (currentLang === "en-US") {
                 replyText =
@@ -593,17 +655,17 @@ app.post("/twilio", async (req, res) => {
               }
               action = "ask_time";
             }
+          } catch (calErr) {
+            console.error("❌ Errore nella creazione prenotazione:", calErr);
+            if (currentLang === "en-US") {
+              replyText =
+                "I'm sorry, there was a technical problem. Please try again in a few minutes.";
+            } else {
+              replyText =
+                "Mi dispiace, c'è stato un problema tecnico. Per favore riprova tra qualche minuto.";
+            }
+            action = "none";
           }
-        } catch (calErr) {
-          console.error("❌ Errore nella creazione prenotazione:", calErr);
-          if (currentLang === "en-US") {
-            replyText =
-              "I'm sorry, there was a technical problem. Please try again in a few minutes.";
-          } else {
-            replyText =
-              "Mi dispiace, c'è stato un problema tecnico. Per favore riprova tra qualche minuto.";
-          }
-          action = "none";
         }
       } else {
         console.warn(
