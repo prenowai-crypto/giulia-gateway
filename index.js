@@ -5,6 +5,7 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
+import nodemailer from "nodemailer";
 
 const app = express();
 
@@ -24,8 +25,25 @@ const BASE_URL = "https://giulia-gateway.onrender.com";
 // Email proprietario / gestione eventi
 const OWNER_EMAIL = "prenowai@gmail.com";
 
-// invio mail al proprietario per gruppi grandi (evento) tramite Apps Script
-async function sendOwnerEmail({ name, people, date, time, phone }) {
+// Soglia per gruppi "grandi" da confermare via email (es. > 10 pax)
+const LARGE_GROUP_THRESHOLD = 10;
+
+// Soglia per "eventi" molto grandi (usa ancora Apps Script come prima)
+const EVENT_THRESHOLD = 45;
+
+// ---------- NODEMAILER (per email dirette da questo server) ----------
+// Usa l'account OWNER_EMAIL come mittente.
+// Imposta EMAIL_PASSWORD nelle Environment Variables di Render (app password Gmail).
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: OWNER_EMAIL,
+    pass: process.env.EMAIL_PASSWORD,
+  },
+});
+
+// invio mail al proprietario per gruppi molto grandi (evento) tramite Apps Script
+async function sendOwnerEmail({ name, people, date, time, phone, customerEmail }) {
   try {
     const payload = {
       action: "notify_big_event", // da gestire in Apps Script
@@ -34,6 +52,7 @@ async function sendOwnerEmail({ name, people, date, time, phone }) {
       data: date,
       ora: time,
       telefono: phone || "",
+      email: customerEmail || "",
       ownerEmail: OWNER_EMAIL,
     };
 
@@ -64,6 +83,136 @@ async function sendOwnerEmail({ name, people, date, time, phone }) {
   }
 }
 
+// Email al proprietario per gruppi > LARGE_GROUP_THRESHOLD con link Conferma/Annulla
+async function sendLargeGroupEmailToOwner({ reservation, eventId }) {
+  const { date, time, people, name, customerEmail, phone } = reservation;
+
+  const payload = {
+    eventId: eventId || "",
+    date,
+    time,
+    people,
+    name,
+    customerEmail: customerEmail || "",
+    phone: phone || "",
+  };
+
+  const token = Buffer.from(JSON.stringify(payload)).toString("base64");
+
+  const confirmUrl = `${BASE_URL}/owner/large-group/confirm?token=${encodeURIComponent(
+    token
+  )}`;
+  const cancelUrl = `${BASE_URL}/owner/large-group/cancel?token=${encodeURIComponent(
+    token
+  )}`;
+
+  const html = `
+    <h2>Nuova richiesta GRANDE GRUPPO</h2>
+    <p><strong>Nome:</strong> ${name}</p>
+    <p><strong>Data:</strong> ${date}</p>
+    <p><strong>Ora:</strong> ${time}</p>
+    <p><strong>Persone:</strong> ${people}</p>
+    <p><strong>Telefono cliente:</strong> ${phone || "non disponibile"}</p>
+    ${
+      customerEmail
+        ? `<p><strong>Email cliente:</strong> ${customerEmail}</p>`
+        : `<p><strong>Email cliente:</strong> non fornita</p>`
+    }
+    <p>Puoi decidere se confermare o annullare questa richiesta cliccando uno dei pulsanti:</p>
+    <p>
+      <a href="${confirmUrl}" style="background:#16a34a;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;margin-right:12px;">
+        ✅ Conferma prenotazione
+      </a>
+      <a href="${cancelUrl}" style="background:#dc2626;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">
+        ❌ Annulla prenotazione
+      </a>
+    </p>
+    <p>Se i pulsanti non funzionano, copia e incolla questi link nel browser:</p>
+    <p>Conferma: ${confirmUrl}</p>
+    <p>Annulla: ${cancelUrl}</p>
+  `;
+
+  await transporter.sendMail({
+    from: `"${RECEPTIONIST_NAME}" <${OWNER_EMAIL}>`,
+    to: OWNER_EMAIL,
+    subject: `Richiesta grande gruppo (${people} pax) - ${RESTAURANT_NAME}`,
+    html,
+  });
+
+  console.log("✉️ Email grande gruppo inviata al proprietario.");
+}
+
+// Prova a inviare la mail al cliente, se fallisce avvisa il ristoratore
+async function sendCustomerEmailWithFallback({ reservation, type }) {
+  const { customerEmail, name, date, time, people, phone } = reservation;
+
+  if (!customerEmail) {
+    // nessuna email fornita → non facciamo nulla
+    return;
+  }
+
+  let subject;
+  let message;
+
+  if (type === "confirmed") {
+    subject = `Prenotazione confermata - ${RESTAURANT_NAME}`;
+    message = `
+      <p>Ciao ${name},</p>
+      <p>la tua prenotazione per <strong>${people} persone</strong> il <strong>${date}</strong> alle <strong>${time}</strong> è stata <strong>CONFERMATA</strong>.</p>
+      <p>Ti aspettiamo!</p>
+    `;
+  } else if (type === "cancelled") {
+    subject = `Prenotazione non confermata - ${RESTAURANT_NAME}`;
+    message = `
+      <p>Ciao ${name},</p>
+      <p>la tua richiesta di prenotazione per <strong>${people} persone</strong> il <strong>${date}</strong> alle <strong>${time}</strong> <strong>NON è stata confermata</strong> dal ristorante.</p>
+      <p>Ti invitiamo a ricontattarci per valutare altre soluzioni.</p>
+    `;
+  } else {
+    subject = `Aggiornamento prenotazione - ${RESTAURANT_NAME}`;
+    message = `
+      <p>Ciao ${name},</p>
+      <p>abbiamo aggiornamenti sulla tua prenotazione per <strong>${people} persone</strong> il <strong>${date}</strong> alle <strong>${time}</strong>.</p>
+    `;
+  }
+
+  try {
+    await transporter.sendMail({
+      from: `"${RESTAURANT_NAME}" <${OWNER_EMAIL}>`,
+      to: customerEmail,
+      subject,
+      html: message,
+    });
+    console.log("✉️ Email inviata al cliente:", customerEmail);
+  } catch (error) {
+    console.error("❌ Errore nell'invio della mail al cliente:", error);
+
+    const fallbackHtml = `
+      <h2>⚠️ Impossibile inviare email al cliente</h2>
+      <p>Non è stato possibile inviare la mail di <strong>${type}</strong> al cliente.</p>
+      <p><strong>Dettagli prenotazione:</strong></p>
+      <ul>
+        <li>Nome: ${name}</li>
+        <li>Data: ${date}</li>
+        <li>Ora: ${time}</li>
+        <li>Persone: ${people}</li>
+        <li>Email fornita: ${customerEmail}</li>
+        <li>Telefono cliente (dalla chiamata): ${phone || "non disponibile"}</li>
+      </ul>
+      <p>Ti consigliamo di contattare il cliente <strong>telefonicamente</strong> per confermare o annullare la prenotazione.</p>
+    `;
+
+    await transporter.sendMail({
+      from: `"${RECEPTIONIST_NAME}" <${OWNER_EMAIL}>`,
+      to: OWNER_EMAIL,
+      subject: `Impossibile inviare email al cliente - ${RESTAURANT_NAME}`,
+      html: fallbackHtml,
+    });
+
+    console.log("✉️ Email di avviso inviata al proprietario per indirizzo cliente errato.");
+  }
+}
+
 // Prompt "di sistema" della receptionist
 const SYSTEM_PROMPT = `
 Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${RESTAURANT_NAME}.
@@ -89,6 +238,9 @@ STILE:
 OBIETTIVO:
 - Gestire prenotazioni: giorno, orario, numero di persone, nome.
 - Puoi anche rispondere a domande su menù, prezzi indicativi, tipologia di cucina, orari.
+- Quando hai quasi tutti i dati per la prenotazione, se possibile chiedi anche un indirizzo email per inviare una conferma:
+  - se il cliente te la dà, memorizzala in reservation.customerEmail
+  - se il cliente non vuole o non la ricorda, non insistere e lascia reservation.customerEmail = null
 
 CONVERSAZIONE "SVEGLIA":
 - Quando il cliente dice che vuole prenotare, chiedi SUBITO almeno due informazioni insieme, se possibile:
@@ -125,13 +277,15 @@ Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
     "date": "YYYY-MM-DD oppure null",
     "time": "HH:MM:SS oppure null",
     "people": numero oppure null,
-    "name": "nome oppure null"
+    "name": "nome oppure null",
+    "customerEmail": "email del cliente oppure null"
   }
 }
 
 Regole:
 - "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
 - "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione.
+- "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
 - Negli altri casi usa l’action del passo successivo (ask_date, ask_time, ask_people, ask_name, answer_menu, answer_generic).
 - Se il cliente chiede solo informazioni (es. su pesce o prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
 
@@ -260,7 +414,7 @@ function inferDateFromConversation(callId) {
 
 // Normalizza la data della prenotazione per il Calendar
 function normalizeReservationForCalendar(reservation = {}, callId) {
-  let { date, time, people, name } = reservation;
+  let { date, time, people, name, customerEmail } = reservation;
 
   // se il modello ha messo "null" come stringa, trattalo come null
   if (date === "null") date = null;
@@ -284,7 +438,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
     }
   }
 
-  return { date, time, people, name };
+  return { date, time, people, name, customerEmail };
 }
 
 // Invio dati a Google Apps Script per creare evento su Calendar
@@ -401,6 +555,7 @@ async function askGiulia(callId, userText) {
       time: null,
       people: null,
       name: null,
+      customerEmail: null,
     },
   };
 
@@ -434,7 +589,13 @@ async function askGiulia(callId, userText) {
       time: null,
       people: null,
       name: null,
+      customerEmail: null,
     };
+  } else {
+    // assicurati che il campo customerEmail esista
+    if (!Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")) {
+      parsed.reservation.customerEmail = null;
+    }
   }
 
   convo.messages.push({
@@ -462,6 +623,109 @@ app.post("/calendar", async (req, res) => {
   } catch (error) {
     console.error("Errore /calendar:", error);
     return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ---------- ROTTE CONFERMA/ANNULLA GRANDI GRUPPI ----------
+
+app.get("/owner/large-group/confirm", async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(400).send("Token mancante.");
+    }
+
+    const json = Buffer.from(token, "base64").toString("utf8");
+    const payload = JSON.parse(json);
+    const { eventId, date, time, people, name, customerEmail, phone } = payload;
+
+    // Avvisa Apps Script di confermare la prenotazione (se vuoi gestire stato/descrizione)
+    await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "confirm_large_group",
+        eventId,
+        date,
+        time,
+        people,
+        name,
+        customerEmail,
+        phone,
+      }),
+    });
+
+    // Prova a mandare la mail al cliente, se c'è, con fallback al ristoratore
+    await sendCustomerEmailWithFallback({
+      reservation: { date, time, people, name, customerEmail, phone },
+      type: "confirmed",
+    });
+
+    // Risposta HTML per il ristoratore
+    res.send(`
+      <html>
+        <body style="font-family: system-ui; padding: 24px;">
+          <h2>Prenotazione confermata ✅</h2>
+          <p>Hai confermato la prenotazione per <strong>${people} persone</strong>, a nome <strong>${name}</strong>, il <strong>${date}</strong> alle <strong>${time}</strong>.</p>
+          <p>Se il sistema non è riuscito a inviare la mail al cliente, riceverai un'altra email con le istruzioni per contattarlo telefonicamente.</p>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error("Errore conferma large group:", err);
+    res
+      .status(500)
+      .send("Errore interno durante la conferma della prenotazione.");
+  }
+});
+
+app.get("/owner/large-group/cancel", async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(400).send("Token mancante.");
+    }
+
+    const json = Buffer.from(token, "base64").toString("utf8");
+    const payload = JSON.parse(json);
+    const { eventId, date, time, people, name, customerEmail, phone } = payload;
+
+    // Avvisa Apps Script di cancellare la prenotazione
+    await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "cancel_large_group",
+        eventId,
+        date,
+        time,
+        people,
+        name,
+        customerEmail,
+        phone,
+      }),
+    });
+
+    // (Opzionale) avvisa anche il cliente che la prenotazione non è stata confermata
+    await sendCustomerEmailWithFallback({
+      reservation: { date, time, people, name, customerEmail, phone },
+      type: "cancelled",
+    });
+
+    res.send(`
+      <html>
+        <body style="font-family: system-ui; padding: 24px;">
+          <h2>Prenotazione annullata ❌</h2>
+          <p>Hai annullato la richiesta per <strong>${people} persone</strong>, a nome <strong>${name}</strong>, il <strong>${date}</strong> alle <strong>${time}</strong>.</p>
+          <p>Se il cliente ha fornito un indirizzo email valido, riceverà una comunicazione automatica. In caso contrario, potresti ricevere una mail che ti invita a contattarlo telefonicamente.</p>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error("Errore cancellazione large group:", err);
+    res
+      .status(500)
+      .send("Errore interno durante l'annullamento della prenotazione.");
   }
 });
 
@@ -578,17 +842,18 @@ app.post("/twilio", async (req, res) => {
         giulia.reservation,
         callId
       );
-      const { date, time, people, name } = normalizedRes;
+      const { date, time, people, name, customerEmail } = normalizedRes;
 
       if (date && time && people && name) {
-        // 🔴 CASO EVENTO: sopra i 45 coperti → niente Calendar, mail al proprietario + messaggio al cliente
-        if (people >= 45) {
+        // 🔴 CASO EVENTO: sopra EVENT_THRESHOLD coperti → niente Calendar, mail al proprietario + messaggio al cliente
+        if (people >= EVENT_THRESHOLD) {
           await sendOwnerEmail({
             name,
             people,
             date,
             time,
             phone: From,
+            customerEmail,
           });
 
           if (currentLang === "en-US") {
@@ -610,6 +875,7 @@ app.post("/twilio", async (req, res) => {
               data: date,
               ora: time,
               telefono: From,
+              email: customerEmail || "",
             });
 
             // 🔴 Slot pieno: non confermare la prenotazione, proponi un altro orario
@@ -634,6 +900,36 @@ app.post("/twilio", async (req, res) => {
                 reservation: normalizedRes,
                 fromAppsScript: calendarRes,
               });
+
+              // 🔸 Se è un grande gruppo (ma sotto la soglia evento), invia mail al proprietario per conferma/annullo
+              if (people > LARGE_GROUP_THRESHOLD) {
+                const eventId =
+                  calendarRes.eventId ||
+                  calendarRes.id ||
+                  calendarRes.event_id ||
+                  null;
+
+                await sendLargeGroupEmailToOwner({
+                  reservation: {
+                    date,
+                    time,
+                    people,
+                    name,
+                    customerEmail,
+                    phone: From,
+                  },
+                  eventId,
+                });
+
+                // aggiungi una frase che spiega che è soggetta a conferma
+                if (currentLang === "en-US") {
+                  replyText +=
+                    " This booking for a large group is subject to confirmation by the restaurant. You will receive a confirmation by email or phone.";
+                } else {
+                  replyText +=
+                    " Questa prenotazione per un gruppo numeroso è soggetta a conferma da parte del ristorante. Riceverai una conferma via email o telefono.";
+                }
+              }
             } else {
               console.error(
                 "❌ Errore nella creazione prenotazione (non slot_full):",
