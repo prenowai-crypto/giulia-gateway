@@ -5,7 +5,6 @@
 import express from "express";
 import bodyParser from "body-parser";
 import cors from "cors";
-import nodemailer from "nodemailer";
 
 const app = express();
 
@@ -15,7 +14,7 @@ const app = express();
 const RECEPTIONIST_NAME = "Receptionist"; // es. "Giulia"
 const RESTAURANT_NAME = "Ristorante"; // es. "Ristorante Da Mario"
 
-// Web App di Google Apps Script per il Calendar
+// Web App di Google Apps Script per il Calendar + notifiche evento
 const APPS_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbxMYLD4wfNopBN61SZRs46PfZFRs3Bn8kZMWPEgW8k_PWicCtj47Xfzy12vrCjWNqkRdA/exec";
 
@@ -25,48 +24,43 @@ const BASE_URL = "https://giulia-gateway.onrender.com";
 // Email proprietario / gestione eventi
 const OWNER_EMAIL = "prenowai@gmail.com";
 
-// Transporter per inviare email al proprietario
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-  },
-});
-
-// invio mail al proprietario per gruppi grandi (evento)
+// invio mail al proprietario per gruppi grandi (evento) tramite Apps Script
 async function sendOwnerEmail({ name, people, date, time, phone }) {
-  if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-    console.warn(
-      "⚠️ MAIL_USER o MAIL_PASS non impostate, salto invio email al proprietario."
-    );
-    return;
-  }
-
-  const mailOptions = {
-    from: process.env.MAIL_USER,
-    to: OWNER_EMAIL,
-    subject: `Richiesta evento grande: ${people} coperti`,
-    text:
-      `Ciao,\n\n` +
-      `è arrivata una richiesta telefonica per una prenotazione considerata evento (sopra soglia coperti).\n\n` +
-      `Dettagli richiesta:\n` +
-      `- Nome: ${name}\n` +
-      `- Persone: ${people}\n` +
-      `- Data: ${date}\n` +
-      `- Ora: ${time}\n` +
-      (phone ? `- Telefono: ${phone}\n` : "") +
-      `\nLa prenotazione NON è stata inserita in calendario perché supera la soglia coperti.\n` +
-      `Il cliente è stato invitato a scrivere una mail a ${OWNER_EMAIL} con tutti i dettagli per gestire l'evento.\n\n` +
-      `A presto,\n` +
-      `Receptionist AI\n`,
-  };
-
   try {
-    await transporter.sendMail(mailOptions);
-    console.log("✉️ Email inviata al proprietario per evento grande.");
+    const payload = {
+      action: "notify_big_event", // da gestire in Apps Script
+      nome: name,
+      persone: people,
+      data: date,
+      ora: time,
+      telefono: phone || "",
+      ownerEmail: OWNER_EMAIL,
+    };
+
+    console.log("📧 Invio richiesta evento grande a Apps Script:", payload);
+
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      data = { rawResponse: text };
+    }
+
+    if (!response.ok) {
+      console.error("❌ Errore Apps Script (email proprietario):", data);
+      return;
+    }
+
+    console.log("✉️ Risposta Apps Script (email proprietario):", data);
   } catch (err) {
-    console.error("❌ Errore nell'invio email al proprietario:", err);
+    console.error("❌ Errore chiamando Apps Script per email proprietario:", err);
   }
 }
 
@@ -589,7 +583,6 @@ app.post("/twilio", async (req, res) => {
       if (date && time && people && name) {
         // 🔴 CASO EVENTO: sopra i 45 coperti → niente Calendar, mail al proprietario + messaggio al cliente
         if (people >= 45) {
-          // invia mail al proprietario con i dettagli
           await sendOwnerEmail({
             name,
             people,
