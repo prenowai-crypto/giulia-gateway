@@ -134,12 +134,28 @@ GESTIONE ORARI:
   - "alle 9" -> "21:00:00"
 - Se il cliente specifica chiaramente "di mattina" o "di pomeriggio", rispetta quello che dice.
 
+GESTIONE CANCELLAZIONI:
+- Se il cliente vuole annullare una prenotazione (es. "vorrei cancellare la prenotazione", "puoi annullare il tavolo di domani a nome Mirko"):
+  - prova a capire chiaramente:
+    - giorno (es. oggi, domani, 7 novembre) → mettilo in reservation.date in formato YYYY-MM-DD
+    - nome della prenotazione (reservation.name)
+    - orario solo se il cliente lo specifica (reservation.time), altrimenti puoi lasciarlo null.
+- Se non sei sicura di quale prenotazione annullare, chiedi UNA sola domanda di chiarimento (es. "Per quale giorno vuoi cancellare la prenotazione?").
+- Quando hai capito cosa annullare, usa:
+  - "action": "cancel_reservation"
+  - "reservation.date": con la data in formato YYYY-MM-DD
+  - "reservation.time": se il cliente dice un orario specifico, altrimenti null
+  - "reservation.name": il nome della prenotazione
+- Nella "reply_text" non dire che è già cancellata finché non hai usato "cancel_reservation":
+  - frasi tipo: "Va bene, procedo a cancellare la prenotazione." o "Ok, la metto come annullata."
+  - la conferma finale verrà completata dal sistema.
+
 FORMATO DI USCITA:
 Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
 {
   "reply_text": "testo che devo dire a voce al cliente",
-  "action": "none | ask_date | ask_time | ask_people | ask_name | answer_menu | answer_generic | create_reservation",
+  "action": "none | ask_date | ask_time | ask_people | ask_name | answer_menu | answer_generic | create_reservation | cancel_reservation",
   "reservation": {
     "date": "YYYY-MM-DD oppure null",
     "time": "HH:MM:SS oppure null",
@@ -152,6 +168,7 @@ Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 Regole:
 - "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
 - "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione.
+- "action" = "cancel_reservation" quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome/orario).
 - "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
 - Negli altri casi usa l’action del passo successivo (ask_date, ask_time, ask_people, ask_name, answer_menu, answer_generic).
 - Se il cliente chiede solo informazioni (es. su pesce o prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
@@ -308,7 +325,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   return { date, time, people, name, customerEmail };
 }
 
-// Invio dati a Google Apps Script per creare evento su Calendar
+// Invio dati a Google Apps Script per creare/aggiornare/cancellare evento su Calendar
 async function sendToCalendar(payload) {
   console.log("📅 Invio dati a Apps Script:", payload);
 
@@ -682,20 +699,101 @@ app.post("/twilio", async (req, res) => {
     let slotFull = false;
     let isLargeGroupReservation = false;
 
-    // Se è una prenotazione finale, invia al Calendar (con controllo coperti)
+    // 🔹 Gestione cancellazione prenotazione standard
+    if (action === "cancel_reservation" && giulia.reservation) {
+      const normalizedRes = normalizeReservationForCalendar(
+        giulia.reservation,
+        callId
+      );
+      const { date, time, name } = normalizedRes;
+
+      if (!date) {
+        // non sappiamo cosa cancellare → chiedi la data
+        if (currentLang === "en-US") {
+          replyText =
+            "I'm sorry, I didn't understand which booking you want to cancel. Could you please tell me the day of the reservation?";
+        } else {
+          replyText =
+            "Mi dispiace, non ho capito quale prenotazione vuoi cancellare. Mi dici per quale giorno era la prenotazione?";
+        }
+        action = "ask_date";
+      } else {
+        try {
+          const calendarRes = await sendToCalendar({
+            action: "cancel_reservation",
+            nome: name || "",
+            data: date,
+            ora: time || null,
+            telefono: From,
+          });
+
+          if (calendarRes && calendarRes.success) {
+            if (currentLang === "en-US") {
+              replyText =
+                "Your reservation has been cancelled. We hope to see you another time. Have a nice evening.";
+            } else {
+              replyText =
+                "Ho cancellato la tua prenotazione. Speriamo di vederti un'altra volta, buona serata.";
+            }
+          } else if (
+            calendarRes &&
+            calendarRes.reason === "reservation_not_found"
+          ) {
+            if (currentLang === "en-US") {
+              replyText =
+                "I couldn't find any booking with these details. Please contact the restaurant directly to cancel.";
+            } else {
+              replyText =
+                "Non ho trovato nessuna prenotazione con questi dati. Ti chiedo di contattare direttamente il ristorante per annullare.";
+            }
+            action = "none";
+          } else {
+            console.error(
+              "❌ Errore da Apps Script per cancel_reservation:",
+              calendarRes
+            );
+            if (currentLang === "en-US") {
+              replyText =
+                "I'm sorry, there was a technical problem while cancelling. Please contact the restaurant directly.";
+            } else {
+              replyText =
+                "Mi dispiace, c'è stato un problema tecnico durante l'annullamento. Ti chiedo di contattare direttamente il ristorante.";
+            }
+            action = "none";
+          }
+        } catch (calErr) {
+          console.error("❌ Errore tecnico cancel_reservation:", calErr);
+          if (currentLang === "en-US") {
+            replyText =
+              "I'm sorry, there was a technical problem. Please contact the restaurant directly.";
+          } else {
+            replyText =
+              "Mi dispiace, c'è stato un problema tecnico. Ti chiedo di contattare direttamente il ristorante.";
+          }
+          action = "none";
+        }
+      }
+    }
+
+    // 🔹 Se è una prenotazione finale, invia al Calendar (con controllo coperti)
     if (action === "create_reservation" && giulia.reservation) {
       const normalizedRes = normalizeReservationForCalendar(
         giulia.reservation,
         callId
       );
-      const { date, time, people, name, customerEmail } = normalizedRes;
+      let { date, time, people, name, customerEmail } = normalizedRes;
 
-      if (date && time && people && name) {
+      // people può essere null nei casi di modifica (il cliente ha solo cambiato orario)
+      // qui richiediamo solo data, ora e nome
+      if (date && time && name) {
+        const numericPeople =
+          typeof people === "number" && !isNaN(people) ? people : null;
+
         // EVENTO GIGANTE: sopra EVENT_THRESHOLD
-        if (people >= EVENT_THRESHOLD) {
+        if (numericPeople !== null && numericPeople >= EVENT_THRESHOLD) {
           await sendOwnerEmail({
             name,
-            people,
+            people: numericPeople,
             date,
             time,
             phone: From,
@@ -712,11 +810,11 @@ app.post("/twilio", async (req, res) => {
 
           action = "none";
         } else {
-          // Flusso normale: invio al Calendar
+          // Flusso normale: invio al Calendar ANCHE SE people è null
           try {
             const calendarRes = await sendToCalendar({
               nome: name,
-              persone: people,
+              persone: numericPeople, // può essere null → Apps Script userà quelle esistenti se possibile
               data: date,
               ora: time,
               telefono: From,
@@ -740,28 +838,28 @@ app.post("/twilio", async (req, res) => {
 
               action = "ask_time";
             } else if (calendarRes && calendarRes.success) {
-              console.log("✅ Prenotazione creata:", {
+              console.log("✅ Prenotazione creata/aggiornata:", {
                 reservation: normalizedRes,
                 fromAppsScript: calendarRes,
               });
 
-              // Grande gruppo (ma non evento): messaggio chiaro "soggetto a conferma"
-              if (people > LARGE_GROUP_THRESHOLD) {
+              // Grande gruppo (ma non evento gigante): messaggio chiaro "soggetto a conferma"
+              if (numericPeople !== null && numericPeople > LARGE_GROUP_THRESHOLD) {
                 isLargeGroupReservation = true;
 
                 if (currentLang === "en-US") {
                   replyText =
-                    `I've registered your request for a table for ${people} people. ` +
+                    `I've registered your request for a table for ${numericPeople} people. ` +
                     "For large groups the booking is subject to confirmation by the restaurant; you will receive a confirmation by email or phone. Thank you and have a nice evening.";
                 } else {
                   replyText =
-                    `Ho registrato la tua richiesta di prenotazione per ${people} persone. ` +
+                    `Ho registrato la tua richiesta di prenotazione per ${numericPeople} persone. ` +
                     "Per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante: riceverai una conferma via email o telefono. Grazie e buona serata.";
                 }
               }
             } else {
               console.error(
-                "❌ Errore nella creazione prenotazione (non slot_full):",
+                "❌ Errore nella creazione/aggiornamento prenotazione (non slot_full):",
                 calendarRes
               );
               if (currentLang === "en-US") {
@@ -787,13 +885,18 @@ app.post("/twilio", async (req, res) => {
         }
       } else {
         console.warn(
-          "⚠️ create_reservation senza dati completi:",
+          "⚠️ create_reservation senza data/ora/nome:",
           normalizedRes
         );
       }
     }
 
-    const shouldHangup = action === "create_reservation" && !slotFull;
+    // chiudi la chiamata per:
+    // - prenotazione finale andata a buon fine
+    // - cancellazione andata a buon fine
+    const shouldHangup =
+      (action === "create_reservation" || action === "cancel_reservation") &&
+      !slotFull;
 
     let twiml;
     if (shouldHangup) {
