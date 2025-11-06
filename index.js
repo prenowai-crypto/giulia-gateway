@@ -21,20 +21,18 @@ const APPS_SCRIPT_URL =
 // URL pubblico di questo server su Render
 const BASE_URL = "https://giulia-gateway.onrender.com";
 
-// Email proprietario / gestione eventi (usata da Apps Script)
+// Email proprietario / gestione eventi
 const OWNER_EMAIL = "prenowai@gmail.com";
 
-// Soglia per gruppi "grandi" (richiedono conferma del ristoratore)
-const LARGE_GROUP_THRESHOLD = 10;
+// Soglie per gruppi
+const LARGE_GROUP_THRESHOLD = 10;  // sopra → “grande gruppo”, da confermare
+const EVENT_THRESHOLD = 45;        // sopra → evento gigante, niente Calendar
 
-// Soglia per "eventi" molto grandi (gestiti separatamente)
-const EVENT_THRESHOLD = 45;
-
-// ---------- INVIO NOTIFICA EVENTO GRANDE A APPS SCRIPT ----------
+// invio mail al proprietario per gruppi enormi (evento) tramite Apps Script
 async function sendOwnerEmail({ name, people, date, time, phone, customerEmail }) {
   try {
     const payload = {
-      action: "notify_big_event",
+      action: "notify_big_event", // gestito in Apps Script
       nome: name,
       persone: people,
       data: date,
@@ -126,7 +124,7 @@ GESTIONE CORREZIONI:
 - Se il cliente cambia argomento (es. da prenotazione a menù), rispondi alla domanda, poi riportalo gentilmente alla prenotazione.
 
 NOME:
-- Se il cliente ti ha già detto chiaramente il nome (es. "mi chiamo Marco", "sono Gianfrancesco"), NON chiederlo di nuovo.
+- Se il cliente ti ha già detto chiaramente il nome (es. "mi chiamo Marco", "sono Mirko"), NON chiederlo di nuovo.
 - In quel caso usa direttamente quel nome nella prenotazione, senza ripetere la domanda "come ti chiami?".
 
 GESTIONE ORARI:
@@ -507,7 +505,6 @@ app.get("/owner/large-group/confirm", async (req, res) => {
     const payload = JSON.parse(json);
     const { eventId, date, time, people, name, customerEmail, phone } = payload;
 
-    // Avvisa Apps Script di confermare la prenotazione
     await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -523,7 +520,6 @@ app.get("/owner/large-group/confirm", async (req, res) => {
       }),
     });
 
-    // Risposta HTML per il ristoratore
     res.send(`
       <html>
         <body style="font-family: system-ui; padding: 24px;">
@@ -552,7 +548,6 @@ app.get("/owner/large-group/cancel", async (req, res) => {
     const payload = JSON.parse(json);
     const { eventId, date, time, people, name, customerEmail, phone } = payload;
 
-    // Avvisa Apps Script di cancellare la prenotazione
     await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -611,7 +606,6 @@ app.post("/twilio", async (req, res) => {
 
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto (default IT)
   if (!SpeechResult) {
-    // Imposta lingua di default per la chiamata
     setCallLanguage(callId, "it-IT");
     const welcomeText = `Ciao, sono ${RECEPTIONIST_NAME} del ${RESTAURANT_NAME}. Come posso aiutarti oggi?`;
 
@@ -644,7 +638,6 @@ app.post("/twilio", async (req, res) => {
     const lower = userTextRaw.toLowerCase();
     console.log("👤 Utente dopo prenotazione:", userTextRaw);
 
-    // aggiorna lingua se in questo ultimo turno chiede inglese
     maybeSwitchToEnglish(callId, userTextRaw);
     const currentLang = getCallLanguage(callId);
 
@@ -669,8 +662,6 @@ app.post("/twilio", async (req, res) => {
 
       return res.status(200).type("text/xml").send(goodbyeTwiml);
     }
-
-    // se NON è solo un grazie, continuiamo nel flusso normale qui sotto
   }
 
   // ---- Flusso normale Twilio (voce) ----
@@ -678,10 +669,9 @@ app.post("/twilio", async (req, res) => {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
 
-    // Se in questo turno chiede l’inglese, switchiamo Twilio su en-US da ora in poi
     maybeSwitchToEnglish(callId, userText);
     const currentLang = getCallLanguage(callId);
-    const sayLang = currentLang; // stessa lingua per la voce
+    const sayLang = currentLang;
 
     const giulia = await askGiulia(callId, userText);
     let replyText =
@@ -690,8 +680,9 @@ app.post("/twilio", async (req, res) => {
     let action = giulia.action || "none";
 
     let slotFull = false;
+    let isLargeGroupReservation = false;
 
-    // Se è una prenotazione finale, invia al Calendar (con controllo coperti max)
+    // Se è una prenotazione finale, invia al Calendar (con controllo coperti)
     if (action === "create_reservation" && giulia.reservation) {
       const normalizedRes = normalizeReservationForCalendar(
         giulia.reservation,
@@ -700,7 +691,7 @@ app.post("/twilio", async (req, res) => {
       const { date, time, people, name, customerEmail } = normalizedRes;
 
       if (date && time && people && name) {
-        // 🔴 CASO EVENTO: sopra EVENT_THRESHOLD coperti → niente Calendar, mail al proprietario + messaggio al cliente
+        // EVENTO GIGANTE: sopra EVENT_THRESHOLD
         if (people >= EVENT_THRESHOLD) {
           await sendOwnerEmail({
             name,
@@ -719,10 +710,9 @@ app.post("/twilio", async (req, res) => {
               "Per prenotazioni sopra i 40 coperti le gestiamo come evento privato. Ti chiedo di mandare una mail a prenowai@gmail.com con tutti i dettagli così il ristorante può gestirla direttamente.";
           }
 
-          // non creiamo la prenotazione sul calendario
           action = "none";
         } else {
-          // ✅ flusso normale: invio al Calendar
+          // Flusso normale: invio al Calendar
           try {
             const calendarRes = await sendToCalendar({
               nome: name,
@@ -733,7 +723,6 @@ app.post("/twilio", async (req, res) => {
               email: customerEmail || "",
             });
 
-            // 🔴 Slot pieno: non confermare la prenotazione, proponi un altro orario
             if (!calendarRes.success && calendarRes.reason === "slot_full") {
               slotFull = true;
               console.log(
@@ -749,21 +738,25 @@ app.post("/twilio", async (req, res) => {
                   "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
               }
 
-              action = "ask_time"; // chiedi nuovo orario/giorno, non chiudere la chiamata
+              action = "ask_time";
             } else if (calendarRes && calendarRes.success) {
               console.log("✅ Prenotazione creata:", {
                 reservation: normalizedRes,
                 fromAppsScript: calendarRes,
               });
 
-              // 🔸 Se è un grande gruppo (ma sotto la soglia evento), è soggetto a conferma
+              // Grande gruppo (ma non evento): messaggio chiaro "soggetto a conferma"
               if (people > LARGE_GROUP_THRESHOLD) {
+                isLargeGroupReservation = true;
+
                 if (currentLang === "en-US") {
-                  replyText +=
-                    " This booking for a large group is subject to confirmation by the restaurant. You will receive a confirmation by email or phone.";
+                  replyText =
+                    `I've registered your request for a table for ${people} people. ` +
+                    "For large groups the booking is subject to confirmation by the restaurant; you will receive a confirmation by email or phone. Thank you and have a nice evening.";
                 } else {
-                  replyText +=
-                    " Questa prenotazione per un gruppo numeroso è soggetta a conferma da parte del ristorante. Riceverai una conferma via email o telefono.";
+                  replyText =
+                    `Ho registrato la tua richiesta di prenotazione per ${people} persone. ` +
+                    "Per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante: riceverai una conferma via email o telefono. Grazie e buona serata.";
                 }
               }
             } else {
@@ -800,13 +793,14 @@ app.post("/twilio", async (req, res) => {
       }
     }
 
-    // chiudi la chiamata SOLO se la prenotazione è andata a buon fine
     const shouldHangup = action === "create_reservation" && !slotFull;
 
     let twiml;
     if (shouldHangup) {
-      // saluto finale + finestra 5 secondi per eventuali ultime richieste
-      const finalReply = addClosingSalute(replyText);
+      // Per i grandi gruppi NON aggiungo saluti extra, uso il testo così com'è.
+      const finalReply = isLargeGroupReservation
+        ? replyText
+        : addClosingSalute(replyText);
 
       twiml = `
         <Response>
