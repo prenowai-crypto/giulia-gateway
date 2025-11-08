@@ -110,6 +110,14 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Se il cliente dice che NON è corretta, chiedigli di ridettare l'email con calma, sovrascrivi il valore precedente e ripeti DI NUOVO lo spelling prima di andare avanti.
 - Non andare mai alla risposta finale di prenotazione se non hai completato questo controllo sull'email (quando il cliente ti ha fornito un'email).
 
+EMAIL DEL RISTORANTE (IMPORTANTE):
+- L'email ufficiale del ristorante è: ${OWNER_EMAIL}.
+- Quando il cliente chiede "l'email del ristorante", "a che indirizzo devo scrivere", "la vostra mail", oppure in inglese "the restaurant email", "email of the restaurant", "where should I write to the restaurant", ecc.:
+  - devi SEMPRE rispondere con questo indirizzo email.
+  - puoi fare lo spelling, ma l'indirizzo deve restare esattamente ${OWNER_EMAIL}.
+  - NON inventare mai altri indirizzi (niente "ristorante@gmail.com", "info@...", "ristorante premio@gmail.com" ecc.).
+- Non mettere mai l'email del ristorante in reservation.customerEmail: in reservation.customerEmail va SOLO l'email del cliente.
+
 CONVERSAZIONE "SVEGLIA":
 - Quando il cliente dice che vuole prenotare, chiedi SUBITO almeno due informazioni insieme, se possibile:
   - ad esempio: giorno E orario, oppure giorno E numero di persone, oppure orario E nome.
@@ -272,6 +280,80 @@ function maybeSwitchToEnglish(callId, userText) {
   if (wantsEnglish) {
     setCallLanguage(callId, "en-US");
   }
+}
+
+// Rileva se l’utente vuole passare all’italiano (es. "I'm Italian and not understanding you")
+function maybeSwitchToItalian(callId, userText) {
+  const t = (userText || "").toLowerCase();
+  const wantsItalian =
+    t.includes("parli italiano") ||
+    t.includes("parla italiano") ||
+    t.includes("in italiano") ||
+    ((t.includes("italian") || t.includes("italiano")) &&
+      (t.includes("not understand") ||
+        t.includes("not understanding") ||
+        t.includes("don't understand") ||
+        t.includes("dont understand") ||
+        t.includes("non capisco")));
+
+  if (wantsItalian) {
+    setCallLanguage(callId, "it-IT");
+  }
+}
+
+// Controlla se l’utente sta chiedendo la mail del ristorante
+function isAskingRestaurantEmail(text = "") {
+  const t = text.toLowerCase();
+
+  // Italiano
+  if (
+    t.includes("mail del ristorante") ||
+    t.includes("email del ristorante") ||
+    t.includes("indirizzo email del ristorante") ||
+    t.includes("mail del locale") ||
+    t.includes("email del locale") ||
+    (t.includes("devo scrivere") && (t.includes("mail") || t.includes("email")))
+  ) {
+    return true;
+  }
+
+  // Inglese
+  if (
+    t.includes("restaurant email") ||
+    t.includes("email of the restaurant") ||
+    t.includes("restaurant's email") ||
+    (t.includes("email address") && t.includes("restaurant")) ||
+    (t.includes("where") && t.includes("email") && t.includes("restaurant"))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+// Spella genericamente una mail in base alla lingua
+function spellEmailForLang(email, lang) {
+  if (!email || typeof email !== "string") return "";
+  const [localPart, domainPartRaw] = email.split("@");
+  const domainPart = domainPartRaw || "";
+
+  const localSpelled = localPart.split("").join(" ");
+  const domainPieces = domainPart.split(".");
+  const spelledPieces = domainPieces.map((p) => p.split("").join(" "));
+  const joinWord = lang === "en-US" ? " dot " : " punto ";
+  const domainSpelled = spelledPieces.join(joinWord);
+  const atWord = lang === "en-US" ? "at" : "chiocciola";
+
+  return `${localSpelled} ${atWord} ${domainSpelled}`;
+}
+
+// Testo di risposta con l'email del ristorante, già pronto per TTS
+function getRestaurantEmailReply(lang) {
+  const spelled = spellEmailForLang(OWNER_EMAIL, lang);
+  if (lang === "en-US") {
+    return `Sure, the restaurant's email is: ${spelled}.`;
+  }
+  return `Certo, l'email del ristorante è: ${spelled}.`;
 }
 
 // Aggiunge un saluto finale se manca (per le risposte di chiusura)
@@ -714,7 +796,7 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 
 // ---------- /twilio ----------
 app.post("/twilio", async (req, res) => {
-  const { CallSid, SpeechResult, text, From } = req.body || {};
+  const { CallSid, SpeechResult, text, From, Language } = req.body || {};
   const { postFinal } = req.query || {};
   const isDebug = !!text && !SpeechResult;
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
@@ -773,6 +855,7 @@ app.post("/twilio", async (req, res) => {
     // memorizzo anche questo testo (non fa male per la history)
     appendUserText(callId, userTextRaw);
     maybeSwitchToEnglish(callId, userTextRaw);
+    maybeSwitchToItalian(callId, userTextRaw);
     const currentLang = getCallLanguage(callId);
 
     const isThanksOnly =
@@ -803,12 +886,54 @@ app.post("/twilio", async (req, res) => {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
 
+    // allineo la lingua alla STT di Twilio (aiuta lo switch IT/EN)
+    if (Language && typeof Language === "string") {
+      const lowerLang = Language.toLowerCase();
+      if (lowerLang.startsWith("en")) {
+        setCallLanguage(callId, "en-US");
+      } else if (lowerLang.startsWith("it")) {
+        setCallLanguage(callId, "it-IT");
+      }
+    }
+
     // Salvo il testo utente nella cronologia "grezza" per inferDateFromConversation
     appendUserText(callId, userText);
 
     maybeSwitchToEnglish(callId, userText);
+    maybeSwitchToItalian(callId, userText);
     const currentLang = getCallLanguage(callId);
     const sayLang = currentLang;
+
+    // 🔹 Intercetta domande del tipo "mail del ristorante" e rispondi direttamente
+    if (isAskingRestaurantEmail(userText)) {
+      const reply = getRestaurantEmailReply(currentLang);
+
+      const twimlEmail = `
+        <Response>
+          <Gather
+            input="speech"
+            language="${currentLang}"
+            action="${BASE_URL}/twilio${postFinal === "1" ? "?postFinal=1" : ""}"
+            method="POST"
+            timeout="5"
+            speechTimeout="auto"
+          >
+            <Say language="${sayLang}" bargeIn="true">
+              ${escapeXml(reply)}
+            </Say>
+          </Gather>
+          <Say language="${sayLang}">
+            ${escapeXml(
+              currentLang === "en-US"
+                ? "If you need anything else, please call us again. Thank you."
+                : "Se hai bisogno di altro, richiamaci pure. Grazie."
+            )}
+          </Say>
+        </Response>
+      `.trim();
+
+      return res.status(200).type("text/xml").send(twimlEmail);
+    }
 
     const giulia = await askGiulia(callId, userText);
     let replyText =
@@ -922,10 +1047,10 @@ app.post("/twilio", async (req, res) => {
 
           if (currentLang === "en-US") {
             replyText =
-              "For bookings over 40 people we treat it as a private event. Please send an email to prenowai@gmail.com with all the details so the restaurant can handle it directly.";
+              "For bookings over 45 people we treat it as a private event. Please send an email to prenowai@gmail.com with all the details so the restaurant can handle it directly.";
           } else {
             replyText =
-              "Per prenotazioni sopra i 40 coperti le gestiamo come evento privato. Ti chiedo di mandare una mail a prenowai@gmail.com con tutti i dettagli così il ristorante può gestirla direttamente.";
+              "Per prenotazioni sopra i 45 coperti le gestiamo come evento privato. Ti chiedo di mandare una mail a prenowai@gmail.com con tutti i dettagli così il ristorante può gestirla direttamente.";
           }
 
           action = "none";
