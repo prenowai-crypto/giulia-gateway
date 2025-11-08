@@ -856,7 +856,7 @@ app.post("/twilio", async (req, res) => {
   const { CallSid, SpeechResult, text, From, Language } = req.body || {};
   const { postFinal } = req.query || {};
   const isDebug = !!text && !SpeechResult;
-  const callId = CallSid || (isDebug ? "debug-call" : "unknown-call";
+  const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
   console.log("📞 /twilio body:", req.body);
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
