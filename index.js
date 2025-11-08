@@ -107,6 +107,9 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
   - Usa parole come "chiocciola" per "@", "punto" per ".", e pronuncia i numeri chiaramente (es. "uno tre").
 - In inglese:
   - Esempio: "So your email is m i r k o c a r t a 1 3 at gmail dot com, is that correct?"
+- Per domini molto comuni come "gmail.com", "outlook.com", "yahoo.com":
+  - NON fare lo spelling lettera per lettera del dominio.
+  - Di' semplicemente: "gmail punto com", "outlook punto com", ecc.
 - Se il cliente dice che NON è corretta, chiedigli di ridettare l'email con calma, sovrascrivi il valore precedente e ripeti DI NUOVO lo spelling prima di andare avanti.
 - Non andare mai alla risposta finale di prenotazione se non hai completato questo controllo sull'email (quando il cliente ti ha fornito un'email).
 
@@ -301,17 +304,30 @@ function maybeSwitchToItalian(callId, userText) {
   }
 }
 
-// Controlla se l’utente sta chiedendo la mail del ristorante
-function isAskingRestaurantEmail(text = "") {
+// Riconosce se l'utente sta chiedendo l'email del ristorante
+function isRestaurantEmailQuestion(text = "") {
   const t = text.toLowerCase();
+
+  // se parla della "mia mail" / "my email" NON è la mail del ristorante
+  if (
+    t.includes("mia mail") ||
+    t.includes("la mia mail") ||
+    t.includes("la mia email") ||
+    t.includes("my email")
+  ) {
+    return false;
+  }
 
   // Italiano
   if (
     t.includes("mail del ristorante") ||
     t.includes("email del ristorante") ||
     t.includes("indirizzo email del ristorante") ||
+    t.includes("indirizzo del ristorante") ||
     t.includes("mail del locale") ||
     t.includes("email del locale") ||
+    t.includes("mail del posto") ||
+    t.includes("email del posto") ||
     (t.includes("devo scrivere") && (t.includes("mail") || t.includes("email")))
   ) {
     return true;
@@ -331,29 +347,69 @@ function isAskingRestaurantEmail(text = "") {
   return false;
 }
 
-// Spella genericamente una mail in base alla lingua
-function spellEmailForLang(email, lang) {
-  if (!email || typeof email !== "string") return "";
-  const [localPart, domainPartRaw] = email.split("@");
-  const domainPart = domainPartRaw || "";
+// Riconosce se chiede esplicitamente lo spelling della mail (di solito quella del ristorante)
+function isRestaurantEmailSpellingRequest(text = "") {
+  const t = text.toLowerCase();
 
-  const localSpelled = localPart.split("").join(" ");
-  const domainPieces = domainPart.split(".");
-  const spelledPieces = domainPieces.map((p) => p.split("").join(" "));
-  const joinWord = lang === "en-US" ? " dot " : " punto ";
-  const domainSpelled = spelledPieces.join(joinWord);
-  const atWord = lang === "en-US" ? "at" : "chiocciola";
+  if (isRestaurantEmailQuestion(t)) return true;
 
-  return `${localSpelled} ${atWord} ${domainSpelled}`;
+  return (
+    t.includes("spelling della mail") ||
+    t.includes("spelling dell'email") ||
+    t.includes("puoi dettarmi la mail") ||
+    t.includes("puoi dettarmi l'email") ||
+    t.includes("mi puoi fare lo spelling della mail") ||
+    t.includes("come si scrive la vostra mail") ||
+    t.includes("come si scrive la mail del ristorante") ||
+    t.includes("how do you spell your email") ||
+    t.includes("can you spell the email") ||
+    t.includes("spell your email")
+  );
 }
 
-// Testo di risposta con l'email del ristorante, già pronto per TTS
-function getRestaurantEmailReply(lang) {
-  const spelled = spellEmailForLang(OWNER_EMAIL, lang);
-  if (lang === "en-US") {
-    return `Sure, the restaurant's email is: ${spelled}.`;
+// Converte un'email in una stringa "parlata" per il TTS
+function spellEmailForTTS(email, lang = "it-IT") {
+  if (!email || typeof email !== "string") return "";
+
+  const [localPart, domainAndTld] = email.split("@");
+  if (!localPart || !domainAndTld) return email;
+
+  const domainParts = domainAndTld.split(".");
+  const domain = domainParts[0] || "";
+  const tld = domainParts.slice(1).join("."); // gestisce anche "co.uk"
+
+  function spellCharIt(ch) {
+    const lower = ch.toLowerCase();
+    if (lower === "w") return "doppia vu";
+    return ch; // Twilio leggerà la lettera
   }
-  return `Certo, l'email del ristorante è: ${spelled}.`;
+
+  const localSpelled =
+    lang === "en-US"
+      ? localPart.split("").join(" ")
+      : localPart
+          .split("")
+          .map(spellCharIt)
+          .join(" ");
+
+  const commonDomains = ["gmail", "outlook", "hotmail", "yahoo", "icloud"];
+  const isCommonDomain = commonDomains.includes(domain.toLowerCase());
+
+  const domainSpoken = isCommonDomain
+    ? domain.toLowerCase() // "gmail", "outlook" ecc.
+    : domain.split("").join(" ");
+
+  const tldSpoken = tld || "";
+
+  if (lang === "en-US") {
+    let s = `${localSpelled} at ${domainSpoken}`;
+    if (tldSpoken) s += ` dot ${tldSpoken}`;
+    return s;
+  } else {
+    let s = `${localSpelled} chiocciola ${domainSpoken}`;
+    if (tldSpoken) s += ` punto ${tldSpoken}`;
+    return s;
+  }
 }
 
 // Aggiunge un saluto finale se manca (per le risposte di chiusura)
@@ -904,16 +960,22 @@ app.post("/twilio", async (req, res) => {
     const currentLang = getCallLanguage(callId);
     const sayLang = currentLang;
 
-    // 🔹 Intercetta domande del tipo "mail del ristorante" e rispondi direttamente
-    if (isAskingRestaurantEmail(userText)) {
-      const reply = getRestaurantEmailReply(currentLang);
+    // 🔹 Shortcut: l'utente chiede l'email del ristorante o lo spelling
+    if (isRestaurantEmailQuestion(userText) || isRestaurantEmailSpellingRequest(userText)) {
+      const restaurantEmail = OWNER_EMAIL;
+      const spelled = spellEmailForTTS(restaurantEmail, currentLang);
+
+      const reply =
+        currentLang === "en-US"
+          ? `The restaurant email is ${restaurantEmail}. I'll spell it: ${spelled}.`
+          : `L'email del ristorante è ${restaurantEmail}. Te la scandisco: ${spelled}.`;
 
       const twimlEmail = `
         <Response>
           <Gather
             input="speech"
             language="${currentLang}"
-            action="${BASE_URL}/twilio${postFinal === "1" ? "?postFinal=1" : ""}"
+            action="${BASE_URL}/twilio"
             method="POST"
             timeout="5"
             speechTimeout="auto"
@@ -1045,12 +1107,16 @@ app.post("/twilio", async (req, res) => {
             customerEmail,
           });
 
+          const spelledOwnerEmail = spellEmailForTTS(OWNER_EMAIL, currentLang);
+
           if (currentLang === "en-US") {
             replyText =
-              "For bookings over 45 people we treat it as a private event. Please send an email to prenowai@gmail.com with all the details so the restaurant can handle it directly.";
+              `For bookings over ${EVENT_THRESHOLD} people we treat it as a private event. ` +
+              `Please send an email to ${OWNER_EMAIL}; I'll spell it: ${spelledOwnerEmail}.`;
           } else {
             replyText =
-              "Per prenotazioni sopra i 45 coperti le gestiamo come evento privato. Ti chiedo di mandare una mail a prenowai@gmail.com con tutti i dettagli così il ristorante può gestirla direttamente.";
+              `Per prenotazioni sopra i ${EVENT_THRESHOLD} coperti le gestiamo come evento privato. ` +
+              `Ti chiedo di mandare una mail a ${OWNER_EMAIL}; te la scandisco: ${spelledOwnerEmail}.`;
           }
 
           action = "none";
