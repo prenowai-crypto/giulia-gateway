@@ -124,6 +124,17 @@ GESTIONE CORREZIONI:
 - Non farlo ricominciare da zero: aggiorna solo il pezzo che va cambiato (data, ora, persone, nome o email).
 - Se il cliente cambia argomento (es. da prenotazione a menù), rispondi alla domanda, poi riportalo gentilmente alla prenotazione.
 
+CAMBIO PRENOTAZIONE (CAMBIO DATA/ORARIO):
+- Se il cliente vuole CAMBIARE o SPOSTARE una prenotazione esistente (es. "vorrei spostare la prenotazione", "cambia l'orario", "mettila alle 21", "can you move my booking to 9pm"):
+  - NON usare "cancel_reservation" da solo.
+  - In questi casi devi:
+    1) capire la nuova data (anche con "domani", "dopodomani", "lunedì", "tomorrow", "next Monday", ecc.),
+    2) capire il nuovo orario,
+    3) mettere la nuova data e il nuovo orario in reservation.date e reservation.time,
+    4) usare "action": "create_reservation".
+- Il sistema aggiornerà automaticamente la prenotazione esistente per quel cliente (stesso numero di telefono) senza che tu faccia una cancellazione manuale separata.
+- Usa "cancel_reservation" SOLO quando il cliente vuole davvero annullare la prenotazione senza crearne un'altra (es. "vorrei cancellare la prenotazione", "annulla il tavolo").
+
 NOME:
 - Se il cliente ti ha già detto chiaramente il nome (es. "mi chiamo Marco", "sono Mirko"), NON chiederlo di nuovo.
 - In quel caso usa direttamente quel nome nella prenotazione, senza ripetere la domanda "come ti chiami?".
@@ -168,7 +179,7 @@ Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
 Regole:
 - "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
-- "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione.
+- "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione o per aggiornarne/ spostarne una già esistente.
 - "action" = "cancel_reservation" quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome/orario).
 - "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
 - Negli altri casi usa l’action del passo successivo (ask_date, ask_time, ask_people, ask_name, answer_menu, answer_generic).
@@ -259,6 +270,13 @@ function addClosingSalute(text = "") {
   return text + " Ti aspettiamo, buona serata.";
 }
 
+// Sanifica l'indirizzo email: rimuove tutti gli spazi
+function sanitizeEmail(email) {
+  if (!email || typeof email !== "string") return null;
+  const cleaned = email.replace(/\s+/g, "");
+  return cleaned || null;
+}
+
 // Prende da tutta la conversazione parole tipo "domani", "dopodomani", "stasera", "tomorrow", "tonight", ecc.
 function inferDateFromConversation(callId) {
   const convo = conversations.get(callId);
@@ -278,7 +296,8 @@ function inferDateFromConversation(callId) {
 
   if (
     allUserText.includes("day after tomorrow") ||
-    allUserText.includes("dopodomani")
+    allUserText.includes("dopodomani") ||
+    allUserText.includes("dopo domani")
   ) {
     offsetDays = 2;
   } else if (allUserText.includes("tomorrow") || allUserText.includes("domani")) {
@@ -376,6 +395,11 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
       }
       date = `${y}-${m}-${d}`;
     }
+  }
+
+  // sanifica email se presente
+  if (customerEmail) {
+    customerEmail = sanitizeEmail(customerEmail);
   }
 
   return { date, time, people, name, customerEmail };
@@ -535,6 +559,16 @@ async function askGiulia(callId, userText) {
     if (!Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")) {
       parsed.reservation.customerEmail = null;
     }
+  }
+
+  // Sanifica l'email nel JSON della prenotazione
+  if (
+    parsed.reservation &&
+    typeof parsed.reservation.customerEmail === "string"
+  ) {
+    parsed.reservation.customerEmail = sanitizeEmail(
+      parsed.reservation.customerEmail
+    );
   }
 
   convo.messages.push({
