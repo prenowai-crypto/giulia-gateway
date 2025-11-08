@@ -128,7 +128,7 @@ CAMBIO PRENOTAZIONE (CAMBIO DATA/ORARIO):
 - Se il cliente vuole CAMBIARE o SPOSTARE una prenotazione esistente (es. "vorrei spostare la prenotazione", "cambia l'orario", "mettila alle 21", "can you move my booking to 9pm"):
   - NON usare "cancel_reservation" da solo.
   - In questi casi devi:
-    1) capire la nuova data (anche con "domani", "dopodomani", "lunedì", "tomorrow", "next Monday", ecc.),
+    1) capire la nuova data (anche con "oggi", "domani", "dopodomani", "stasera", "lunedì", "tomorrow", "tonight", "next Monday", ecc.),
     2) capire il nuovo orario,
     3) mettere la nuova data e il nuovo orario in reservation.date e reservation.time,
     4) usare "action": "create_reservation".
@@ -179,7 +179,7 @@ Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
 Regole:
 - "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
-- "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione o per aggiornarne/ spostarne una già esistente.
+- "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione o per aggiornarne/spostarne una già esistente.
 - "action" = "cancel_reservation" quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome/orario).
 - "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
 - Negli altri casi usa l’action del passo successivo (ask_date, ask_time, ask_people, ask_name, answer_menu, answer_generic).
@@ -195,11 +195,15 @@ RISPOSTA FINALE (create_reservation):
     - in inglese: "We look forward to seeing you, have a nice evening."
 `;
 
-// Stato in memoria per ogni chiamata (CallSid -> conversazione)
+// Stato in memoria per ogni chiamata (CallSid -> conversazione usata per GPT)
 const conversations = new Map();
 
 // Nuova mappa: lingua della chiamata per Twilio STT/TTS (CallSid -> "it-IT" | "en-US")
 const callLanguages = new Map();
+
+// Nuova mappa: cronologia GREZZA dei testi utente (CallSid -> array di stringhe)
+// Usata SOLO per capire "oggi/domani/dopodomani/tomorrow/tonight" senza tagliare nulla.
+const userTextHistory = new Map();
 
 // ---------- MIDDLEWARE ----------
 app.use(cors());
@@ -226,6 +230,21 @@ function getCallLanguage(callId) {
 function setCallLanguage(callId, lang) {
   if (!callId) return;
   callLanguages.set(callId, lang);
+}
+
+// Aggiunge testo utente grezzo alla cronologia della chiamata
+function appendUserText(callId, text) {
+  if (!callId || !text) return;
+  const arr = userTextHistory.get(callId) || [];
+  arr.push(text);
+  userTextHistory.set(callId, arr);
+}
+
+// Ottiene tutta la conversazione utente (solo testo) in un'unica stringa
+function getAllUserText(callId) {
+  const arr = userTextHistory.get(callId);
+  if (!arr || arr.length === 0) return "";
+  return arr.join(" ");
 }
 
 // Rileva se l’utente sta chiedendo di passare all’inglese
@@ -277,15 +296,13 @@ function sanitizeEmail(email) {
   return cleaned || null;
 }
 
-// Prende da tutta la conversazione parole tipo "domani", "dopodomani", "stasera", "tomorrow", "tonight", ecc.
+// Prende da TUTTA la conversazione utente parole tipo
+// "domani", "dopo domani", "dopodomani", "stasera", "oggi",
+// "tomorrow", "day after tomorrow", "tonight", "this evening", "today",
+// e i giorni della settimana IT/EN.
 function inferDateFromConversation(callId) {
-  const convo = conversations.get(callId);
-  if (!convo || !Array.isArray(convo.messages)) return null;
-
-  const allUserText = convo.messages
-    .filter((m) => m.role === "user")
-    .map((m) => (m.content || "").toLowerCase())
-    .join(" ");
+  const allUserTextRaw = getAllUserText(callId);
+  const allUserText = (allUserTextRaw || "").toLowerCase();
 
   if (!allUserText.trim()) return null;
 
@@ -745,6 +762,8 @@ app.post("/twilio", async (req, res) => {
     const lower = userTextRaw.toLowerCase();
     console.log("👤 Utente dopo prenotazione:", userTextRaw);
 
+    // memorizzo anche questo testo (non fa male per la history)
+    appendUserText(callId, userTextRaw);
     maybeSwitchToEnglish(callId, userTextRaw);
     const currentLang = getCallLanguage(callId);
 
@@ -775,6 +794,9 @@ app.post("/twilio", async (req, res) => {
   try {
     const userText = SpeechResult.trim();
     console.log("👤 Utente dice:", userText);
+
+    // Salvo il testo utente nella cronologia "grezza" per inferDateFromConversation
+    appendUserText(callId, userText);
 
     maybeSwitchToEnglish(callId, userText);
     const currentLang = getCallLanguage(callId);
