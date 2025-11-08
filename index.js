@@ -100,12 +100,13 @@ OBIETTIVO:
 
 GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Quando il cliente ti detta l'indirizzo email, devi SEMPRE fare uno spelling chiaro, lettera per lettera, e chiedere conferma.
+- NON usare mai il simbolo "-" nello spelling: separa lettere e numeri solo con pause o spazi, non dire "trattino" o "meno".
 - In italiano:
   - Ripeti l'email separando le lettere con piccole pause, ad esempio:
-    "Quindi l'email è: m-i-r-k-o-c-a-r-t-a-1-3-chiocciola-gmail-punto-com, giusto?"
+    "Quindi l'email è: m i r k o c a r t a 1 3 chiocciola gmail punto com, giusto?"
   - Usa parole come "chiocciola" per "@", "punto" per ".", e pronuncia i numeri chiaramente (es. "uno tre").
 - In inglese:
-  - Esempio: "So your email is m-i-r-k-o-c-a-r-t-a-1-3 at gmail dot com, is that correct?"
+  - Esempio: "So your email is m i r k o c a r t a 1 3 at gmail dot com, is that correct?"
 - Se il cliente dice che NON è corretta, chiedigli di ridettare l'email con calma, sovrascrivi il valore precedente e ripeti DI NUOVO lo spelling prima di andare avanti.
 - Non andare mai alla risposta finale di prenotazione se non hai completato questo controllo sull'email (quando il cliente ti ha fornito un'email).
 
@@ -258,7 +259,7 @@ function addClosingSalute(text = "") {
   return text + " Ti aspettiamo, buona serata.";
 }
 
-// Prende da tutta la conversazione parole tipo "domani", "dopodomani", "stasera"
+// Prende da tutta la conversazione parole tipo "domani", "dopodomani", "stasera", "tomorrow", "tonight", ecc.
 function inferDateFromConversation(callId) {
   const convo = conversations.get(callId);
   if (!convo || !Array.isArray(convo.messages)) return null;
@@ -268,32 +269,87 @@ function inferDateFromConversation(callId) {
     .map((m) => (m.content || "").toLowerCase())
     .join(" ");
 
+  if (!allUserText.trim()) return null;
+
+  const now = new Date();
+
+  // 1) Espressioni relative IT/EN
   let offsetDays = null;
 
-  if (allUserText.includes("dopodomani")) {
+  if (
+    allUserText.includes("day after tomorrow") ||
+    allUserText.includes("dopodomani")
+  ) {
     offsetDays = 2;
-  } else if (allUserText.includes("domani")) {
+  } else if (allUserText.includes("tomorrow") || allUserText.includes("domani")) {
     offsetDays = 1;
   } else if (
     allUserText.includes("stasera") ||
-    allUserText.includes("questa sera")
+    allUserText.includes("questa sera") ||
+    allUserText.includes("tonight") ||
+    allUserText.includes("this evening")
   ) {
+    offsetDays = 0;
+  } else if (allUserText.includes("oggi") || allUserText.includes("today")) {
     offsetDays = 0;
   }
 
-  if (offsetDays === null) return null;
+  if (offsetDays !== null) {
+    const target = new Date(now);
+    target.setDate(now.getDate() + offsetDays);
 
-  const now = new Date();
-  const target = new Date(now);
-  target.setDate(now.getDate() + offsetDays);
+    const yyyy = target.getFullYear();
+    const mm = String(target.getMonth() + 1).padStart(2, "0");
+    const dd = String(target.getDate()).padStart(2, "0");
 
-  const yyyy = target.getFullYear();
-  const mm = String(target.getMonth() + 1).padStart(2, "0");
-  const dd = String(target.getDate()).padStart(2, "0");
+    const inferred = `${yyyy}-${mm}-${dd}`;
+    console.log("📆 Data inferita dalla conversazione (relative):", inferred);
+    return inferred;
+  }
 
-  const inferred = `${yyyy}-${mm}-${dd}`;
-  console.log("📆 Data inferita dalla conversazione:", inferred);
-  return inferred;
+  // 2) Giorni della settimana IT/EN → prossimo giorno utile
+  const weekdayMap = [
+    { patterns: ["domenica", "sunday"], index: 0 },
+    { patterns: ["lunedi", "lunedì", "monday"], index: 1 },
+    { patterns: ["martedi", "martedì", "tuesday"], index: 2 },
+    { patterns: ["mercoledi", "mercoledì", "wednesday"], index: 3 },
+    { patterns: ["giovedi", "giovedì", "thursday"], index: 4 },
+    { patterns: ["venerdi", "venerdì", "friday"], index: 5 },
+    { patterns: ["sabato", "saturday"], index: 6 },
+  ];
+
+  let targetWeekday = null;
+
+  for (const entry of weekdayMap) {
+    for (const p of entry.patterns) {
+      if (allUserText.includes(p)) {
+        targetWeekday = entry.index;
+        break;
+      }
+    }
+    if (targetWeekday !== null) break;
+  }
+
+  if (targetWeekday !== null) {
+    const currentDow = now.getDay(); // 0 domenica .. 6 sabato
+    let diff = targetWeekday - currentDow;
+    if (diff <= 0) {
+      diff += 7; // prossimo giorno di quel tipo
+    }
+
+    const target = new Date(now);
+    target.setDate(now.getDate() + diff);
+
+    const yyyy = target.getFullYear();
+    const mm = String(target.getMonth() + 1).padStart(2, "0");
+    const dd = String(target.getDate()).padStart(2, "0");
+
+    const inferred = `${yyyy}-${mm}-${dd}`;
+    console.log("📆 Data inferita dalla conversazione (weekday):", inferred);
+    return inferred;
+  }
+
+  return null;
 }
 
 // Normalizza la data della prenotazione per il Calendar
@@ -303,7 +359,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   // se il modello ha messo "null" come stringa, trattalo come null
   if (date === "null") date = null;
 
-  // 1) se riusciamo a capire "oggi/domani/dopodomani", usiamo quella
+  // 1) se riusciamo a capire "oggi/domani/dopodomani/tonight/tomorrow", usiamo quella
   const inferred = inferDateFromConversation(callId);
   if (inferred) {
     date = inferred;
@@ -380,10 +436,10 @@ async function askGiulia(callId, userText) {
   // Aggiungiamo il messaggio dell’utente
   convo.messages.push({ role: "user", content: userText });
 
-  // 🔹 Limitiamo la cronologia: system + ultimi 6 messaggi
-  if (convo.messages.length > 8) {
+  // 🔹 Limitiamo la cronologia: system + ultimi 5 messaggi
+  if (convo.messages.length > 7) {
     const systemMsg = convo.messages[0];
-    const recent = convo.messages.slice(-7);
+    const recent = convo.messages.slice(-5);
     convo.messages = [systemMsg, ...recent];
   }
 
