@@ -105,6 +105,7 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
   - Ripeti l'email separando le lettere con piccole pause, ad esempio:
     "Quindi l'email è: m i r k o c a r t a 1 3 chiocciola gmail punto com, giusto?"
   - Usa parole come "chiocciola" per "@", "punto" per ".", e pronuncia i numeri chiaramente (es. "uno tre").
+  - Quando fai lo spelling in italiano, per la lettera "w" di' sempre "doppia vù".
 - In inglese:
   - Esempio: "So your email is m i r k o c a r t a 1 3 at gmail dot com, is that correct?"
 - Per domini molto comuni come "gmail.com", "outlook.com", "yahoo.com":
@@ -380,7 +381,7 @@ function spellEmailForTTS(email, lang = "it-IT") {
 
   function spellCharIt(ch) {
     const lower = ch.toLowerCase();
-    if (lower === "w") return "doppia vu";
+    if (lower === "w") return "doppia vù";
     return ch; // Twilio leggerà la lettera
   }
 
@@ -855,7 +856,7 @@ app.post("/twilio", async (req, res) => {
   const { CallSid, SpeechResult, text, From, Language } = req.body || {};
   const { postFinal } = req.query || {};
   const isDebug = !!text && !SpeechResult;
-  const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
+  const callId = CallSid || (isDebug ? "debug-call" : "unknown-call";
 
   console.log("📞 /twilio body:", req.body);
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
@@ -1002,6 +1003,16 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
     let action = giulia.action || "none";
+
+    // 🔒 Protezione: se il modello manda create_reservation ma la frase contiene ancora
+    // un punto interrogativo, NON consideriamo la prenotazione definitiva;
+    // la trattiamo come una richiesta di chiarimento sull'orario.
+    if (action === "create_reservation" && /\?/.test(replyText)) {
+      console.warn(
+        "⚠️ create_reservation con domanda nella reply_text, declasso ad ask_time"
+      );
+      action = "ask_time";
+    }
 
     let slotFull = false;
     let isLargeGroupReservation = false;
