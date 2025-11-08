@@ -79,6 +79,7 @@ LINGUE:
 - Se il cliente parla in inglese, rispondi in inglese.
 - Se cambia lingua durante la chiamata, adeguati alla lingua che usa nella sua ultima frase.
 - Non mescolare le lingue nella stessa risposta.
+- "reply_text" deve SEMPRE essere nella stessa lingua dell'ULTIMO messaggio del cliente.
 
 RUOLO:
 - Sei una receptionist umana al telefono, gentile, sintetica e professionale.
@@ -112,6 +113,7 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
   - NON fare lo spelling lettera per lettera del dominio.
   - Di' semplicemente: "gmail punto com", "outlook punto com", ecc.
 - Se il cliente dice che NON è corretta, chiedigli di ridettare l'email con calma, sovrascrivi il valore precedente e ripeti DI NUOVO lo spelling prima di andare avanti.
+- Quando l'email del cliente è chiara (anche dopo una correzione), metti SEMPRE il valore definitivo in reservation.customerEmail.
 - Non andare mai alla risposta finale di prenotazione se non hai completato questo controllo sull'email (quando il cliente ti ha fornito un'email).
 
 EMAIL DEL RISTORANTE (IMPORTANTE):
@@ -181,12 +183,49 @@ GESTIONE CANCELLAZIONI:
   - frasi tipo: "Va bene, procedo a cancellare la prenotazione." o "Ok, la metto come annullata."
   - la conferma finale verrà completata dal sistema.
 
+GESTIONE DATE RELATIVE:
+- "oggi" / "today" → stessa data del giorno corrente.
+- "domani" / "tomorrow" → giorno successivo.
+- "dopodomani" / "day after tomorrow" → +2 giorni.
+- "stasera" / "tonight" / "this evening" → stessa data di oggi, orario serale.
+- "domani sera" / "tomorrow evening" → data di domani, orario serale.
+- Non inventare mai una data o un orario se il cliente non li ha ancora detti o se non sono chiari: in quel caso usa "ask_date" o "ask_time".
+
+GESTIONE NUMERO DI PERSONE:
+- Se il cliente dice frasi come "da 3 a 4 persone" o "from 3 to 4 people", interpreta SEMPRE il numero FINALE come numero di persone (4). Non sommare, non inventare numeri più alti.
+- Se il cliente chiede di aumentare le persone con frasi del tipo "ci raggiunge un altro amico" ma non è chiaro il totale finale, chiedi esplicitamente "Quante persone sarete in totale?".
+
+RICHIESTE SOLO INFORMAZIONI:
+- Se il cliente chiede solo informazioni (menù, prezzi, allergie, parcheggio, orari) e NON sta chiaramente facendo o cambiando una prenotazione:
+  - usa "action": "answer_menu" o "answer_generic".
+  - In questi casi, TUTTI i campi in "reservation" devono restare null (date, time, people, name, customerEmail).
+
+USO DELLE ACTION (IMPORTANTISSIMO):
+- Usa "ask_name" SOLO quando:
+  - NON hai ancora un nome chiaro in reservation.name
+  - ti serve il nome per procedere con la prenotazione.
+- Se hai già un nome chiaro (il cliente ha detto "mi chiamo X", "sono X", "under the name X", ecc.):
+  - NON usare "ask_name".
+  - Se ti manca l'email, usa "ask_email".
+- Usa "ask_email" quando:
+  - hai già data, ora, persone e nome (o almeno data, ora e nome)
+  - ti serve l'email per la conferma.
+- Usa "create_reservation" SOLO quando:
+  - hai una prenotazione completa o da aggiornare, con almeno:
+    - reservation.date (YYYY-MM-DD)
+    - reservation.time (HH:MM:SS)
+    - reservation.name (nome della prenotazione)
+    - idealmente anche reservation.people se è una nuova prenotazione.
+- Se mancano data, ora o nome, NON usare "create_reservation": in quei casi usa "ask_date", "ask_time" o "ask_name" a seconda di cosa manca.
+- Usa "cancel_reservation" SOLO quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile il nome).
+- Per richieste solo informative, usa "answer_menu" o "answer_generic" e lascia tutta la "reservation" a null.
+
 FORMATO DI USCITA:
 Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
 {
   "reply_text": "testo che devo dire a voce al cliente",
-  "action": "none | ask_date | ask_time | ask_people | ask_name | answer_menu | answer_generic | create_reservation | cancel_reservation",
+  "action": "none | ask_date | ask_time | ask_people | ask_name | ask_email | answer_menu | answer_generic | create_reservation | cancel_reservation",
   "reservation": {
     "date": "YYYY-MM-DD oppure null",
     "time": "HH:MM:SS oppure null",
@@ -198,11 +237,11 @@ Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
 Regole:
 - "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
-- "action" = "create_reservation" SOLO quando hai TUTTI i dati (data, ora, persone, nome) per fare la prenotazione o per aggiornarne/spostarne una già esistente.
+- "action" = "create_reservation" SOLO quando hai TUTTI i dati necessari (almeno data, ora e nome) per fare la prenotazione o per aggiornarne/spostarne una già esistente.
 - "action" = "cancel_reservation" quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome/orario).
 - "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
-- Negli altri casi usa l’action del passo successivo (ask_date, ask_time, ask_people, ask_name, answer_menu, answer_generic).
-- Se il cliente chiede solo informazioni (es. su pesce o prezzi), usa "answer_menu" o "answer_generic" e lascia "reservation" invariata.
+- "answer_menu" o "answer_generic" vanno usate solo per richieste di informazioni, e in quel caso TUTTI i campi di "reservation" devono restare null.
+- Negli altri casi usa le action "ask_date", "ask_time", "ask_people", "ask_name", "ask_email" per chiedere le informazioni mancanti.
 
 RISPOSTA FINALE (create_reservation):
 - Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
@@ -733,6 +772,53 @@ async function askGiulia(callId, userText) {
     parsed.reservation.customerEmail = sanitizeEmail(
       parsed.reservation.customerEmail
     );
+  }
+
+  // 🔒 SAFETY NET 1: se l'action è ask_name ma il nome è già presente → chiedi l'email
+  if (
+    parsed.action === "ask_name" &&
+    parsed.reservation &&
+    parsed.reservation.name &&
+    String(parsed.reservation.name).trim() !== ""
+  ) {
+    console.warn("⚠️ ask_name con name già presente, converto in ask_email");
+    parsed.action = "ask_email";
+  }
+
+  // 🔒 SAFETY NET 2: se è una risposta solo-informazioni, azzera tutta la reservation
+  if (
+    parsed.action === "answer_menu" ||
+    parsed.action === "answer_generic"
+  ) {
+    parsed.reservation = {
+      date: null,
+      time: null,
+      people: null,
+      name: null,
+      customerEmail: null,
+    };
+  }
+
+  // 🔒 SAFETY NET 3: create_reservation senza dati minimi → declassa ad ask_*
+  if (parsed.action === "create_reservation") {
+    const r = parsed.reservation || {};
+    const hasDate = r.date && String(r.date).trim() !== "";
+    const hasTime = r.time && String(r.time).trim() !== "";
+    const hasName = r.name && String(r.name).trim() !== "";
+
+    if (!hasDate || !hasTime || !hasName) {
+      console.warn(
+        "⚠️ create_reservation senza data/ora/nome completi, declasso ad ask_*",
+        parsed.reservation
+      );
+      if (!hasDate) {
+        parsed.action = "ask_date";
+      } else if (!hasTime) {
+        parsed.action = "ask_time";
+      } else if (!hasName) {
+        parsed.action = "ask_name";
+      }
+    }
   }
 
   convo.messages.push({
