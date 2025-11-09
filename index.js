@@ -314,30 +314,10 @@ function normalizeText(str) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-// Utility: ora corrente in fuso Europe/Rome (patch robusta)
+// Utility: ora corrente in fuso Europe/Rome
 function getNowInRome() {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Rome",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(now);
-  const get = (type) => parts.find((p) => p.type === type)?.value;
-
-  const day = parseInt(get("day"), 10);
-  const month = parseInt(get("month"), 10);
-  const year = parseInt(get("year"), 10);
-  const hour = parseInt(get("hour"), 10);
-  const minute = parseInt(get("minute"), 10);
-  const second = parseInt(get("second"), 10);
-
-  return new Date(year, month - 1, day, hour, minute, second);
+  const nowString = new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" });
+  return new Date(nowString);
 }
 
 function startOfDay(date) {
@@ -528,7 +508,8 @@ function spellEmailForTTS(email, lang = "it-IT") {
 }
 
 // Aggiunge un saluto finale se manca (per le risposte di chiusura)
-function addClosingSalute(text = "") {
+// 🔧 PATCH 999/1000: niente più mix IT/EN, il saluto segue SEMPRE la lingua corrente
+function addClosingSalute(text = "", lang = "it-IT") {
   const t = text.toLowerCase();
 
   const hasItalianSalute =
@@ -543,7 +524,7 @@ function addClosingSalute(text = "") {
 
   if (hasItalianSalute || hasEnglishSalute) return text;
 
-  if (/\b(tomorrow|pm|am|book|table)\b/i.test(t)) {
+  if (lang === "en-US") {
     return text + " Thank you, have a nice evening.";
   }
 
@@ -1454,7 +1435,7 @@ app.post("/twilio", async (req, res) => {
       const finalReply =
         isLargeGroupReservation || isHugeEventReservation
           ? replyText
-          : addClosingSalute(replyText);
+          : addClosingSalute(replyText, currentLang);
 
       twiml = `
         <Response>
