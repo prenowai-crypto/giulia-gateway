@@ -306,6 +306,61 @@ function getAllUserText(callId) {
   return arr.join(" ");
 }
 
+// Utility: normalizza testo (minuscole + rimozione accenti)
+function normalizeText(str) {
+  return (str || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+// Utility: ora corrente in fuso Europe/Rome
+function getNowInRome() {
+  const nowString = new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" });
+  return new Date(nowString);
+}
+
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, days) {
+  const d = new Date(date.getTime());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+// 0 = Sunday ... 6 = Saturday
+function getNextWeekday(today, targetWeekday) {
+  const result = new Date(today.getTime());
+  const diff = ((targetWeekday - result.getDay()) + 7) % 7 || 7; // sempre futuro
+  result.setDate(result.getDate() + diff);
+  return result;
+}
+
+// "questo sabato" = sabato di questa settimana (o prossimo se già passato)
+function getThisSaturday(today) {
+  const result = new Date(today.getTime());
+  const day = result.getDay(); // 0..6
+  const diff = (6 - day + 7) % 7; // 6 = sabato
+  result.setDate(result.getDate() + diff);
+  return result;
+}
+
+// "sabato prossimo" = sabato della settimana successiva
+function getNextSaturday(today) {
+  const thisSat = getThisSaturday(today);
+  return addDays(thisSat, 7);
+}
+
+function toISODate(date) {
+  if (!date || isNaN(date.getTime())) return null;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 // Rileva se l’utente sta chiedendo di passare all’inglese
 function maybeSwitchToEnglish(callId, userText) {
   const t = (userText || "").toLowerCase();
@@ -485,118 +540,163 @@ function sanitizeEmail(email) {
 // Prende da TUTTA la conversazione utente parole tipo
 // "domani", "dopo domani", "dopodomani", "stasera", "oggi",
 // "tomorrow", "day after tomorrow", "tonight", "this evening", "today",
-// e i giorni della settimana IT/EN.
+// "this weekend", "next saturday", giorni della settimana IT/EN, ecc.
 function inferDateFromConversation(callId) {
   const allUserTextRaw = getAllUserText(callId);
-  const allUserText = (allUserTextRaw || "").toLowerCase();
+  const t = normalizeText(allUserTextRaw);
 
-  if (!allUserText.trim()) return null;
+  if (!t.trim()) return null;
 
-  const now = new Date();
+  const nowRome = getNowInRome();
+  const today = startOfDay(nowRome);
+  let inferredDate = null;
 
-  // 1) Espressioni relative IT/EN
-  let offsetDays = null;
-
-  if (
-    allUserText.includes("day after tomorrow") ||
-    allUserText.includes("dopodomani") ||
-    allUserText.includes("dopo domani")
-  ) {
-    offsetDays = 2;
-  } else if (allUserText.includes("tomorrow") || allUserText.includes("domani")) {
-    offsetDays = 1;
-  } else if (
-    allUserText.includes("stasera") ||
-    allUserText.includes("questa sera") ||
-    allUserText.includes("tonight") ||
-    allUserText.includes("this evening")
-  ) {
-    offsetDays = 0;
-  } else if (allUserText.includes("oggi") || allUserText.includes("today")) {
-    offsetDays = 0;
+  // Espressioni speciali: vigilia di Natale / Christmas Eve
+  if (/vigilia di natale|christmas eve/.test(t)) {
+    inferredDate = new Date(today.getFullYear(), 11, 24); // 24 dicembre
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (Christmas Eve):", iso);
+    return iso;
   }
 
-  if (offsetDays !== null) {
-    const target = new Date(now);
-    target.setDate(now.getDate() + offsetDays);
-
-    const yyyy = target.getFullYear();
-    const mm = String(target.getMonth() + 1).padStart(2, "0");
-    const dd = String(target.getDate()).padStart(2, "0");
-
-    const inferred = `${yyyy}-${mm}-${dd}`;
-    console.log("📆 Data inferita dalla conversazione (relative):", inferred);
-    return inferred;
+  // Capodanno / New Year's Eve
+  if (/capodanno|new years eve|new year's eve/.test(t)) {
+    inferredDate = new Date(today.getFullYear(), 11, 31); // 31 dicembre
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (New Year's Eve):", iso);
+    return iso;
   }
 
-  // 2) Giorni della settimana IT/EN → prossimo giorno utile
-  const weekdayMap = [
-    { patterns: ["domenica", "sunday"], index: 0 },
-    { patterns: ["lunedi", "lunedì", "monday"], index: 1 },
-    { patterns: ["martedi", "martedì", "tuesday"], index: 2 },
-    { patterns: ["mercoledi", "mercoledì", "wednesday"], index: 3 },
-    { patterns: ["giovedi", "giovedì", "thursday"], index: 4 },
-    { patterns: ["venerdi", "venerdì", "friday"], index: 5 },
-    { patterns: ["sabato", "saturday"], index: 6 },
+  // stanotte / midnight -> consideriamo come 00:00 del giorno dopo
+  if (/stanotte|a mezzanotte|tonight at midnight/.test(t) || /\bmidnight\b/.test(t)) {
+    inferredDate = addDays(today, 1);
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (stanotte/midnight):", iso);
+    return iso;
+  }
+
+  // Espressioni relative IT/EN
+  if (/day after tomorrow|dopodomani|dopo domani/.test(t)) {
+    inferredDate = addDays(today, 2);
+  } else if (/tomorrow|domani/.test(t)) {
+    inferredDate = addDays(today, 1);
+  } else if (/oggi\b|today\b/.test(t)) {
+    inferredDate = today;
+  } else if (/stasera|questa sera|tonight|this evening/.test(t)) {
+    inferredDate = today;
+  }
+
+  // Se abbiamo già inferredDate dalle relative, usciamo
+  if (inferredDate) {
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (relative):", iso);
+    return iso;
+  }
+
+  // this weekend / questo weekend
+  const mentionsWeekend = t.includes("weekend") || t.includes("fine settimana");
+  const mentionsSunday = t.includes("domenica") || t.includes("sunday");
+  const mentionsSaturday = t.includes("sabato") || t.includes("saturday");
+
+  // giorni della settimana (IT + EN)
+  const weekdays = [
+    { it: "domenica", en: "sunday", index: 0 },
+    { it: "lunedi",   en: "monday", index: 1 },
+    { it: "martedi",  en: "tuesday", index: 2 },
+    { it: "mercoledi",en: "wednesday", index: 3 },
+    { it: "giovedi",  en: "thursday", index: 4 },
+    { it: "venerdi",  en: "friday", index: 5 },
+    { it: "sabato",   en: "saturday", index: 6 }
   ];
 
   let targetWeekday = null;
 
-  for (const entry of weekdayMap) {
-    for (const p of entry.patterns) {
-      if (allUserText.includes(p)) {
-        targetWeekday = entry.index;
-        break;
-      }
+  // "sabato prossimo" / "next saturday" / "questo sabato" / "this saturday"
+  // li gestiamo con logica dedicata
+  if (t.includes("sabato prossimo") || t.includes("next saturday")) {
+    inferredDate = getNextSaturday(today);
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (sabato prossimo/next Saturday):", iso);
+    return iso;
+  }
+  if (t.includes("questo sabato") || t.includes("this saturday")) {
+    inferredDate = getThisSaturday(today);
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (questo sabato/this Saturday):", iso);
+    return iso;
+  }
+
+  // Giorni della settimana generici
+  for (const w of weekdays) {
+    if (t.includes(w.it) || t.includes(w.en)) {
+      targetWeekday = w.index;
+      break;
     }
-    if (targetWeekday !== null) break;
   }
 
   if (targetWeekday !== null) {
-    const currentDow = now.getDay(); // 0 domenica .. 6 sabato
-    let diff = targetWeekday - currentDow;
-    if (diff <= 0) {
-      diff += 7; // prossimo giorno di quel tipo
+    inferredDate = getNextWeekday(today, targetWeekday);
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (weekday generico):", iso);
+    return iso;
+  }
+
+  // "this weekend": se dice anche domenica → domenica, altrimenti sabato
+  if (mentionsWeekend) {
+    if (mentionsSunday) {
+      inferredDate = getNextWeekday(today, 0); // domenica
+    } else {
+      inferredDate = getThisSaturday(today);
     }
-
-    const target = new Date(now);
-    target.setDate(now.getDate() + diff);
-
-    const yyyy = target.getFullYear();
-    const mm = String(target.getMonth() + 1).padStart(2, "0");
-    const dd = String(target.getDate()).padStart(2, "0");
-
-    const inferred = `${yyyy}-${mm}-${dd}`;
-    console.log("📆 Data inferita dalla conversazione (weekday):", inferred);
-    return inferred;
+    const iso = toISODate(inferredDate);
+    console.log("📆 Data inferita (this weekend):", iso);
+    return iso;
   }
 
   return null;
 }
 
-// Normalizza la data della prenotazione per il Calendar
+// Normalizza la data/ora della prenotazione per il Calendar
 function normalizeReservationForCalendar(reservation = {}, callId) {
   let { date, time, people, name, customerEmail } = reservation;
 
   // se il modello ha messo "null" come stringa, trattalo come null
   if (date === "null") date = null;
 
-  // 1) se riusciamo a capire "oggi/domani/dopodomani/tonight/tomorrow", usiamo quella
+  // 1) se riusciamo a capire "oggi/domani/dopodomani/tonight/tomorrow/this saturday", usiamo quella
   const inferred = inferDateFromConversation(callId);
   if (inferred) {
     date = inferred;
   } else if (typeof date === "string") {
-    // 2) altrimenti, fai almeno il fix dell'anno (2023 -> anno corrente)
+    // 2) altrimenti, fai almeno il fix dell'anno (2023 -> anno corrente se in passato)
     const parts = date.split("-");
     if (parts.length === 3) {
       let [y, m, d] = parts.map((p) => p.trim());
       const yearNum = parseInt(y, 10);
-      const currentYear = new Date().getFullYear();
+      const currentYear = getNowInRome().getFullYear();
 
       if (!isNaN(yearNum) && yearNum < currentYear) {
         y = String(currentYear);
       }
       date = `${y}-${m}-${d}`;
+    }
+  }
+
+  // 3) Inferenza orario di default se mancante (pranzo/sera/stanotte/late)
+  if (!time) {
+    const allUserTextRaw = getAllUserText(callId);
+    const t = normalizeText(allUserTextRaw);
+
+    if (/stanotte|a mezzanotte|tonight at midnight/.test(t) || /\bmidnight\b/.test(t)) {
+      time = "00:00:00";
+    } else if (/pranzo|lunch\b/.test(t)) {
+      time = "13:00:00";
+    } else if (/sera\b|serale\b|evening\b|night\b|stasera|questa sera|tonight|this evening/.test(t)) {
+      time = "20:00:00";
+    } else if (
+      /ultimo orario|ultima ora|late dinner|latest time|late booking|very late/.test(t)
+    ) {
+      time = "22:30:00";
     }
   }
 
