@@ -821,6 +821,23 @@ async function askGiulia(callId, userText) {
     }
   }
 
+  // 🔒 SAFETY NET 4: se chiede ancora ask_email ma abbiamo già email + dati completi → promuovi a create_reservation
+  if (parsed.action === "ask_email") {
+    const r = parsed.reservation || {};
+    const hasDate = r.date && String(r.date).trim() !== "";
+    const hasTime = r.time && String(r.time).trim() !== "";
+    const hasName = r.name && String(r.name).trim() !== "";
+    const hasEmail =
+      r.customerEmail && String(r.customerEmail).trim() !== "";
+
+    if (hasDate && hasTime && hasName && hasEmail) {
+      console.warn(
+        "⚠️ ask_email ma abbiamo già data/ora/nome/email → promuovo a create_reservation"
+      );
+      parsed.action = "create_reservation";
+    }
+  }
+
   convo.messages.push({
     role: "assistant",
     content: raw || JSON.stringify(parsed),
@@ -1102,6 +1119,7 @@ app.post("/twilio", async (req, res) => {
 
     let slotFull = false;
     let isLargeGroupReservation = false;
+    let isHugeEventReservation = false;
 
     // 🔹 Gestione cancellazione prenotazione standard
     if (action === "cancel_reservation" && giulia.reservation) {
@@ -1195,6 +1213,8 @@ app.post("/twilio", async (req, res) => {
 
         // EVENTO GIGANTE: sopra EVENT_THRESHOLD
         if (numericPeople !== null && numericPeople >= EVENT_THRESHOLD) {
+          isHugeEventReservation = true;
+
           await sendOwnerEmail({
             name,
             people: numericPeople,
@@ -1302,16 +1322,19 @@ app.post("/twilio", async (req, res) => {
     // chiudi la chiamata per:
     // - prenotazione finale andata a buon fine
     // - cancellazione andata a buon fine
+    // - evento gigante (mandiamo mail al ristorante e stop)
     const shouldHangup =
-      (action === "create_reservation" || action === "cancel_reservation") &&
-      !slotFull;
+      ((action === "create_reservation" || action === "cancel_reservation") &&
+        !slotFull) ||
+      isHugeEventReservation;
 
     let twiml;
     if (shouldHangup) {
-      // Per i grandi gruppi NON aggiungo saluti extra, uso il testo così com'è.
-      const finalReply = isLargeGroupReservation
-        ? replyText
-        : addClosingSalute(replyText);
+      // Per i grandi gruppi o eventi giganti NON aggiungo saluti extra, uso il testo così com'è.
+      const finalReply =
+        isLargeGroupReservation || isHugeEventReservation
+          ? replyText
+          : addClosingSalute(replyText);
 
       twiml = `
         <Response>
