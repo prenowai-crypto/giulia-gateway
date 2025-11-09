@@ -851,7 +851,7 @@ async function askGiulia(callId, userText) {
   if (!parsed.action) {
     parsed.action = "none";
   }
-  if (!parsed.reservation || typeof parsed.reservation !== "object") {
+    if (!parsed.reservation || typeof parsed.reservation !== "object") {
     parsed.reservation = {
       date: null,
       time: null,
@@ -860,7 +860,17 @@ async function askGiulia(callId, userText) {
       customerEmail: null,
     };
   } else {
-    if (!Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")) {
+    // Alias di sicurezza: se il modello usa "customer_email" invece di "customerEmail"
+    if (
+      Object.prototype.hasOwnProperty.call(parsed.reservation, "customer_email") &&
+      !Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")
+    ) {
+      parsed.reservation.customerEmail = parsed.reservation.customer_email;
+    }
+
+    if (
+      !Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")
+    ) {
       parsed.reservation.customerEmail = null;
     }
   }
@@ -874,6 +884,7 @@ async function askGiulia(callId, userText) {
       parsed.reservation.customerEmail
     );
   }
+
 
   // 🔒 SAFETY NET 1: se l'action è ask_name ma il nome è già presente → chiedi l'email
   if (
