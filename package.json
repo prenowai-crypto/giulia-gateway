@@ -1,16 +1,19 @@
 {
   "name": "giulia-gateway",
   "version": "1.0.0",
+  "description": "Gateway Express per PrenoAI/Giulia (Twilio/Terminale -> OpenAI -> Apps Script/Google Sheets)",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "NODE_ENV=development node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "body-parser": "^1.20.2",
-    "cors": "^2.8.5",
-    "openai": "^4.0.0",
-    "nodemailer": "^6.9.15"
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
