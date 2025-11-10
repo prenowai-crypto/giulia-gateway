@@ -1410,13 +1410,13 @@ app.post("/twilio", async (req, res) => {
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
-    // Gestione cancellazione prenotazione standard
+    // Gestione cancellazione prenotazione standard (AGGIORNATA PER PASSARE L'EMAIL)
     if (action === "cancel_reservation" && giulia.reservation) {
       const normalizedRes = normalizeReservationForCalendar(
         giulia.reservation,
         callId
       );
-      const { date, time, name } = normalizedRes;
+      const { date, time, name, customerEmail } = normalizedRes;
 
       if (!date) {
         if (currentLang === "en-US") {
@@ -1435,6 +1435,7 @@ app.post("/twilio", async (req, res) => {
             data: date,
             ora: time || null,
             telefono: From,
+            email: customerEmail || "",  // 👈 passiamo l'email al backend
           });
 
           if (calendarRes && calendarRes.success) {
