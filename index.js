@@ -1430,13 +1430,14 @@ app.post("/twilio", async (req, res) => {
       } else {
         try {
           const calendarRes = await sendToCalendar({
-            action: "cancel_reservation",
-            nome: name || "",
-            data: date,
-            ora: time || null,
-            telefono: From,
-            email: customerEmail || "",  // 👈 passiamo l'email al backend
-          });
+  action: "cancel_reservation",
+  source: "twilio",
+  nome: name || "",
+  data: date,
+  ora: time || null,
+  telefono: From,
+});
+
 
           if (calendarRes && calendarRes.success) {
             if (currentLang === "en-US") {
@@ -1529,14 +1530,16 @@ app.post("/twilio", async (req, res) => {
         } else {
           // Flusso normale: invio al Calendar ANCHE SE people è null
           try {
-            const calendarRes = await sendToCalendar({
-              nome: name,
-              persone: numericPeople,
-              data: date,
-              ora: time,
-              telefono: From,
-              email: customerEmail || "",
-            });
+           const calendarRes = await sendToCalendar({
+  source: "twilio",
+  nome: name,
+  persone: numericPeople,
+  data: date,
+  ora: time,
+  telefono: From,
+  email: customerEmail || "",
+});
+
 
             if (!calendarRes.success && calendarRes.reason === "slot_full") {
               slotFull = true;
