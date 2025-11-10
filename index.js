@@ -19,14 +19,18 @@ const DEFAULT_RESTAURANT_NAME = process.env.RESTAURANT_NAME || "Ristorante";
 // Email di fallback del ristorante (usata solo se get_context non la fornisce)
 const OWNER_EMAIL_DEFAULT = process.env.OWNER_EMAIL || "prenowai@gmail.com";
 
-// Web App di Google Apps Script per il Calendar + get_context + notifiche evento
-// 👉 in produzione imposta APPS_SCRIPT_URL come ENV su Render
+// Web App di Google Apps Script (Giulia Calendar Gateway)
 const APPS_SCRIPT_URL =
   process.env.APPS_SCRIPT_URL ||
-  "https://script.google.com/macros/s/AKfycbxMYLD4wfNopBN61SZRs46PfZFRs3Bn8kZMWPEgW8k_PWicCtj47Xfzy12vrCjWNqkRdA/exec";
+  "https://script.google.com/macros/s/AKfycbx39h60wqJ0TwLy9PzZyZTqCPV_eGid4j0NOF1FsHJyi411mWyOtZZYC_Z68htZSonqlg/exec";
+
+// URL per il get_context: usiamo lo stesso
+const APPS_SCRIPT_CONTEXT_URL =
+  process.env.APPS_SCRIPT_CONTEXT_URL || APPS_SCRIPT_URL;
 
 // URL pubblico di questo server su Render
 const BASE_URL = process.env.BASE_URL || "https://giulia-gateway.onrender.com";
+
 
 // Soglie di fallback (se get_context non le fornisce)
 const LARGE_GROUP_THRESHOLD_DEFAULT = 10;  // sopra → “grande gruppo”, da confermare
