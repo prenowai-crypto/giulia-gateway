@@ -94,6 +94,9 @@ const userTextHistory = new Map();
 // Contesto ristorante per la chiamata (CallSid -> get_context JSON)
 const callContexts = new Map();
 
+// *** NEW: Stato prenotazione consolidata per ogni chiamata (CallSid -> reservation)
+const callReservations = new Map();
+
 // ---------- MIDDLEWARE ----------
 app.use(cors());
 app.use(bodyParser.json());
@@ -1061,6 +1064,34 @@ async function askGiulia(callId, userText) {
     );
   }
 
+  // *** NEW: prova a estrarre l'email direttamente dal testo utente (regex)
+  const emailMatch = userText && userText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (emailMatch) {
+    const extracted = sanitizeEmail(emailMatch[0]);
+    if (extracted) {
+      parsed.reservation.customerEmail = extracted;
+    }
+  }
+
+  // *** NEW: merge con la prenotazione salvata per questa chiamata
+  const prevRes = callReservations.get(callId) || {};
+  const currentRes = parsed.reservation || {};
+  const mergedRes = {
+    ...prevRes,
+    ...currentRes,
+  };
+
+  // se la nuova risposta ha "cancellato" l'email (null) ma prima ce l'avevamo, teniamo quella vecchia
+  if (
+    (!currentRes.customerEmail || currentRes.customerEmail === null) &&
+    prevRes.customerEmail
+  ) {
+    mergedRes.customerEmail = prevRes.customerEmail;
+  }
+
+  parsed.reservation = mergedRes;
+  callReservations.set(callId, mergedRes);
+
   // SAFETY NET 1: se l'action è ask_name ma il nome è già presente → chiedi l'email
   if (
     parsed.action === "ask_name" &&
@@ -1434,14 +1465,13 @@ app.post("/twilio", async (req, res) => {
       } else {
         try {
           const calendarRes = await sendToCalendar({
-  action: "cancel_reservation",
-  source: "twilio",
-  nome: name || "",
-  data: date,
-  ora: time || null,
-  telefono: From,
-});
-
+            action: "cancel_reservation",
+            source: "twilio",
+            nome: name || "",
+            data: date,
+            ora: time || null,
+            telefono: From,
+          });
 
           if (calendarRes && calendarRes.success) {
             if (currentLang === "en-US") {
@@ -1534,16 +1564,15 @@ app.post("/twilio", async (req, res) => {
         } else {
           // Flusso normale: invio al Calendar ANCHE SE people è null
           try {
-           const calendarRes = await sendToCalendar({
-  source: "twilio",
-  nome: name,
-  persone: numericPeople,
-  data: date,
-  ora: time,
-  telefono: From,
-  email: customerEmail || "",
-});
-
+            const calendarRes = await sendToCalendar({
+              source: "twilio",
+              nome: name,
+              persone: numericPeople,
+              data: date,
+              ora: time,
+              telefono: From,
+              email: customerEmail || "",
+            });
 
             if (!calendarRes.success && calendarRes.reason === "slot_full") {
               slotFull = true;
