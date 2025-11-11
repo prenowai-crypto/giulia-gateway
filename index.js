@@ -31,10 +31,9 @@ const APPS_SCRIPT_CONTEXT_URL =
 // URL pubblico di questo server su Render
 const BASE_URL = process.env.BASE_URL || "https://giulia-gateway.onrender.com";
 
-
 // Soglie di fallback (se get_context non le fornisce)
-const LARGE_GROUP_THRESHOLD_DEFAULT = 10;  // sopra → “grande gruppo”, da confermare
-const EVENT_THRESHOLD_DEFAULT = 45;        // sopra → evento gigante, niente Calendar
+const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → “grande gruppo”, da confermare
+const EVENT_THRESHOLD_DEFAULT = 45; // sopra → evento gigante, niente Calendar
 
 // ---------- NOTE IMPORTANTI ----------
 // Le soglie *reali* e l'email del ristorante vengono lette da get_context
@@ -94,7 +93,7 @@ const userTextHistory = new Map();
 // Contesto ristorante per la chiamata (CallSid -> get_context JSON)
 const callContexts = new Map();
 
-// *** NEW: Stato prenotazione consolidata per ogni chiamata (CallSid -> reservation)
+// Stato della prenotazione per ogni chiamata (CallSid -> reservation cumulata)
 const callReservations = new Map();
 
 // ---------- MIDDLEWARE ----------
@@ -370,6 +369,32 @@ function sanitizeEmail(email) {
   return cleaned || null;
 }
 
+// Estrae una email da una frase libera (se presente)
+function extractEmailFromText(text) {
+  if (!text || typeof text !== "string") return null;
+  const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0] : null;
+}
+
+// Unisce la nuova reservation con quella già salvata per la chiamata
+function mergeReservationForCall(callId, newRes = {}) {
+  const prev = callReservations.get(callId) || {};
+
+  const merged = {
+    date: newRes.date ?? prev.date ?? null,
+    time: newRes.time ?? prev.time ?? null,
+    people:
+      newRes.people !== undefined && newRes.people !== null
+        ? newRes.people
+        : prev.people ?? null,
+    name: newRes.name ?? prev.name ?? null,
+    customerEmail: newRes.customerEmail ?? prev.customerEmail ?? null,
+  };
+
+  callReservations.set(callId, merged);
+  return merged;
+}
+
 // ---------- GESTIONE DATA/ORA DAL TESTO ----------
 
 // Prende da TUTTA la conversazione utente parole tipo
@@ -436,12 +461,12 @@ function inferDateFromConversation(callId) {
   // giorni della settimana (IT + EN)
   const weekdays = [
     { it: "domenica", en: "sunday", index: 0 },
-    { it: "lunedi",   en: "monday", index: 1 },
-    { it: "martedi",  en: "tuesday", index: 2 },
-    { it: "mercoledi",en: "wednesday", index: 3 },
-    { it: "giovedi",  en: "thursday", index: 4 },
-    { it: "venerdi",  en: "friday", index: 5 },
-    { it: "sabato",   en: "saturday", index: 6 }
+    { it: "lunedi", en: "monday", index: 1 },
+    { it: "martedi", en: "tuesday", index: 2 },
+    { it: "mercoledi", en: "wednesday", index: 3 },
+    { it: "giovedi", en: "thursday", index: 4 },
+    { it: "venerdi", en: "friday", index: 5 },
+    { it: "sabato", en: "saturday", index: 6 },
   ];
 
   let targetWeekday = null;
@@ -528,9 +553,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
       time = "13:00:00";
     } else if (/sera\b|serale\b|evening\b|night\b|stasera|questa sera|tonight|this evening/.test(t)) {
       time = "20:00:00";
-    } else if (
-      /ultimo orario|ultima ora|late dinner|latest time|late booking|very late/.test(t)
-    ) {
+    } else if (/ultimo orario|ultima ora|late dinner|latest time|late booking|very late/.test(t)) {
       time = "22:30:00";
     }
   }
@@ -643,11 +666,11 @@ function getContextForCall(callId) {
 function getThresholdsForCall(callId) {
   const ctx = getContextForCall(callId);
   const largeGroupThreshold =
-    (ctx && ctx.rules && typeof ctx.rules.largeGroupThreshold === "number")
+    ctx && ctx.rules && typeof ctx.rules.largeGroupThreshold === "number"
       ? ctx.rules.largeGroupThreshold
       : LARGE_GROUP_THRESHOLD_DEFAULT;
   const eventThreshold =
-    (ctx && ctx.rules && typeof ctx.rules.eventThreshold === "number")
+    ctx && ctx.rules && typeof ctx.rules.eventThreshold === "number"
       ? ctx.rules.eventThreshold
       : EVENT_THRESHOLD_DEFAULT;
   return { largeGroupThreshold, eventThreshold };
@@ -672,29 +695,51 @@ function getRestaurantNameForCall(callId) {
 // ---------- SYSTEM PROMPT DINAMICO ----------
 
 function buildSystemPrompt(context) {
-  const restaurantName = (context && context.restaurant && context.restaurant.name) || DEFAULT_RESTAURANT_NAME;
-  const restaurantEmail = (context && context.restaurant && context.restaurant.email) || OWNER_EMAIL_DEFAULT;
-  const address = (context && context.restaurant && context.restaurant.address) || "";
-  const phone = (context && context.restaurant && context.restaurant.phone) || "";
-  const timezone = (context && context.restaurant && context.restaurant.timezone) || "Europe/Rome";
-  const openingHoursText = (context && context.restaurant && context.restaurant.openingHoursText) || "";
-  const closingRulesText = (context && context.restaurant && context.restaurant.closingRulesText) || "";
+  const restaurantName =
+    (context && context.restaurant && context.restaurant.name) ||
+    DEFAULT_RESTAURANT_NAME;
+  const restaurantEmail =
+    (context && context.restaurant && context.restaurant.email) ||
+    OWNER_EMAIL_DEFAULT;
+  const address =
+    (context && context.restaurant && context.restaurant.address) || "";
+  const phone =
+    (context && context.restaurant && context.restaurant.phone) || "";
+  const timezone =
+    (context && context.restaurant && context.restaurant.timezone) ||
+    "Europe/Rome";
+  const openingHoursText =
+    (context &&
+      context.restaurant &&
+      context.restaurant.openingHoursText) ||
+    "";
+  const closingRulesText =
+    (context &&
+      context.restaurant &&
+      context.restaurant.closingRulesText) ||
+    "";
 
-  const menuSummaryText = (context && context.menu && context.menu.summaryText) || "";
-  const vegetarianText = (context && context.menu && context.menu.vegetarianText) || "";
-  const glutenFreeText = (context && context.menu && context.menu.glutenFreeText) || "";
-  const priceRangeText = (context && context.menu && context.menu.priceRangeText) || "";
+  const menuSummaryText =
+    (context && context.menu && context.menu.summaryText) || "";
+  const vegetarianText =
+    (context && context.menu && context.menu.vegetarianText) || "";
+  const glutenFreeText =
+    (context && context.menu && context.menu.glutenFreeText) || "";
+  const priceRangeText =
+    (context && context.menu && context.menu.priceRangeText) || "";
 
   const largeGroupThreshold =
-    (context && context.rules && typeof context.rules.largeGroupThreshold === "number")
+    context && context.rules && typeof context.rules.largeGroupThreshold === "number"
       ? context.rules.largeGroupThreshold
       : LARGE_GROUP_THRESHOLD_DEFAULT;
   const eventThreshold =
-    (context && context.rules && typeof context.rules.eventThreshold === "number")
+    context && context.rules && typeof context.rules.eventThreshold === "number"
       ? context.rules.eventThreshold
       : EVENT_THRESHOLD_DEFAULT;
-  const outdoorSeatingText = (context && context.rules && context.rules.outdoorSeatingText) || "";
-  const bookingPolicyText = (context && context.rules && context.rules.bookingPolicyText) || "";
+  const outdoorSeatingText =
+    (context && context.rules && context.rules.outdoorSeatingText) || "";
+  const bookingPolicyText =
+    (context && context.rules && context.rules.bookingPolicyText) || "";
 
   const basePrompt = `
 Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${restaurantName}.
@@ -1041,14 +1086,23 @@ async function askGiulia(callId, userText) {
   } else {
     // Alias di sicurezza: se il modello usa "customer_email" invece di "customerEmail"
     if (
-      Object.prototype.hasOwnProperty.call(parsed.reservation, "customer_email") &&
-      !Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")
+      Object.prototype.hasOwnProperty.call(
+        parsed.reservation,
+        "customer_email"
+      ) &&
+      !Object.prototype.hasOwnProperty.call(
+        parsed.reservation,
+        "customerEmail"
+      )
     ) {
       parsed.reservation.customerEmail = parsed.reservation.customer_email;
     }
 
     if (
-      !Object.prototype.hasOwnProperty.call(parsed.reservation, "customerEmail")
+      !Object.prototype.hasOwnProperty.call(
+        parsed.reservation,
+        "customerEmail"
+      )
     ) {
       parsed.reservation.customerEmail = null;
     }
@@ -1064,33 +1118,19 @@ async function askGiulia(callId, userText) {
     );
   }
 
-  // *** NEW: prova a estrarre l'email direttamente dal testo utente (regex)
-  const emailMatch = userText && userText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  if (emailMatch) {
-    const extracted = sanitizeEmail(emailMatch[0]);
-    if (extracted) {
-      parsed.reservation.customerEmail = extracted;
+  // 1) Se manca customerEmail ma nella frase c'è un indirizzo email, estrailo dal testo utente
+  if (parsed.reservation && !parsed.reservation.customerEmail) {
+    const fromText = extractEmailFromText(userText);
+    if (fromText) {
+      parsed.reservation.customerEmail = sanitizeEmail(fromText);
     }
   }
 
-  // *** NEW: merge con la prenotazione salvata per questa chiamata
-  const prevRes = callReservations.get(callId) || {};
-  const currentRes = parsed.reservation || {};
-  const mergedRes = {
-    ...prevRes,
-    ...currentRes,
-  };
-
-  // se la nuova risposta ha "cancellato" l'email (null) ma prima ce l'avevamo, teniamo quella vecchia
-  if (
-    (!currentRes.customerEmail || currentRes.customerEmail === null) &&
-    prevRes.customerEmail
-  ) {
-    mergedRes.customerEmail = prevRes.customerEmail;
-  }
-
-  parsed.reservation = mergedRes;
-  callReservations.set(callId, mergedRes);
+  // 2) Unisci la reservation attuale con quella già salvata per questa chiamata
+  parsed.reservation = mergeReservationForCall(
+    callId,
+    parsed.reservation || {}
+  );
 
   // SAFETY NET 1: se l'action è ask_name ma il nome è già presente → chiedi l'email
   if (
@@ -1104,10 +1144,7 @@ async function askGiulia(callId, userText) {
   }
 
   // SAFETY NET 2: se è una risposta solo-informazioni, azzera tutta la reservation
-  if (
-    parsed.action === "answer_menu" ||
-    parsed.action === "answer_generic"
-  ) {
+  if (parsed.action === "answer_menu" || parsed.action === "answer_generic") {
     parsed.reservation = {
       date: null,
       time: null,
@@ -1139,7 +1176,8 @@ async function askGiulia(callId, userText) {
     }
   }
 
-  // SAFETY NET 4: se chiede ancora ask_email ma abbiamo già email + dati completi → promuovi a create_reservation
+  // SAFETY NET 4: se chiede ancora ask_email ma abbiamo già email + dati completi
+  // → promuovi a create_reservation SOLO se la reply_text NON è una domanda
   if (parsed.action === "ask_email") {
     const r = parsed.reservation || {};
     const hasDate = r.date && String(r.date).trim() !== "";
@@ -1148,9 +1186,13 @@ async function askGiulia(callId, userText) {
     const hasEmail =
       r.customerEmail && String(r.customerEmail).trim() !== "";
 
-    if (hasDate && hasTime && hasName && hasEmail) {
+    const isQuestion =
+      typeof parsed.reply_text === "string" &&
+      parsed.reply_text.includes("?");
+
+    if (hasDate && hasTime && hasName && hasEmail && !isQuestion) {
       console.warn(
-        "⚠️ ask_email ma abbiamo già data/ora/nome/email → promuovo a create_reservation"
+        "⚠️ ask_email ma abbiamo già data/ora/nome/email e la risposta non è una domanda → promuovo a create_reservation"
       );
       parsed.action = "create_reservation";
     }
@@ -1195,7 +1237,8 @@ app.get("/owner/large-group/confirm", async (req, res) => {
 
     const json = Buffer.from(token, "base64").toString("utf8");
     const payload = JSON.parse(json);
-    const { eventId, date, time, people, name, customerEmail, phone } = payload;
+    const { eventId, date, time, people, name, customerEmail, phone } =
+      payload;
 
     await fetch(APPS_SCRIPT_URL, {
       method: "POST",
@@ -1238,7 +1281,8 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 
     const json = Buffer.from(token, "base64").toString("utf8");
     const payload = JSON.parse(json);
-    const { eventId, date, time, people, name, customerEmail, phone } = payload;
+    const { eventId, date, time, people, name, customerEmail, phone } =
+      payload;
 
     await fetch(APPS_SCRIPT_URL, {
       method: "POST",
@@ -1302,7 +1346,9 @@ app.post("/twilio", async (req, res) => {
 
     // Carico subito il contesto per avere il nome corretto del ristorante
     const ctx = await ensureContextForCall(callId);
-    const restaurantName = (ctx && ctx.restaurant && ctx.restaurant.name) || DEFAULT_RESTAURANT_NAME;
+    const restaurantName =
+      (ctx && ctx.restaurant && ctx.restaurant.name) ||
+      DEFAULT_RESTAURANT_NAME;
 
     const welcomeText = `Ciao, sono ${RECEPTIONIST_NAME} del ${restaurantName}. Come posso aiutarti oggi?`;
 
@@ -1392,7 +1438,10 @@ app.post("/twilio", async (req, res) => {
     const restaurantEmail = getRestaurantEmailForCall(callId);
 
     // Shortcut: l'utente chiede l'email del ristorante o lo spelling
-    if (isRestaurantEmailQuestion(userText) || isRestaurantEmailSpellingRequest(userText)) {
+    if (
+      isRestaurantEmailQuestion(userText) ||
+      isRestaurantEmailSpellingRequest(userText)
+    ) {
       const spelled = spellEmailForTTS(restaurantEmail, currentLang);
 
       const reply =
@@ -1445,13 +1494,13 @@ app.post("/twilio", async (req, res) => {
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
-    // Gestione cancellazione prenotazione standard (AGGIORNATA PER PASSARE L'EMAIL)
+    // Gestione cancellazione prenotazione standard
     if (action === "cancel_reservation" && giulia.reservation) {
       const normalizedRes = normalizeReservationForCalendar(
         giulia.reservation,
         callId
       );
-      const { date, time, name, customerEmail } = normalizedRes;
+      const { date, time, name } = normalizedRes;
 
       if (!date) {
         if (currentLang === "en-US") {
@@ -1529,7 +1578,8 @@ app.post("/twilio", async (req, res) => {
       );
       let { date, time, people, name, customerEmail } = normalizedRes;
 
-      const { largeGroupThreshold, eventThreshold } = getThresholdsForCall(callId);
+      const { largeGroupThreshold, eventThreshold } =
+        getThresholdsForCall(callId);
 
       if (date && time && name) {
         const numericPeople =
@@ -1548,7 +1598,10 @@ app.post("/twilio", async (req, res) => {
             customerEmail,
           });
 
-          const spelledOwnerEmail = spellEmailForTTS(restaurantEmail, currentLang);
+          const spelledOwnerEmail = spellEmailForTTS(
+            restaurantEmail,
+            currentLang
+          );
 
           if (currentLang === "en-US") {
             replyText =
@@ -1597,7 +1650,10 @@ app.post("/twilio", async (req, res) => {
               });
 
               // Grande gruppo (ma non evento gigante): messaggio chiaro "soggetto a conferma"
-              if (numericPeople !== null && numericPeople > largeGroupThreshold) {
+              if (
+                numericPeople !== null &&
+                numericPeople > largeGroupThreshold
+              ) {
                 isLargeGroupReservation = true;
 
                 if (currentLang === "en-US") {
