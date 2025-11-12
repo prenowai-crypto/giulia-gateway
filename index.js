@@ -52,7 +52,7 @@ async function sendOwnerEmail({ name, people, date, time, phone, customerEmail }
       email: customerEmail || "",
     };
 
-    console.log("📧 Invio richiesta evento grande a Apps Script:", payload);
+    console.log("📧 [HUGE EVENT] sending notify_big_event via Apps Script…", payload);
 
     const response = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
@@ -73,7 +73,7 @@ async function sendOwnerEmail({ name, people, date, time, phone, customerEmail }
       return;
     }
 
-    console.log("✉️ Risposta Apps Script (email proprietario):", data);
+    console.log("✉️ [HUGE EVENT] notify_big_event sent. Apps Script response:", data);
   } catch (err) {
     console.error("❌ Errore chiamando Apps Script per email proprietario:", err);
   }
@@ -374,6 +374,25 @@ function extractEmailFromText(text) {
   if (!text || typeof text !== "string") return null;
   const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   return match ? match[0] : null;
+}
+
+// Riconosce conferme brevi tipo “Sì, è corretta” / “Yes, that’s correct”
+function userConfirmedEmailPhrase(text = "") {
+  const t = (text || "").toLowerCase().trim();
+  return (
+    t === "si" ||
+    t === "sì" ||
+    t.startsWith("sì, è corretta") ||
+    t.startsWith("si, è corretta") ||
+    t.startsWith("sì è corretta") ||
+    t.startsWith("si è corretta") ||
+    t === "yes" ||
+    t.startsWith("yes,") ||
+    t.includes("it is correct") ||
+    t.includes("it's correct") ||
+    t.includes("that is correct") ||
+    t.includes("that's correct")
+  );
 }
 
 // Unisce la nuova reservation con quella già salvata per la chiamata
@@ -888,7 +907,7 @@ USO DELLE ACTION (IMPORTANTISSIMO):
     - reservation.name (nome della prenotazione)
     - idealmente anche reservation.people se è una nuova prenotazione.
 - Se mancano data, ora o nome, NON usare "create_reservation": in quei casi usa "ask_date", "ask_time" o "ask_name" a seconda di cosa manca.
-- Usa "cancel_reservation" SOLO quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile il nome).
+- Usa "cancel_reservation" SOLO quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome).
 - Per richieste solo informative, usa "answer_menu" o "answer_generic" e lascia tutta la "reservation" a null.
 
 FORMATO DI USCITA:
@@ -912,7 +931,7 @@ Regole:
 - "action" = "cancel_reservation" quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome/orario).
 - "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
 - "answer_menu" o "answer_generic" vanno usate solo per richieste di informazioni, e in quel caso TUTTI i campi di "reservation" devono restare null.
-- Negli altri casi usa le action "ask_date", "ask_time", "ask_people", "ask_name", "ask_email" per chiedere le informazioni mancanti.
+- Negli altri casi usa le action "ask_date", "ask_time", "ask_name", "ask_email" per chiedere le informazioni mancanti.
 
 RISPOSTA FINALE (create_reservation):
 - Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
@@ -1482,6 +1501,29 @@ app.post("/twilio", async (req, res) => {
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
     let action = giulia.action || "none";
 
+    // ---- FORCE PROMOTION on email confirmation (prevents stuck flows) ----
+    if (giulia && giulia.action === "ask_email" && giulia.reservation) {
+      const normalizedForPromotion = normalizeReservationForCalendar(giulia.reservation, callId);
+      const { date, time, name, customerEmail, people } = normalizedForPromotion;
+
+      const hasAllForFinal =
+        date && String(date).trim() !== "" &&
+        time && String(time).trim() !== "" &&
+        name && String(name).trim() !== "" &&
+        customerEmail && String(customerEmail).trim() !== "";
+
+      if (hasAllForFinal && userConfirmedEmailPhrase(userText)) {
+        console.warn("⚠️ ask_email + user confirmed → forcing create_reservation");
+        giulia.action = "create_reservation";
+        giulia.reply_text =
+          (currentLang === "en-US")
+            ? `Perfect, I confirm for ${name}${people ? ` — ${people} people` : ""} on ${date} at ${time}.`
+            : `Perfetto, confermo a nome ${name}${people ? ` — ${people} persone` : ""} ${date} alle ${time}.`;
+        replyText = giulia.reply_text;
+        action = giulia.action;
+      }
+    }
+
     // Protezione: create_reservation con ancora domanda → declassa ad ask_time
     if (action === "create_reservation" && /\?/.test(replyText)) {
       console.warn(
@@ -1493,85 +1535,6 @@ app.post("/twilio", async (req, res) => {
     let slotFull = false;
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
-
-    // 🔥 PATCH: gestisci EVENTO GIGANTE anche se il modello non usa create_reservation
-    if (giulia.reservation) {
-      const normalizedHuge = normalizeReservationForCalendar(
-        giulia.reservation,
-        callId
-      );
-      let { date, time, people, name, customerEmail } = normalizedHuge;
-
-      const { eventThreshold } = getThresholdsForCall(callId);
-      const numericPeople =
-        typeof people === "number" && !isNaN(people) ? people : null;
-
-      // Riconosci frasette tipo "Sì, è corretta", "Yes, that's correct", ecc.
-      const userConfirmsEmail = (() => {
-        const t = (userText || "").toLowerCase().trim();
-        return (
-          t === "si" ||
-          t === "sì" ||
-          t.startsWith("sì, è corretta") ||
-          t.startsWith("si, è corretta") ||
-          t.startsWith("sì è corretta") ||
-          t.startsWith("si è corretta") ||
-          t === "yes" ||
-          t.startsWith("yes,") ||
-          t.includes("it is correct") ||
-          t.includes("it's correct") ||
-          t.includes("that is correct") ||
-          t.includes("that's correct")
-        );
-      })();
-
-      if (
-        action !== "create_reservation" && // se fosse create_reservation usiamo il ramo sotto
-        numericPeople !== null &&
-        numericPeople >= eventThreshold &&
-        date &&
-        time &&
-        name &&
-        customerEmail &&
-        userConfirmsEmail
-      ) {
-        isHugeEventReservation = true;
-
-        console.log(
-          "🔥 Patch evento gigante: forzo notify_big_event per",
-          numericPeople,
-          "persone"
-        );
-
-        // Invio email al proprietario tramite Apps Script
-        await sendOwnerEmail({
-          name,
-          people: numericPeople,
-          date,
-          time,
-          phone: From,
-          customerEmail,
-        });
-
-        const restaurantEmailForCall = getRestaurantEmailForCall(callId);
-        const spelledOwnerEmail = spellEmailForTTS(
-          restaurantEmailForCall,
-          currentLang
-        );
-
-        if (currentLang === "en-US") {
-          replyText =
-            `For bookings over ${eventThreshold} people we treat it as a private event. ` +
-            `Please send an email to ${restaurantEmailForCall}; I'll spell it: ${spelledOwnerEmail}.`;
-        } else {
-          replyText =
-            `Per prenotazioni sopra i ${eventThreshold} coperti le gestiamo come evento privato. ` +
-            `Ti chiedo di mandare una mail a ${restaurantEmailForCall}; te la scandisco: ${spelledOwnerEmail}.`;
-        }
-
-        action = "none";
-      }
-    }
 
     // Gestione cancellazione prenotazione standard
     if (action === "cancel_reservation" && giulia.reservation) {
@@ -1696,6 +1659,7 @@ app.post("/twilio", async (req, res) => {
         } else {
           // Flusso normale: invio al Calendar ANCHE SE people è null
           try {
+            console.log("➡️  [CAL] create/update request to Apps Script (expect emails for small bookings or group-pending)…");
             const calendarRes = await sendToCalendar({
               source: "twilio",
               nome: name,
@@ -1705,6 +1669,7 @@ app.post("/twilio", async (req, res) => {
               telefono: From,
               email: customerEmail || "",
             });
+            console.log("⬅️  [CAL] Apps Script responded:", calendarRes);
 
             if (!calendarRes.success && calendarRes.reason === "slot_full") {
               slotFull = true;
