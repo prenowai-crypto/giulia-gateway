@@ -1240,7 +1240,7 @@ app.get("/owner/large-group/confirm", async (req, res) => {
     const { eventId, date, time, people, name, customerEmail, phone } =
       payload;
 
-    await fetch(APPS_SCRIPT_URL, {
+    const response = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1255,12 +1255,62 @@ app.get("/owner/large-group/confirm", async (req, res) => {
       }),
     });
 
-    res.send(`
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Risposta non JSON da Apps Script (confirm_large_group):", text);
+      data = null;
+    }
+
+    if (!response.ok || !data) {
+      console.error("❌ Errore Apps Script conferma large group:", data);
+      return res.status(500).send(`
+        <html>
+          <body style="font-family: system-ui; padding: 24px;">
+            <h2>Errore durante la conferma ⚠️</h2>
+            <p>Si è verificato un problema tecnico durante la conferma della prenotazione.</p>
+            <p>Ti consigliamo di verificare manualmente il calendario e le email e, in caso di dubbi, contattare il cliente.</p>
+          </body>
+        </html>
+      `);
+    }
+
+    // Caso OK: confermata davvero
+    if (data.success && data.status === "CONFIRMED") {
+      return res.send(`
+        <html>
+          <body style="font-family: system-ui; padding: 24px;">
+            <h2>Prenotazione confermata ✅</h2>
+            <p>Hai confermato la prenotazione per <strong>${people} persone</strong>, a nome <strong>${name}</strong>, il <strong>${date}</strong> alle <strong>${time}</strong>.</p>
+            <p>Se il cliente ha fornito un'email valida, ha ricevuto una conferma automatica.</p>
+          </body>
+        </html>
+      `);
+    }
+
+    // Caso capacità piena: non confermata per capienza
+    if (data.status === "CANNOT_CONFIRM_CAPACITY") {
+      return res.send(`
+        <html>
+          <body style="font-family: system-ui; padding: 24px;">
+            <h2>Impossibile confermare la prenotazione ❌</h2>
+            <p>Per motivi di <strong>capienza</strong> non è stato possibile confermare la prenotazione per <strong>${people} persone</strong>, a nome <strong>${name}</strong>, il <strong>${date}</strong> alle <strong>${time}</strong>.</p>
+            <p>Il cliente è già stato avvisato via email della mancata conferma (se ha fornito un indirizzo email).</p>
+            <p>Se lo ritieni opportuno, puoi contattarlo per proporre un altro giorno o orario.</p>
+          </body>
+        </html>
+      `);
+    }
+
+    // Esito incerto/altro tipo di errore logico
+    return res.send(`
       <html>
         <body style="font-family: system-ui; padding: 24px;">
-          <h2>Prenotazione confermata ✅</h2>
-          <p>Hai confermato la prenotazione per <strong>${people} persone</strong>, a nome <strong>${name}</strong>, il <strong>${date}</strong> alle <strong>${time}</strong>.</p>
-          <p>Se il cliente ha fornito un'email valida, riceverà una conferma automatica.</p>
+          <h2>Esito non chiaro ⚠️</h2>
+          <p>La richiesta di conferma non ha restituito uno stato chiaro.</p>
+          <p>Ti consigliamo di controllare il calendario e le email per verificare la situazione di questa prenotazione.</p>
         </body>
       </html>
     `);
