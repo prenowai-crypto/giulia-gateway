@@ -527,40 +527,27 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   const inferred = inferDateFromConversation(callId);
   if (inferred) {
     date = inferred;
-  } else if (typeof date === "string") {
-    // 2) altrimenti, fix robusto anno/mese/giorno:
-    // - se l'anno è nel passato → portalo all'anno corrente
-    // - se la data risultante è comunque nel passato → spostala all'anno successivo
+  } else if (typeof date === "string" && date.trim() !== "") {
+    // 2) se è una data esplicita, evitiamo prenotazioni nel passato
     const parts = date.split("-");
     if (parts.length === 3) {
       let [y, m, d] = parts.map((p) => p.trim());
-      let yearNum = parseInt(y, 10);
-      let monthNum = parseInt(m, 10);
-      let dayNum = parseInt(d, 10);
+      const yearNum = parseInt(y, 10);
+      const monthNum = parseInt(m, 10);
+      const dayNum = parseInt(d, 10);
 
-      const nowRome = getNowInRome();
-      const currentYear = nowRome.getFullYear();
-      const today = startOfDay(nowRome);
+      if (!isNaN(yearNum) && !isNaN(monthNum) && !isNaN(dayNum)) {
+        let candidate = new Date(yearNum, monthNum - 1, dayNum);
+        const todayRome = startOfDay(getNowInRome());
 
-      if (isNaN(yearNum)) yearNum = currentYear;
-      if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
-        monthNum = nowRome.getMonth() + 1;
+        // Se la data è nel passato, spostala in avanti di anni
+        // fino a quando non è almeno oggi (prossimo periodo).
+        while (candidate.getTime() < todayRome.getTime()) {
+          candidate.setFullYear(candidate.getFullYear() + 1);
+        }
+
+        date = toISODate(candidate);
       }
-      if (isNaN(dayNum) || dayNum < 1 || dayNum > 31) {
-        dayNum = nowRome.getDate();
-      }
-
-      if (yearNum < currentYear) {
-        yearNum = currentYear;
-      }
-
-      let candidate = new Date(yearNum, monthNum - 1, dayNum);
-
-      if (candidate < today) {
-        candidate.setFullYear(candidate.getFullYear() + 1);
-      }
-
-      date = toISODate(candidate);
     }
   }
 
@@ -571,11 +558,8 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
 
     if (/stanotte|a mezzanotte|tonight at midnight/.test(t) || /\bmidnight\b/.test(t)) {
       time = "00:00:00";
-    } else if (/pranzo|a pranzo|\blunch\b/.test(t)) {
-      // pranzo generico → 13:00
+    } else if (/pranzo|lunch\b/.test(t)) {
       time = "13:00:00";
-    } else if (/mezzogiorno\b|midday\b/.test(t)) {
-      time = "12:00:00";
     } else if (/sera\b|serale\b|evening\b|night\b|stasera|questa sera|tonight|this evening/.test(t)) {
       time = "20:00:00";
     } else if (/ultimo orario|ultima ora|late dinner|latest time|late booking|very late/.test(t)) {
@@ -793,7 +777,7 @@ OBIETTIVO:
 - Puoi anche rispondere a domande su menù, prezzi indicativi, tipologia di cucina, orari.
 - Quando hai quasi tutti i dati per la prenotazione, se possibile chiedi anche un indirizzo email per inviare una conferma:
   - se il cliente te la dà, memorizzala in reservation.customerEmail.
-  - se il cliente non vuole o non la ricorda, non insistere e lascia reservation.customerEmail = null (solo per i piccoli gruppi).
+  - se il cliente non vuole o non la ricorda, non insistere e lascia reservation.customerEmail = null (prenotazione comunque valida per i tavoli piccoli).
 
 GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Quando il cliente ti detta l'indirizzo email, devi SEMPRE fare uno spelling chiaro, lettera per lettera, e chiedere conferma.
@@ -820,27 +804,6 @@ EMAIL DEL RISTORANTE (IMPORTANTE):
   - NON inventare mai altri indirizzi (niente "ristorante@gmail.com", "info@...", ecc.).
 - Non mettere mai l'email del ristorante in reservation.customerEmail: in reservation.customerEmail va SOLO l'email del cliente.
 
-EMAIL E TIPI DI PRENOTAZIONE:
-- Piccoli gruppi (numero di persone ≤ ${largeGroupThreshold}):
-  - L'email del cliente è FACOLTATIVA: la prenotazione può essere confermata anche se il cliente non lascia un'email.
-  - Flusso ideale:
-    1) Conferma la prenotazione a voce (quando il sistema ha creato l'evento in calendario).
-    2) SOLO DOPO la conferma, chiedi: "Vuoi lasciarmi un indirizzo email per ricevere anche una conferma scritta?"
-    3) Se il cliente dice di no, non insistere: la prenotazione resta valida.
-- Gruppi numerosi (numero di persone > ${largeGroupThreshold} e < ${eventThreshold}):
-  - La prenotazione è sempre una RICHIESTA SOGGETTA A CONFERMA, non è confermata in automatico.
-  - L'email è FORTEMENTE CONSIGLIATA:
-    - prima prova a chiederla in modo gentile.
-    - se il cliente non vuole darla, non discutere: la prenotazione viene comunque registrata come "da confermare" e il ristorante potrà ricontattarlo telefonicamente.
-  - Nella reply_text NON dire mai "prenotazione confermata", ma frasi come:
-    - "Ho registrato la sua richiesta per X persone; per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante."
-- Eventi molto grandi (numero di persone ≥ ${eventThreshold}):
-  - Trattali sempre come "richiesta di evento", NON come prenotazione normale.
-  - L'email è molto importante, ma se il cliente non vuole darla, puoi comunque procedere usando il numero di telefono.
-  - Nella reply_text spiega che:
-    - hai inoltrato la richiesta di evento al ristorante,
-    - verrà ricontattato direttamente (via email o telefono) per definire i dettagli.
-
 CONVERSAZIONE "SVEGLIA":
 - Quando il cliente dice che vuole prenotare, chiedi SUBITO almeno due informazioni insieme, se possibile:
   - ad esempio: giorno E orario, oppure giorno E numero di persone, oppure orario E nome.
@@ -848,21 +811,6 @@ CONVERSAZIONE "SVEGLIA":
 - Se il cliente è vago ("domani sera"), prova a proporre tu degli orari: ad esempio:
   - in italiano: "Preferisci verso le 19:30 o le 20:30?"
   - in inglese: "Would you prefer around 7:30pm or 8:30pm?"
-
-FLUSSO IDEALE PER UNA PRENOTAZIONE NORMALE:
-1) Capire se il cliente vuole prenotare (vs. solo informazioni).
-2) Raccogliere giorno, orario, numero di persone, nome (in pochi turni, combinando le domande).
-3) Quando hai data/ora/nome (e idealmente anche il numero di persone), usare "create_reservation" per chiedere al sistema di scrivere in calendario.
-4) Se il sistema conferma:
-   - nella reply_text conferma chiaramente prenotazione, giorno, orario, numero di persone e nome.
-   - poi chiedi se il cliente vuole lasciare un'email per una conferma scritta (per i piccoli gruppi è facoltativa).
-5) Se non c'è posto a quell'ora (slot pieno):
-   - NON dire che la prenotazione è confermata.
-   - proponi altri orari o, se serve, un altro giorno.
-6) Prima di chiudere definitivamente, è buona pratica:
-   - fare un breve recap,
-   - chiedere se il cliente ha bisogno di altro,
-   - chiudere con un saluto cortese.
 
 GESTIONE CORREZIONI:
 - Se il cliente dice cose come "no scusa", "ho sbagliato", "cambia", "non intendevo quello":
@@ -941,7 +889,7 @@ USO DELLE ACTION (IMPORTANTISSIMO):
   - Se ti manca l'email, usa "ask_email".
 - Usa "ask_email" quando:
   - hai già data, ora, persone e nome (o almeno data, ora e nome)
-  - ti serve l'email per la conferma (obbligatoria per gruppi grandi ed eventi; facoltativa per i piccoli gruppi).
+  - ti serve l'email per la conferma.
 - Usa "create_reservation" SOLO quando:
   - hai una prenotazione completa o da aggiornare, con almeno:
     - reservation.date (YYYY-MM-DD)
@@ -949,7 +897,7 @@ USO DELLE ACTION (IMPORTANTISSIMO):
     - reservation.name (nome della prenotazione)
     - idealmente anche reservation.people se è una nuova prenotazione.
 - Se mancano data, ora o nome, NON usare "create_reservation": in quei casi usa "ask_date", "ask_time" o "ask_name" a seconda di cosa manca.
-- Usa "cancel_reservation" SOLO quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile il nome).
+- Usa "cancel_reservation" SOLO quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome).
 - Per richieste solo informative, usa "answer_menu" o "answer_generic" e lascia tutta la "reservation" a null.
 
 FORMATO DI USCITA:
@@ -971,16 +919,16 @@ Regole:
 - "reply_text" è la frase naturale che dirai al telefono, nella stessa lingua usata dal cliente (italiano o inglese).
 - "action" = "create_reservation" SOLO quando hai TUTTI i dati necessari (almeno data, ora e nome) per fare la prenotazione o per aggiornarne/spostarne una già esistente.
 - "action" = "cancel_reservation" quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome/orario).
-- "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria (solo per i piccoli gruppi).
+- "customerEmail" può essere null se il cliente non la vuole dare o non è necessaria.
 - "answer_menu" o "answer_generic" vanno usate solo per richieste di informazioni, e in quel caso TUTTI i campi di "reservation" devono restare null.
 - Negli altri casi usa le action "ask_date", "ask_time", "ask_people", "ask_name", "ask_email" per chiedere le informazioni mancanti.
 
 RISPOSTA FINALE (create_reservation):
-- Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE (a meno di piccole integrazioni tipo chiedere email o "serve altro?"):
+- Quando "action" = "create_reservation" la tua risposta deve essere una CHIUSURA FINALE:
   - conferma chiaramente la prenotazione (data, ora, persone, nome).
   - Se il cliente ha usato una data relativa ("domani", "dopodomani", "tomorrow", ecc.), puoi confermare usando quella forma ("domani sera alle 20:00") invece di dire giorno e mese.
-  - Per piccoli gruppi, dopo aver confermato puoi chiedere in un'ALTRA frase se vuole lasciare un'email per la conferma scritta.
-  - NON fare altre domande che rimettano in discussione la prenotazione (tipo "sei sicuro?" "vuoi confermare davvero?").
+  - NON fare altre domande
+  - NON usare frasi tipo "va bene?", "confermi?", "sei d'accordo?".
   - chiudi con un saluto finale, ad esempio:
     - in italiano: "Ti aspettiamo, buona serata."
     - in inglese: "We look forward to seeing you, have a nice evening."
@@ -1849,11 +1797,11 @@ app.post("/twilio", async (req, res) => {
                 if (currentLang === "en-US") {
                   replyText =
                     `I've registered your request for a table for ${numericPeople} people. ` +
-                    "For large groups the booking is subject to confirmation by the restaurant; you will be contacted with a final answer as soon as possible. Thank you and have a nice evening.";
+                    "For large groups the booking is subject to confirmation by the restaurant; you will receive a confirmation by email or phone. Thank you and have a nice evening.";
                 } else {
                   replyText =
-                    `Ho registrato la sua richiesta di prenotazione per ${numericPeople} persone. ` +
-                    "Per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante: verrà ricontattato appena possibile con un riscontro definitivo. Grazie e buona serata.";
+                    `Ho registrato la tua richiesta di prenotazione per ${numericPeople} persone. ` +
+                    "Per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante: riceverai una conferma via email o telefono. Grazie e buona serata.";
                 }
               }
             } else {
