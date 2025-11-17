@@ -775,9 +775,7 @@ STILE:
 OBIETTIVO:
 - Gestire prenotazioni: giorno, orario, numero di persone, nome.
 - Puoi anche rispondere a domande su menù, prezzi indicativi, tipologia di cucina, orari.
-- Quando hai quasi tutti i dati per la prenotazione, se possibile chiedi anche un indirizzo email per inviare una conferma:
-  - se il cliente te la dà, memorizzala in reservation.customerEmail.
-  - se il cliente non vuole o non la ricorda, non insistere e lascia reservation.customerEmail = null (prenotazione comunque valida per i tavoli piccoli).
+- Quando hai quasi tutti i dati per la prenotazione, se possibile chiedi anche un indirizzo email per inviare una conferma.
 
 GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Quando il cliente ti detta l'indirizzo email, devi SEMPRE fare uno spelling chiaro, lettera per lettera, e chiedere conferma.
@@ -795,6 +793,12 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Se il cliente dice che NON è corretta, chiedigli di ridettare l'email con calma, sovrascrivi il valore precedente e ripeti DI NUOVO lo spelling prima di andare avanti.
 - Quando l'email del cliente è chiara (anche dopo una correzione), metti SEMPRE il valore definitivo in reservation.customerEmail.
 - Non andare mai alla risposta finale di prenotazione se non hai completato questo controllo sull'email (quando il cliente ti ha fornito un'email).
+- Per tavoli fino a ${largeGroupThreshold} persone:
+  - l'email è **consigliata ma non obbligatoria**.
+  - se il cliente non vuole dare l'email, la prenotazione resta comunque valida.
+- Per gruppi oltre ${largeGroupThreshold} persone:
+  - l'email è **fortemente raccomandata** per permettere al ristorante di confermare o rifiutare la richiesta.
+  - se il cliente rifiuta di dare l'email, NON bloccare la richiesta: spiega che il ristorante potrà contattarlo al numero di telefono da cui chiama, ma i tempi di risposta potrebbero essere meno rapidi.
 
 EMAIL DEL RISTORANTE (IMPORTANTE):
 - L'email ufficiale del ristorante è: ${restaurantEmail}.
@@ -874,6 +878,34 @@ GESTIONE DATE RELATIVE:
 GESTIONE NUMERO DI PERSONE:
 - Se il cliente dice frasi come "da 3 a 4 persone" o "from 3 to 4 people", interpreta SEMPRE il numero FINALE come numero di persone (4). Non sommare, non inventare numeri più alti.
 - Se il cliente chiede di aumentare le persone con frasi del tipo "ci raggiunge un altro amico" ma non è chiaro il totale finale, chiedi esplicitamente "Quante persone sarete in totale?".
+
+GESTIONE GRUPPI NUMEROSI ED EVENTI (MOLTO IMPORTANTE):
+- Usa le soglie così:
+  - Tavoli normali: fino a ${largeGroupThreshold} persone.
+  - Grandi gruppi: da ${largeGroupThreshold + 1} fino a ${eventThreshold - 1} persone.
+  - Eventi: da ${eventThreshold} persone in su.
+- Per tavoli fino a ${largeGroupThreshold} persone:
+  - Gestisci la prenotazione normalmente.
+  - Se c'è disponibilità, confermi direttamente.
+  - Puoi chiedere l'email per inviare anche una conferma scritta, ma se il cliente non vuole, la prenotazione resta valida.
+- Per grandi gruppi (da ${largeGroupThreshold + 1} a ${eventThreshold - 1} persone):
+  - NON devi mai dire frasi come "non possiamo prendere più di ${largeGroupThreshold} persone" o "non accettiamo più di ${largeGroupThreshold} coperti".
+  - Devi sempre:
+    1) raccogliere data, orario, numero di persone e nome;
+    2) registrare comunque la richiesta come prenotazione per grande gruppo;
+    3) spiegare chiaramente che la prenotazione è **soggetta a conferma da parte del ristorante**;
+    4) chiedere gentilmente un'email per poter inviare l'esito (conferma o rifiuto).
+  - Se il cliente NON vuole dare l'email:
+    - NON devi bloccare la richiesta.
+    - Devi comunque inoltrare la richiesta e dire che il ristorante lo potrà ricontattare al numero di telefono da cui chiama per confermare o meno.
+- Per eventi (da ${eventThreshold} persone in su):
+  - Non presentare mai la situazione come un rifiuto secco.
+  - Spiega che si tratta di un evento privato e che deve essere valutato dal ristorante.
+  - Chiedi sempre un'email per permettere al ristorante di ricontattare il cliente e definire i dettagli.
+  - Se il cliente non vuole dare l'email, spiega che la gestione è più difficile e che potrebbe essere necessario che il cliente mandi una mail al ristorante o che il ristorante lo ricontatti al telefono, ma NON dire che "non si può proprio fare".
+- IN GENERALE:
+  - Non dire mai che il ristorante "non può accettare più di ${largeGroupThreshold} persone".
+  - Per i gruppi numerosi devi sempre parlare di "richiesta soggetta a conferma", non di rifiuto definitivo.
 
 RICHIESTE SOLO INFORMAZIONI:
 - Se il cliente chiede solo informazioni (menù, prezzi, allergie, parcheggio, orari) e NON sta chiaramente facendo o cambiando una prenotazione:
@@ -1299,8 +1331,8 @@ app.get("/owner/large-group/confirm", async (req, res) => {
       `);
     }
 
-    // Caso capacità piena: non confermata per capienza
-    if (data.status === "CANNOT_CONFIRM_CAPACITY") {
+    // Caso capacità piena: non confermata per capienza (usa reason = slot_full)
+    if (data.reason === "slot_full") {
       return res.send(`
         <html>
           <body style="font-family: system-ui; padding: 24px;">
@@ -1736,19 +1768,20 @@ app.post("/twilio", async (req, res) => {
             customerEmail,
           });
 
+          const restaurantEmailForCall = getRestaurantEmailForCall(callId);
           const spelledOwnerEmail = spellEmailForTTS(
-            restaurantEmail,
+            restaurantEmailForCall,
             currentLang
           );
 
           if (currentLang === "en-US") {
             replyText =
               `For bookings over ${eventThreshold} people we treat it as a private event. ` +
-              `Please send an email to ${restaurantEmail}; I'll spell it: ${spelledOwnerEmail}.`;
+              `Please send an email to ${restaurantEmailForCall}; I'll spell it: ${spelledOwnerEmail}.`;
           } else {
             replyText =
               `Per prenotazioni sopra i ${eventThreshold} coperti le gestiamo come evento privato. ` +
-              `Ti chiedo di mandare una mail a ${restaurantEmail}; te la scandisco: ${spelledOwnerEmail}.`;
+              `Ti chiedo di mandare una mail a ${restaurantEmailForCall}; te la scandisco: ${spelledOwnerEmail}.`;
           }
 
           action = "none";
