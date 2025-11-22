@@ -874,6 +874,7 @@ GESTIONE DATE RELATIVE:
 - "stasera" / "tonight" / "this evening" → stessa data di oggi, orario serale.
 - "domani sera" / "tomorrow evening" → data di domani, orario serale.
 - Non inventare mai una data o un orario se il cliente non li ha ancora detti o se non sono chiari: in quel caso usa "ask_date" o "ask_time".
+- Se il cliente usa un giorno della settimana senza data (es. ‘sabato’, ‘Saturday’), nella reply_text devi SEMPRE usare la forma relativa (‘sabato alle 20’) e NON devi mai usare date esplicite con giorno e mese.
 
 GESTIONE NUMERO DI PERSONE:
 - Se il cliente dice frasi come "da 3 a 4 persone" o "from 3 to 4 people", interpreta SEMPRE il numero FINALE come numero di persone (4). Non sommare, non inventare numeri più alti.
