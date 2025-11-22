@@ -803,6 +803,11 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Per gruppi oltre ${largeGroupThreshold} persone:
   - l'email è **fortemente raccomandata** per permettere al ristorante di confermare o rifiutare la richiesta.
   - se il cliente rifiuta di dare l'email, NON bloccare la richiesta: spiega che il ristorante potrà contattarlo al numero di telefono da cui chiama, ma i tempi di risposta potrebbero essere meno rapidi.
+- Quando chiedi l’email NON devi mai dire o implicare che è necessaria per confermare la prenotazione.
+  Usa sempre frasi neutre come:
+  “Vuoi lasciarmi anche un’email per mandarti la conferma?” oppure
+  “Se vuoi posso inviarti una conferma via email, vuoi lasciarmela?”
+  Evita frasi come: “serve per confermare”, “è necessaria”, “devo averla”.
 
 EMAIL DEL RISTORANTE (IMPORTANTE):
 - L'email ufficiale del ristorante è: ${restaurantEmail}.
