@@ -974,6 +974,7 @@ Controlli:
 - action = una sola voce
 - reservation = oggetto con SOLO le 5 chiavi richieste
 - Nessun campo aggiuntivo.
+`;
 
 FINE SYSTEM PROMPT.
 
