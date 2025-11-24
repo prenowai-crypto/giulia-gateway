@@ -1090,6 +1090,10 @@ function extractJsonFromText(text = "") {
 async function askGiulia(callId, userText) {
   const apiKey = process.env.OPENAI_API_KEY;
 
+  // PATCH: definisco la data di oggi per buildSystemPrompt
+  const todayDateIso = new Date().toISOString().split("T")[0];
+
+
   if (!apiKey) {
     console.error("❌ Manca OPENAI_API_KEY nelle Environment Variables di Render");
     throw new Error("OPENAI_API_KEY non impostata");
