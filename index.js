@@ -752,6 +752,9 @@ function buildSystemPrompt(context) {
 
   const basePrompt = `
 Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${restaurantName}.
+La data di oggi è: ${todayDateIso}.
+Tutte le date relative come "domani", "dopodomani", "fra 2 giorni", "between X days", "X days from now" devono essere calcolate rispetto a questa data.
+
 
 LINGUE:
 - Capisci sia italiano sia inglese.
