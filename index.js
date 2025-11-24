@@ -885,6 +885,49 @@ GESTIONE DATE RELATIVE:
 - Non inventare mai una data o un orario se il cliente non li ha ancora detti o se non sono chiari: in quel caso usa "ask_date" o "ask_time".
 - Se il cliente usa un giorno della settimana (“sabato”, “domenica”, ecc.), NEL JSON devi lasciare "reservation.date" vuoto (null). NON devi mai inserire una data completa (con giorno/mese/anno). La data verrà calcolata dal sistema.
 
+GESTIONE DATE RELATIVE AVANZATE (MOLTO IMPORTANTE — AGGIUNTA PATCH):
+- Le seguenti espressioni indicano giorni futuri rispetto ad oggi.
+- In tutti questi casi devi calcolare la data reale (YYYY-MM-DD) partendo dal giorno corrente:
+
+  • "tra X giorni"  
+  • "fra X giorni"  
+  • "in X giorni"  
+  • "entro X giorni"
+  • "entro un paio di giorni"
+  • "in un paio di giorni"
+  • "in pochi giorni" = 3 giorni
+  • "in alcuni giorni" = 3 giorni
+  • "in X days"
+  • "within X days"
+  • "X days from now"
+  • "two days from now", "three days from now", ecc.
+
+- Regola:
+  Se X è un numero esplicito → reservation.date = oggi + X giorni.
+
+  Esempi:
+  - "tra 2 giorni" → oggi +2 → YYYY-MM-DD
+  - "fra 3 giorni" → oggi +3 → YYYY-MM-DD
+  - "in 4 giorni" → oggi +4 → YYYY-MM-DD
+  - "in 2 days" → oggi +2 → YYYY-MM-DD
+  - "three days from now" → oggi +3 → YYYY-MM-DD
+
+- Espressioni senza numero (interpretazione conservativa):
+  - "in un paio di giorni" → +2 giorni
+  - "in pochi giorni" → +3 giorni
+  - "in alcuni giorni" → +3 giorni
+
+- ATTENZIONE:
+  Questa regola **NON** si applica ai giorni della settimana
+  ("sabato", "domenica", "lunedì", "Monday", "Tuesday").
+  In quel caso reservation.date = null.
+
+- Quando calcoli la data, devi SEMPRE inserire il valore assoluto in JSON:
+  "reservation.date": "YYYY-MM-DD"
+
+- Nella reply_text puoi continuare a usare le forme relative:
+  es. "tra due giorni alle 21".
+
 
 GESTIONE NUMERO DI PERSONE:
 - Se il cliente dice frasi come "da 3 a 4 persone" o "from 3 to 4 people", interpreta SEMPRE il numero FINALE come numero di persone (4). Non sommare, non inventare numeri più alti.
