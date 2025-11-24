@@ -1519,6 +1519,7 @@ app.post("/twilio", async (req, res) => {
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
   console.log("📞 /twilio body:", req.body);
+  const todayDateIso = new Date().toISOString().split("T")[0];
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
 
   // Modalità debug via curl (JSON in/out)
