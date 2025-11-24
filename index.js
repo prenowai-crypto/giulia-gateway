@@ -703,7 +703,7 @@ function getRestaurantNameForCall(callId) {
 
 // ---------- SYSTEM PROMPT DINAMICO ----------
 
-function buildSystemPrompt(context) {
+function buildSystemPrompt(context, todayDateIso) { 
   const restaurantName =
     (context && context.restaurant && context.restaurant.name) ||
     DEFAULT_RESTAURANT_NAME;
@@ -1102,7 +1102,7 @@ async function askGiulia(callId, userText) {
   let convo = conversations.get(callId);
   if (!convo) {
     // Primo messaggio: system con prompt dinamico + contesto ristorante
-    const systemPrompt = buildSystemPrompt(context);
+    const systemPrompt = buildSystemPrompt(context, todayDateIso);
     convo = {
       messages: [{ role: "system", content: systemPrompt }],
     };
