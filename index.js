@@ -1208,6 +1208,28 @@ async function askGiulia(callId, userText) {
     callId,
     parsed.reservation || {}
   );
+// ===============================
+// PATCH DATA INFERITA AUTOMATICA
+// ===============================
+const finalInferredDate = inferDateFromConversation(callId);
+
+// Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
+if (parsed.reservation) {
+
+  if ((!parsed.reservation.date || parsed.reservation.date === null) 
+      && finalInferredDate) {
+    console.log("🔥 PATCH DATA: uso la data inferita:", finalInferredDate);
+    parsed.reservation.date = finalInferredDate;
+  }
+
+  // Se GPT non ha messo l'orario ma è stato inferito dal sistema (già fatto nel normalize)
+  const finalInferredTime = parsed.reservation.time;
+  if ((!parsed.reservation.time || parsed.reservation.time === null) 
+      && finalInferredTime) {
+    console.log("🔥 PATCH ORA: uso l'orario inferito:", finalInferredTime);
+    parsed.reservation.time = finalInferredTime;
+  }
+}
 
   // SAFETY NET 1: se l'action è ask_name ma il nome è già presente → chiedi l'email
   if (
