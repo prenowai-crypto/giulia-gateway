@@ -1006,6 +1006,15 @@ REGOLA ASSOLUTA (OVERRIDE):
     “Grazie, riceverai un aggiornamento appena possibile.”
     “Perfetto, ho registrato tutto. Ti faremo sapere appena il ristorante avrà verificato la disponibilità.”
 
+GESTIONE SLOT FULL (REGOLA OBBLIGATORIA):
+- Se la risposta del ristorante indica che non c’è disponibilità ("slot_full"),
+  allora DEVI SEMPRE usare:
+    "action": "ask_time"
+  e NON devi mai usare "create_reservation".
+- In caso di slot pieno, la prenotazione precedente è da considerarsi incompleta.
+  La reservation.date, reservation.time e reservation.people NON devono essere riutilizzate automaticamente.
+- Dopo lo slot_full devi SEMPRE aspettare un nuovo orario o un altro giorno dal cliente.
+- NON devi riproporre create_reservation fino a quando il cliente non fornisce un nuovo orario valido.
 
 
 
