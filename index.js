@@ -719,22 +719,6 @@ function extractDate(text = "", now = new Date()) {
 }
 
 // -------------------------------------------------------
-// 📅 FUNZIONE COMPLETA DI NORMALIZZAZIONE PRE-CALENDAR
-// -------------------------------------------------------
-function normalizeReservationForCalendar(obj, callId) {
-  if (!obj) return {};
-
-  return {
-    date: obj.date || null,
-    time: obj.time || null,
-    people: obj.people || null,
-    name: obj.name || null,
-    customerEmail: obj.customerEmail || null,
-    callId,
-  };
-}
-
-// -------------------------------------------------------
 // 🧠 GESTIONE DELLO “STATO” DELLA CONVERSAZIONE
 // -------------------------------------------------------
 function initGiuliaState(callId) {
