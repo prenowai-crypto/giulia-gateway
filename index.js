@@ -1893,13 +1893,36 @@ if (precheck && precheck.reason === "slot_full") {
   slotFull = true;
 
   if (currentLang === "en-US") {
-    replyText = "I'm sorry, we are fully booked at that time. Would you like to try another hour or another day?";
+    replyText =
+      "I'm sorry, we are fully booked at that time. Would you like to try another hour or another day?";
   } else {
-    replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare un altro orario o un altro giorno?";
+    replyText =
+      "Mi dispiace, a quell'ora siamo al completo. Vuoi provare un altro orario o un altro giorno?";
   }
 
   action = "ask_time";
+
+  // 🔥🔥🔥 FIX FONDAMENTALE: FERMA TUTTO QUI
+  const twimlSlotFull = `
+    <Response>
+      <Gather
+        input="speech"
+        language="${currentLang}"
+        action="${BASE_URL}/twilio"
+        method="POST"
+        timeout="5"
+        speechTimeout="auto"
+      >
+        <Say language="${sayLang}" bargeIn="true">
+          ${escapeXml(replyText)}
+        </Say>
+      </Gather>
+    </Response>
+  `.trim();
+
+  return res.status(200).type("text/xml").send(twimlSlotFull);
 }
+
 
       const { largeGroupThreshold, eventThreshold } =
         getThresholdsForCall(callId);
