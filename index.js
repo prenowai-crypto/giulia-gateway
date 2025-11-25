@@ -1923,6 +1923,55 @@ app.post("/twilio", async (req, res) => {
         }
       }
     }
+// 🔥 PRECHECK ANTICIPATO — controlla disponibilità PRIMA di chiedere email
+if (action === "ask_email" && giulia.reservation) {
+  const normalizedEarly = normalizeReservationForCalendar(
+    giulia.reservation,
+    callId
+  );
+  let { date, time, people, name, customerEmail } = normalizedEarly;
+
+  // Se abbiamo data + ora + persone + nome → possiamo fare precheck
+  if (date && time && name && people) {
+    const precheckEarly = await sendToCalendar({
+      source: "twilio_precheck_early",
+      nome: name,
+      persone: people,
+      data: date,
+      ora: time,
+      telefono: From,
+      email: customerEmail || "",
+      action: "check_availability"
+    });
+
+    if (precheckEarly && precheckEarly.reason === "slot_full") {
+      // Slot pieno → non chiediamo la mail
+      const reply =
+        currentLang === "en-US"
+          ? "I'm sorry, we are fully booked at that time. Would you like to try another hour or another day?"
+          : "Mi dispiace, a quell'ora siamo al completo. Vuoi provare un altro orario o un altro giorno?";
+
+      const twimlEarly = `
+        <Response>
+          <Gather
+            input="speech"
+            language="${currentLang}"
+            action="${BASE_URL}/twilio"
+            method="POST"
+            timeout="5"
+            speechTimeout="auto"
+          >
+            <Say language="${currentLang}" bargeIn="true">
+              ${escapeXml(reply)}
+            </Say>
+          </Gather>
+        </Response>
+      `.trim();
+
+      return res.status(200).type("text/xml").send(twimlEarly);
+    }
+  }
+}
 
     // Se è una prenotazione finale, invia al Calendar (con controllo coperti)
     if (action === "create_reservation" && giulia.reservation) {
