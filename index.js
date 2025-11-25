@@ -1876,6 +1876,30 @@ app.post("/twilio", async (req, res) => {
         callId
       );
       let { date, time, people, name, customerEmail } = normalizedRes;
+      
+// 🔥 PATCH SLOT FULL: controllo immediato prima di tutto il resto
+const precheck = await sendToCalendar({
+  source: "twilio_precheck",
+  nome: name,
+  persone: people,
+  data: date,
+  ora: time,
+  telefono: From,
+  email: customerEmail || "",
+  action: "check_availability"
+});
+
+if (precheck && precheck.reason === "slot_full") {
+  slotFull = true;
+
+  if (currentLang === "en-US") {
+    replyText = "I'm sorry, we are fully booked at that time. Would you like to try another hour or another day?";
+  } else {
+    replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare un altro orario o un altro giorno?";
+  }
+
+  action = "ask_time";
+}
 
       const { largeGroupThreshold, eventThreshold } =
         getThresholdsForCall(callId);
