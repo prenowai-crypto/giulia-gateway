@@ -1,6 +1,5 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
-// 🔥 VERSIONE PATCHATA: Fix controllo slot pieni
 // ===============================
 
 import express from "express";
@@ -33,7 +32,7 @@ const APPS_SCRIPT_CONTEXT_URL =
 const BASE_URL = process.env.BASE_URL || "https://giulia-gateway.onrender.com";
 
 // Soglie di fallback (se get_context non le fornisce)
-const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → "grande gruppo", da confermare
+const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → “grande gruppo”, da confermare
 const EVENT_THRESHOLD_DEFAULT = 45; // sopra → evento gigante, niente Calendar
 
 // ---------- NOTE IMPORTANTI ----------
@@ -576,54 +575,6 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   return { date, time, people, name, customerEmail };
 }
 
-
-// 🔥 PATCH CRITICA: Controllo disponibilità slot PREVENTIVO
-async function checkSlotAvailability(dateStr, timeStr, people) {
-  if (!dateStr || !timeStr || !people) {
-    return { available: true }; // se mancano dati, lascia proseguire
-  }
-
-  try {
-    const response = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "check_availability",
-        data: dateStr,
-        ora: timeStr,
-        persone: people,
-      }),
-    });
-
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      console.error("❌ Risposta check_availability non JSON:", text);
-      return { available: true }; // in caso di errore, non blocchiamo
-    }
-
-    if (!response.ok) {
-      console.error("❌ Errore check_availability:", data);
-      return { available: true }; // fallback: non blocchiamo
-    }
-
-    console.log("✅ Check availability:", data);
-
-    if (data.reason === "slot_full") {
-      return { available: false, reason: "slot_full" };
-    }
-
-    return { available: true };
-  } catch (err) {
-    console.error("❌ Errore chiamata check_availability:", err);
-    return { available: true }; // fallback
-  }
-}// ===============================
-// 🔥 PARTE FINALE index.js - DA AGGIUNGERE DOPO normalizeReservationForCalendar
-// ===============================
-
 // Invio dati a Google Apps Script per creare/aggiornare/cancellare evento su Calendar
 async function sendToCalendar(payload) {
   console.log("📅 Invio dati a Apps Script:", payload);
@@ -650,54 +601,6 @@ async function sendToCalendar(payload) {
 
   console.log("✅ Risposta da Apps Script:", data);
   return data;
-}
-
-// 🔥 PATCH CRITICA: Controllo preventivo disponibilità slot
-async function checkSlotAvailability(dateStr, timeStr, people) {
-  if (!dateStr || !timeStr || !people) {
-    return { available: true }; // se mancano dati, lascia proseguire
-  }
-
-  try {
-    console.log(`🔍 Check preventivo slot: ${dateStr} ${timeStr} per ${people} pax`);
-    
-    const response = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "check_availability",
-        data: dateStr,
-        ora: timeStr,
-        persone: people,
-      }),
-    });
-
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      console.error("❌ Risposta check_availability non JSON:", text);
-      return { available: true }; // in caso di errore, non blocchiamo
-    }
-
-    if (!response.ok) {
-      console.error("❌ Errore check_availability:", data);
-      return { available: true }; // fallback: non blocchiamo
-    }
-
-    console.log("✅ Check availability:", data);
-
-    if (data.reason === "slot_full") {
-      console.log("⛔ SLOT PIENO rilevato dal check preventivo");
-      return { available: false, reason: "slot_full" };
-    }
-
-    return { available: true };
-  } catch (err) {
-    console.error("❌ Errore chiamata check_availability:", err);
-    return { available: true }; // fallback: in caso di errore non blocchiamo
-  }
 }
 
 // ---------- CONTESTO RISTORANTE (get_context) ----------
