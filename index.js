@@ -1,5 +1,6 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
+// 🔥 VERSIONE PATCHATA: Fix controllo slot pieni
 // ===============================
 
 import express from "express";
@@ -32,7 +33,7 @@ const APPS_SCRIPT_CONTEXT_URL =
 const BASE_URL = process.env.BASE_URL || "https://giulia-gateway.onrender.com";
 
 // Soglie di fallback (se get_context non le fornisce)
-const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → “grande gruppo”, da confermare
+const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → "grande gruppo", da confermare
 const EVENT_THRESHOLD_DEFAULT = 45; // sopra → evento gigante, niente Calendar
 
 // ---------- NOTE IMPORTANTI ----------
@@ -603,6 +604,129 @@ async function sendToCalendar(payload) {
   return data;
 }
 
+// 🔥 PATCH CRITICA: Controllo disponibilità slot PREVENTIVO
+async function checkSlotAvailability(dateStr, timeStr, people) {
+  if (!dateStr || !timeStr || !people) {
+    return { available: true }; // se mancano dati, lascia proseguire
+  }
+
+  try {
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "check_availability",
+        data: dateStr,
+        ora: timeStr,
+        persone: people,
+      }),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Risposta check_availability non JSON:", text);
+      return { available: true }; // in caso di errore, non blocchiamo
+    }
+
+    if (!response.ok) {
+      console.error("❌ Errore check_availability:", data);
+      return { available: true }; // fallback: non blocchiamo
+    }
+
+    console.log("✅ Check availability:", data);
+
+    if (data.reason === "slot_full") {
+      return { available: false, reason: "slot_full" };
+    }
+
+    return { available: true };
+  } catch (err) {
+    console.error("❌ Errore chiamata check_availability:", err);
+    return { available: true }; // fallback
+  }
+}// ===============================
+// 🔥 PARTE FINALE index.js - DA AGGIUNGERE DOPO normalizeReservationForCalendar
+// ===============================
+
+// Invio dati a Google Apps Script per creare/aggiornare/cancellare evento su Calendar
+async function sendToCalendar(payload) {
+  console.log("📅 Invio dati a Apps Script:", payload);
+
+  const response = await fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+  let data;
+
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    data = { rawResponse: text };
+  }
+
+  if (!response.ok) {
+    console.error("❌ Errore Apps Script:", data);
+    throw new Error("Errore Apps Script");
+  }
+
+  console.log("✅ Risposta da Apps Script:", data);
+  return data;
+}
+
+// 🔥 PATCH CRITICA: Controllo preventivo disponibilità slot
+async function checkSlotAvailability(dateStr, timeStr, people) {
+  if (!dateStr || !timeStr || !people) {
+    return { available: true }; // se mancano dati, lascia proseguire
+  }
+
+  try {
+    console.log(`🔍 Check preventivo slot: ${dateStr} ${timeStr} per ${people} pax`);
+    
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "check_availability",
+        data: dateStr,
+        ora: timeStr,
+        persone: people,
+      }),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Risposta check_availability non JSON:", text);
+      return { available: true }; // in caso di errore, non blocchiamo
+    }
+
+    if (!response.ok) {
+      console.error("❌ Errore check_availability:", data);
+      return { available: true }; // fallback: non blocchiamo
+    }
+
+    console.log("✅ Check availability:", data);
+
+    if (data.reason === "slot_full") {
+      console.log("⛔ SLOT PIENO rilevato dal check preventivo");
+      return { available: false, reason: "slot_full" };
+    }
+
+    return { available: true };
+  } catch (err) {
+    console.error("❌ Errore chiamata check_availability:", err);
+    return { available: true }; // fallback: in caso di errore non blocchiamo
+  }
+}
+
 // ---------- CONTESTO RISTORANTE (get_context) ----------
 
 async function fetchRestaurantContext() {
@@ -763,14 +887,14 @@ LINGUE:
 - Se cambia lingua durante la chiamata, adeguati alla lingua che usa nella sua ultima frase.
 - Non mescolare le lingue nella stessa risposta.
 - "reply_text" deve SEMPRE essere nella stessa lingua dell'ULTIMO messaggio del cliente.
-- Se il cliente usa un mix di lingue nello stesso messaggio (es. “Sorry la mia email è…”),
+- Se il cliente usa un mix di lingue nello stesso messaggio (es. "Sorry la mia email è…"),
   mantieni la lingua principale del contesto della conversazione, cioè la lingua usata nella frase precedente,
   e NON cambiare lingua solo perché compaiono singole parole italiane o inglesi nella stessa frase.
 
 
 RUOLO:
 - Sei una receptionist umana al telefono, gentile, sintetica e professionale.
-- Parli come in una telefonata vera, non come un’email.
+- Parli come in una telefonata vera, non come un'email.
 - Non parlare mai di "intelligenza artificiale" o "modelli linguistici".
 
 STILE:
@@ -806,11 +930,11 @@ GESTIONE EMAIL (MOLTO IMPORTANTE):
 - Per gruppi oltre ${largeGroupThreshold} persone:
   - l'email è **fortemente raccomandata** per permettere al ristorante di confermare o rifiutare la richiesta.
   - se il cliente rifiuta di dare l'email, NON bloccare la richiesta: spiega che il ristorante potrà contattarlo al numero di telefono da cui chiama, ma i tempi di risposta potrebbero essere meno rapidi.
-- Quando chiedi l’email NON devi mai dire o implicare che è necessaria per confermare la prenotazione.
+- Quando chiedi l'email NON devi mai dire o implicare che è necessaria per confermare la prenotazione.
   Usa sempre frasi neutre come:
-  “Vuoi lasciarmi anche un’email per mandarti la conferma?” oppure
-  “Se vuoi posso inviarti una conferma via email, vuoi lasciarmela?”
-  Evita frasi come: “serve per confermare”, “è necessaria”, “devo averla”.
+  "Vuoi lasciarmi anche un'email per mandarti la conferma?" oppure
+  "Se vuoi posso inviarti una conferma via email, vuoi lasciarmela?"
+  Evita frasi come: "serve per confermare", "è necessaria", "devo averla".
 
 EMAIL DEL RISTORANTE (IMPORTANTE):
 - L'email ufficiale del ristorante è: ${restaurantEmail}.
@@ -864,23 +988,23 @@ COME PARLI DELLA DATA A VOCE:
 - Puoi usare giorno e mese (es. "2 novembre", "November 2nd") solo se il cliente li ha già detti esplicitamente o se sta già parlando in quel modo.
 
 REGOLA SUL GIORNO DELLA SETTIMANA (IMPORTANTISSIMA):
-- NON devi mai calcolare o indovinare il giorno della settimana associato a una data (es. “lunedì”, “martedì”, “domenica”).
-- I modelli non hanno un calendario interno: quindi NON devi mai dire tu spontaneamente “il 26 è lunedì” o simili.
+- NON devi mai calcolare o indovinare il giorno della settimana associato a una data (es. "lunedì", "martedì", "domenica").
+- I modelli non hanno un calendario interno: quindi NON devi mai dire tu spontaneamente "il 26 è lunedì" o simili.
 - Se il cliente NON menziona esplicitamente un giorno della settimana, tu NON devi mai introdurlo.
 - Usa SEMPRE e solo la forma che dice il cliente:
-  • “domani”
-  • “dopodomani”
-  • “il 26 novembre”
-  • “tra due giorni”
-  • “in tre giorni”
-- SE il cliente menziona un giorno della settimana (es. “sabato”, “domenica”, “Monday”, “Tuesday”), allora:
-  • NELLA REPLY_TEXT puoi usarlo (“sabato alle 20 va bene”)
+  • "domani"
+  • "dopodomani"
+  • "il 26 novembre"
+  • "tra due giorni"
+  • "in tre giorni"
+- SE il cliente menziona un giorno della settimana (es. "sabato", "domenica", "Monday", "Tuesday"), allora:
+  • NELLA REPLY_TEXT puoi usarlo ("sabato alle 20 va bene")
   • NEL JSON devi lasciare reservation.date = null (sarà il sistema a calcolare la data corretta).
-- NON usare mai gli orari di apertura (“lunedì chiuso”) per dedurre la data:
+- NON usare mai gli orari di apertura ("lunedì chiuso") per dedurre la data:
   puoi usarli solo SE il cliente chiede esplicitamente qualcosa come
-  “siete aperti lunedì?”
-- Se il cliente chiede una data assoluta (es. “il 26 novembre alle 20”):
-  • NON devi mai dire “il 26 è lunedì/domenica”.
+  "siete aperti lunedì?"
+- Se il cliente chiede una data assoluta (es. "il 26 novembre alle 20"):
+  • NON devi mai dire "il 26 è lunedì/domenica".
   • Devi limitarti a confermare esattamente ciò che ha detto.
 
 GESTIONE CANCELLAZIONI:
@@ -906,7 +1030,7 @@ GESTIONE DATE RELATIVE:
 - "stasera" / "tonight" / "this evening" → stessa data di oggi, orario serale.
 - "domani sera" / "tomorrow evening" → data di domani, orario serale.
 - Non inventare mai una data o un orario se il cliente non li ha ancora detti o se non sono chiari: in quel caso usa "ask_date" o "ask_time".
-- Se il cliente usa un giorno della settimana (“sabato”, “domenica”, ecc.), NEL JSON devi lasciare "reservation.date" vuoto (null). NON devi mai inserire una data completa (con giorno/mese/anno). La data verrà calcolata dal sistema.
+- Se il cliente usa un giorno della settimana ("sabato", "domenica", ecc.), NEL JSON devi lasciare "reservation.date" vuoto (null). NON devi mai inserire una data completa (con giorno/mese/anno). La data verrà calcolata dal sistema.
 
 GESTIONE DATE RELATIVE AVANZATE (MOLTO IMPORTANTE — AGGIUNTA PATCH):
 - Le seguenti espressioni indicano giorni futuri rispetto ad oggi.
@@ -989,22 +1113,22 @@ IN GENERALE (molto importante):
 - Non usare MAI frasi che suggeriscono una conferma definitiva, come:
   "ti aspettiamo", "la prenotazione è confermata", "è tutto fissato", "a posto così".
 - Per i gruppi numerosi e gli eventi la risposta finale deve essere SEMPRE neutra, ad esempio:
-  “Perfetto, ho registrato la richiesta. Il ristorante ti ricontatterà per la conferma.”
+  "Perfetto, ho registrato la richiesta. Il ristorante ti ricontatterà per la conferma."
 - Usa sempre espressioni come:
-  “richiesta soggetta a conferma”,
-  “ti ricontatteremo per l’esito”,
-  “ti aggiorneremo appena possibile”.
+  "richiesta soggetta a conferma",
+  "ti ricontatteremo per l'esito",
+  "ti aggiorneremo appena possibile".
 - Mai dare per scontata la conferma finale se le persone superano ${largeGroupThreshold}.
 
 REGOLA ASSOLUTA (OVERRIDE):
-- Se people > ${largeGroupThreshold}, indipendentemente dall’action (anche se è "create_reservation"):
+- Se people > ${largeGroupThreshold}, indipendentemente dall'action (anche se è "create_reservation"):
   - La risposta verbale deve essere SEMPRE neutra.
   - NON devi mai dire frasi come:
-    “ti aspettiamo”, “la prenotazione è confermata”, “è tutto fatto”, “a posto così”.
+    "ti aspettiamo", "la prenotazione è confermata", "è tutto fatto", "a posto così".
   - Devi sempre concludere con frasi come:
-    “La richiesta è stata inoltrata. Il ristorante ti ricontatterà per la conferma.”
-    “Grazie, riceverai un aggiornamento appena possibile.”
-    “Perfetto, ho registrato tutto. Ti faremo sapere appena il ristorante avrà verificato la disponibilità.”
+    "La richiesta è stata inoltrata. Il ristorante ti ricontatterà per la conferma."
+    "Grazie, riceverai un aggiornamento appena possibile."
+    "Perfetto, ho registrato tutto. Ti faremo sapere appena il ristorante avrà verificato la disponibilità."
 
 
 
@@ -1132,7 +1256,7 @@ async function askGiulia(callId, userText) {
     };
   }
 
-  // Aggiungiamo il messaggio dell’utente
+  // Aggiungiamo il messaggio dell'utente
   convo.messages.push({ role: "user", content: userText });
 
   // Limitiamo la cronologia: system + ultimi 5 messaggi
@@ -1278,28 +1402,29 @@ async function askGiulia(callId, userText) {
     callId,
     parsed.reservation || {}
   );
-// ===============================
-// PATCH DATA INFERITA AUTOMATICA
-// ===============================
-const finalInferredDate = inferDateFromConversation(callId);
 
-// Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
-if (parsed.reservation) {
+  // ===============================
+  // PATCH DATA INFERITA AUTOMATICA
+  // ===============================
+  const finalInferredDate = inferDateFromConversation(callId);
 
-  if ((!parsed.reservation.date || parsed.reservation.date === null) 
-      && finalInferredDate) {
-    console.log("🔥 PATCH DATA: uso la data inferita:", finalInferredDate);
-    parsed.reservation.date = finalInferredDate;
+  // Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
+  if (parsed.reservation) {
+
+    if ((!parsed.reservation.date || parsed.reservation.date === null) 
+        && finalInferredDate) {
+      console.log("🔥 PATCH DATA: uso la data inferita:", finalInferredDate);
+      parsed.reservation.date = finalInferredDate;
+    }
+
+    // Se GPT non ha messo l'orario ma è stato inferito dal sistema (già fatto nel normalize)
+    const finalInferredTime = parsed.reservation.time;
+    if ((!parsed.reservation.time || parsed.reservation.time === null) 
+        && finalInferredTime) {
+      console.log("🔥 PATCH ORA: uso l'orario inferito:", finalInferredTime);
+      parsed.reservation.time = finalInferredTime;
+    }
   }
-
-  // Se GPT non ha messo l'orario ma è stato inferito dal sistema (già fatto nel normalize)
-  const finalInferredTime = parsed.reservation.time;
-  if ((!parsed.reservation.time || parsed.reservation.time === null) 
-      && finalInferredTime) {
-    console.log("🔥 PATCH ORA: uso l'orario inferito:", finalInferredTime);
-    parsed.reservation.time = finalInferredTime;
-  }
-}
 
   // SAFETY NET 1: se l'action è ask_name ma il nome è già presente → chiedi l'email
   if (
@@ -1869,7 +1994,8 @@ app.post("/twilio", async (req, res) => {
       }
     }
 
-    // Se è una prenotazione finale, invia al Calendar (con controllo coperti)
+    // 🔥🔥 PATCH PRINCIPALE: CONTROLLO SLOT PIENI PREVENTIVO
+    // Se è una prenotazione finale, prima di inviare al Calendar controlliamo la disponibilità
     if (action === "create_reservation" && giulia.reservation) {
       const normalizedRes = normalizeReservationForCalendar(
         giulia.reservation,
@@ -1915,81 +2041,107 @@ app.post("/twilio", async (req, res) => {
 
           action = "none";
         } else {
-          // Flusso normale: invio al Calendar ANCHE SE people è null
-          try {
-            const calendarRes = await sendToCalendar({
-              source: "twilio",
-              nome: name,
-              persone: numericPeople,
-              data: date,
-              ora: time,
-              telefono: From,
-              email: customerEmail || "",
-            });
+          // 🔥 CONTROLLO PREVENTIVO DISPONIBILITÀ SLOT
+          const availCheck = await checkSlotAvailability(
+            date,
+            time,
+            numericPeople || 2
+          );
 
-            if (!calendarRes.success && calendarRes.reason === "slot_full") {
-              slotFull = true;
-              console.log(
-                "⛔ Prenotazione rifiutata per capienza:",
-                calendarRes
-              );
+          if (!availCheck.available) {
+            // ❌ SLOT PIENO: sovrascrivi il messaggio di GPT
+            slotFull = true;
+            console.log(
+              "⛔ Slot pieno rilevato PRIMA della creazione prenotazione"
+            );
 
-              if (currentLang === "en-US") {
-                replyText =
-                  "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
-              } else {
-                replyText =
-                  "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-              }
+            if (currentLang === "en-US") {
+              replyText =
+                "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
+            } else {
+              replyText =
+                "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+            }
 
-              action = "ask_time";
-            } else if (calendarRes && calendarRes.success) {
-              console.log("✅ Prenotazione creata/aggiornata:", {
-                reservation: normalizedRes,
-                fromAppsScript: calendarRes,
+            action = "ask_time"; // torna a chiedere orario
+          } else {
+            // ✅ SLOT DISPONIBILE: procedi con la prenotazione normale
+            try {
+              const calendarRes = await sendToCalendar({
+                source: "twilio",
+                nome: name,
+                persone: numericPeople,
+                data: date,
+                ora: time,
+                telefono: From,
+                email: customerEmail || "",
               });
 
-              // Grande gruppo (ma non evento gigante): messaggio chiaro "soggetto a conferma"
-              if (
-                numericPeople !== null &&
-                numericPeople > largeGroupThreshold
-              ) {
-                isLargeGroupReservation = true;
+              // Doppio controllo: anche Apps Script potrebbe rifiutare
+              if (!calendarRes.success && calendarRes.reason === "slot_full") {
+                slotFull = true;
+                console.log(
+                  "⛔ Prenotazione rifiutata per capienza (conferma Apps Script):",
+                  calendarRes
+                );
 
                 if (currentLang === "en-US") {
                   replyText =
-                    `I've registered your request for a table for ${numericPeople} people. ` +
-                    "For large groups the booking is subject to confirmation by the restaurant; you will receive a confirmation by email or phone. Thank you and have a nice evening.";
+                    "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
                 } else {
                   replyText =
-                    `Ho registrato la tua richiesta di prenotazione per ${numericPeople} persone. ` +
-                    "Per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante: riceverai una conferma via email o telefono. Grazie e buona serata.";
+                    "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
                 }
+
+                action = "ask_time";
+              } else if (calendarRes && calendarRes.success) {
+                console.log("✅ Prenotazione creata/aggiornata:", {
+                  reservation: normalizedRes,
+                  fromAppsScript: calendarRes,
+                });
+
+                // Grande gruppo (ma non evento gigante): messaggio "soggetto a conferma"
+                if (
+                  numericPeople !== null &&
+                  numericPeople > largeGroupThreshold
+                ) {
+                  isLargeGroupReservation = true;
+
+                  if (currentLang === "en-US") {
+                    replyText =
+                      `I've registered your request for a table for ${numericPeople} people. ` +
+                      "For large groups the booking is subject to confirmation by the restaurant; you will receive a confirmation by email or phone. Thank you and have a nice evening.";
+                  } else {
+                    replyText =
+                      `Ho registrato la tua richiesta di prenotazione per ${numericPeople} persone. ` +
+                      "Per i gruppi numerosi la prenotazione è soggetta a conferma da parte del ristorante: riceverai una conferma via email o telefono. Grazie e buona serata.";
+                  }
+                }
+              } else {
+                console.error(
+                  "❌ Errore nella creazione/aggiornamento prenotazione (non slot_full):",
+                  calendarRes
+                );
+                if (currentLang === "en-US") {
+                  replyText =
+                    "I'm sorry, there was a problem with your booking. Could we try a different time or another day?";
+                } else {
+                  replyText =
+                    "Mi dispiace, c'è stato un problema con la prenotazione. Possiamo provare con un altro orario o un altro giorno?";
+                }
+                action = "ask_time";
               }
-            } else {
-              console.error(
-                "❌ Errore nella creazione/aggiornamento prenotazione (non slot_full):",
-                calendarRes
-              );
+            } catch (calErr) {
+              console.error("❌ Errore nella creazione prenotazione:", calErr);
               if (currentLang === "en-US") {
                 replyText =
-                  "I'm sorry, there was a problem with your booking. Could we try a different time or another day?";
+                  "I'm sorry, there was a technical problem. Please try again in a few minutes.";
               } else {
                 replyText =
-                  "Mi dispiace, c'è stato un problema con la prenotazione. Possiamo provare con un altro orario o un altro giorno?";
+                  "Mi dispiace, c'è stato un problema tecnico. Per favore riprova tra qualche minuto.";
               }
-              action = "ask_time";
+              action = "none";
             }
-          } catch (calErr) {
-            console.error("❌ Errore nella creazione prenotazione:", calErr);
-            if (currentLang === "en-US") {
-              replyText =
-                "I'm sorry, there was a technical problem. Please try again in a few minutes.";
-            } else {
-              replyText =
-                "Mi dispiace, c'è stato un problema tecnico. Per favore riprova tra qualche minuto.";
-            }
-            action = "none";
           }
         }
       } else {
