@@ -576,33 +576,6 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
   return { date, time, people, name, customerEmail };
 }
 
-// Invio dati a Google Apps Script per creare/aggiornare/cancellare evento su Calendar
-async function sendToCalendar(payload) {
-  console.log("📅 Invio dati a Apps Script:", payload);
-
-  const response = await fetch(APPS_SCRIPT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  const text = await response.text();
-  let data;
-
-  try {
-    data = JSON.parse(text);
-  } catch (e) {
-    data = { rawResponse: text };
-  }
-
-  if (!response.ok) {
-    console.error("❌ Errore Apps Script:", data);
-    throw new Error("Errore Apps Script");
-  }
-
-  console.log("✅ Risposta da Apps Script:", data);
-  return data;
-}
 
 // 🔥 PATCH CRITICA: Controllo disponibilità slot PREVENTIVO
 async function checkSlotAvailability(dateStr, timeStr, people) {
