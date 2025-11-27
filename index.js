@@ -602,6 +602,53 @@ async function sendToCalendar(payload) {
   console.log("✅ Risposta da Apps Script:", data);
   return data;
 }
+// 🔥 PATCH CRITICA: Controllo preventivo disponibilità slot
+async function checkSlotAvailability(dateStr, timeStr, people) {
+  if (!dateStr || !timeStr || !people) {
+    return { available: true }; // se mancano dati, lascia proseguire
+  }
+
+  try {
+    console.log(`🔍 Check preventivo slot: ${dateStr} ${timeStr} per ${people} pax`);
+    
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "check_availability",
+        data: dateStr,
+        ora: timeStr,
+        persone: people,
+      }),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Risposta check_availability non JSON:", text);
+      return { available: true }; // in caso di errore, non blocchiamo
+    }
+
+    if (!response.ok) {
+      console.error("❌ Errore check_availability:", data);
+      return { available: true }; // fallback: non blocchiamo
+    }
+
+    console.log("✅ Check availability:", data);
+
+    if (data.reason === "slot_full") {
+      console.log("⛔ SLOT PIENO rilevato dal check preventivo");
+      return { available: false, reason: "slot_full" };
+    }
+
+    return { available: true };
+  } catch (err) {
+    console.error("❌ Errore chiamata check_availability:", err);
+    return { available: true }; // fallback: in caso di errore non blocchiamo
+  }
+}
 
 // ---------- CONTESTO RISTORANTE (get_context) ----------
 
@@ -1712,6 +1759,48 @@ app.post("/twilio", async (req, res) => {
     }
 
     let slotFull = false;
+    // 🔥 PATCH CRITICA: Check preventivo anche per ask_email/ask_name
+// Problema: GPT potrebbe rispondere "ask_email" invece di "create_reservation" 
+// anche quando ha tutti i dati tranne l'email. In quel caso dobbiamo comunque
+// verificare la disponibilità dello slot PRIMA di chiedere l'email.
+
+if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
+  const r = giulia.reservation;
+  
+  // Se abbiamo data, ora e persone → facciamo check preventivo
+  if (r.date && r.time && r.people && r.people > 0) {
+    console.log(`🔍 Check preventivo (action=${action}): ${r.date} ${r.time} per ${r.people} pax`);
+    
+    try {
+      const availCheck = await checkSlotAvailability(r.date, r.time, r.people);
+      
+      if (!availCheck.available) {
+        // ❌ SLOT PIENO: sovrascrivi la risposta di GPT
+        slotFull = true;
+        console.log("⛔ SLOT PIENO rilevato in check preventivo (prima di ask_email/ask_name)");
+
+        if (currentLang === "en-US") {
+          replyText =
+            "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
+        } else {
+          replyText =
+            "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+        }
+
+        action = "ask_time"; // Torna a chiedere orario
+        
+        // Reset time per forzare la richiesta di un nuovo orario
+        giulia.reservation.time = null;
+        mergeReservationForCall(callId, giulia.reservation);
+      } else {
+        console.log("✅ Slot disponibile, procedo con l'action originale di GPT");
+      }
+    } catch (err) {
+      console.error("❌ Errore check preventivo:", err);
+      // In caso di errore, lascia proseguire normalmente
+    }
+  }
+}
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
