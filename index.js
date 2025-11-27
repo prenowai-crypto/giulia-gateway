@@ -1903,6 +1903,12 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
   giulia.reservation.time = null;
   mergeReservationForCall(callId, giulia.reservation);
 }
+    } catch (err) {
+      console.error("❌ Errore check preventivo ask_email/ask_name:", err);
+    }
+  }
+}
+
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
