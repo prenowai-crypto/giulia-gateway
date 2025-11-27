@@ -649,6 +649,108 @@ async function checkSlotAvailability(dateStr, timeStr, people) {
     return { available: true }; // fallback: in caso di errore non blocchiamo
   }
 }
+/**
+ * Cerca slot disponibili tramite Apps Script
+ * @param {string} dateStr - Data (YYYY-MM-DD)
+ * @param {string} timeStr - Ora richiesta (HH:MM:SS)
+ * @param {number} people - Numero persone
+ * @returns {Object} { success, sameDay: [...], nextDays: [...] }
+ */
+async function findAvailableSlots(dateStr, timeStr, people) {
+  if (!dateStr || !people) {
+    return { success: false, sameDay: [], nextDays: [] };
+  }
+
+  try {
+    console.log(`🔍 Ricerca slot disponibili: ${dateStr} ${timeStr || ''} per ${people} pax`);
+
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "find_available_slots",
+        data: dateStr,
+        ora: timeStr || "20:00:00",
+        persone: people,
+      }),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Risposta find_available_slots non JSON:", text);
+      return { success: false, sameDay: [], nextDays: [] };
+    }
+
+    if (!response.ok || !data.success) {
+      console.error("❌ Errore find_available_slots:", data);
+      return { success: false, sameDay: [], nextDays: [] };
+    }
+
+    console.log("✅ Slot disponibili trovati:", JSON.stringify(data.availableSlots));
+    return {
+      success: true,
+      sameDay: data.availableSlots?.sameDay || [],
+      nextDays: data.availableSlots?.nextDays || []
+    };
+  } catch (err) {
+    console.error("❌ Errore chiamata find_available_slots:", err);
+    return { success: false, sameDay: [], nextDays: [] };
+  }
+}
+
+/**
+ * Costruisce un messaggio con gli slot alternativi disponibili
+ * @param {Object} slots - { sameDay: [...], nextDays: [...] }
+ * @param {string} lang - "it-IT" o "en-US"
+ * @returns {string} Messaggio con alternative
+ */
+function buildAlternativeSlotsMessage(slots, lang = "it-IT") {
+  const { sameDay, nextDays } = slots;
+
+  // Caso 1: Ci sono slot nella stessa serata
+  if (sameDay && sameDay.length > 0) {
+    const times = sameDay.map(s => s.time).slice(0, 3);
+    
+    if (lang === "en-US") {
+      if (times.length === 1) {
+        return `I'm sorry, we're fully booked at that time. I have availability at ${times[0]}. Would that work for you?`;
+      } else {
+        const lastTime = times.pop();
+        return `I'm sorry, we're fully booked at that time. I have availability at ${times.join(", ")} or ${lastTime}. Which would you prefer?`;
+      }
+    } else {
+      if (times.length === 1) {
+        return `Mi dispiace, a quell'ora siamo al completo. Ho disponibilità alle ${times[0]}. Può andare bene?`;
+      } else {
+        const lastTime = times.pop();
+        return `Mi dispiace, a quell'ora siamo al completo. Ho disponibilità alle ${times.join(", ")} oppure alle ${lastTime}. Quale preferisci?`;
+      }
+    }
+  }
+
+  // Caso 2: Slot solo nei giorni successivi
+  if (nextDays && nextDays.length > 0) {
+    const firstDay = nextDays[0];
+    const dayName = firstDay.dayName;
+    const times = firstDay.slots.map(s => s.time).slice(0, 2);
+    
+    if (lang === "en-US") {
+      return `I'm sorry, we're fully booked for tonight. The next availability is on ${dayName} at ${times.join(" or ")}. Would you like to book for then?`;
+    } else {
+      return `Mi dispiace, per stasera siamo al completo. La prima disponibilità è ${dayName} alle ${times.join(" o alle ")}. Vuoi prenotare per quel giorno?`;
+    }
+  }
+
+  // Caso 3: Nessuna disponibilità trovata (fallback generico)
+  if (lang === "en-US") {
+    return "I'm sorry, we're fully booked. Would you like to try a different day?";
+  } else {
+    return "Mi dispiace, siamo al completo. Vuoi provare con un altro giorno?";
+  }
+}
 
 // ---------- CONTESTO RISTORANTE (get_context) ----------
 
@@ -1775,31 +1877,31 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
       const availCheck = await checkSlotAvailability(r.date, r.time, r.people);
       
       if (!availCheck.available) {
-        // ❌ SLOT PIENO: sovrascrivi la risposta di GPT
-        slotFull = true;
-        console.log("⛔ SLOT PIENO rilevato in check preventivo (prima di ask_email/ask_name)");
+  // ❌ SLOT PIENO: cerca alternative e sovrascrivi la risposta
+  slotFull = true;
+  console.log("⛔ SLOT PIENO rilevato in check preventivo (prima di ask_email/ask_name)");
 
-        if (currentLang === "en-US") {
-          replyText =
-            "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
-        } else {
-          replyText =
-            "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-        }
-
-        action = "ask_time"; // Torna a chiedere orario
-        
-        // Reset time per forzare la richiesta di un nuovo orario
-        giulia.reservation.time = null;
-        mergeReservationForCall(callId, giulia.reservation);
-      } else {
-        console.log("✅ Slot disponibile, procedo con l'action originale di GPT");
-      }
-    } catch (err) {
-      console.error("❌ Errore check preventivo:", err);
-      // In caso di errore, lascia proseguire normalmente
+  // 🔥 NUOVA LOGICA: cerca slot disponibili
+  const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people);
+  
+  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+    replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+    console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
+  } else {
+    // Fallback se non troviamo alternative
+    if (currentLang === "en-US") {
+      replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
+    } else {
+      replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
     }
+    console.log("📢 RISPOSTA FALLBACK (no alternative trovate):", replyText);
   }
+
+  action = "ask_time"; // Torna a chiedere orario
+  
+  // Reset time per forzare la richiesta di un nuovo orario
+  giulia.reservation.time = null;
+  mergeReservationForCall(callId, giulia.reservation);
 }
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
@@ -2014,21 +2116,26 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
           );
 
           if (!availCheck.available) {
-            // ❌ SLOT PIENO: sovrascrivi il messaggio di GPT
-            slotFull = true;
-            console.log(
-              "⛔ Slot pieno rilevato PRIMA della creazione prenotazione"
-            );
+  // ❌ SLOT PIENO: cerca alternative
+  slotFull = true;
+  console.log("⛔ Slot pieno rilevato PRIMA della creazione prenotazione");
 
-            if (currentLang === "en-US") {
-              replyText =
-                "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
-            } else {
-              replyText =
-                "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-            }
+  // 🔥 NUOVA LOGICA: cerca slot disponibili
+  const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
+  
+  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+    replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+    console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
+  } else {
+    if (currentLang === "en-US") {
+      replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
+    } else {
+      replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+    }
+    console.log("📢 RISPOSTA FALLBACK:", replyText);
+  }
 
-            action = "ask_time"; // torna a chiedere orario
+  action = "ask_time"; // torna a chiedere orario
           } else {
             // ✅ SLOT DISPONIBILE: procedi con la prenotazione normale
             try {
@@ -2044,21 +2151,24 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
 
               // Doppio controllo: anche Apps Script potrebbe rifiutare
               if (!calendarRes.success && calendarRes.reason === "slot_full") {
-                slotFull = true;
-                console.log(
-                  "⛔ Prenotazione rifiutata per capienza (conferma Apps Script):",
-                  calendarRes
-                );
+  slotFull = true;
+  console.log("⛔ Prenotazione rifiutata per capienza (conferma Apps Script):", calendarRes);
 
-                if (currentLang === "en-US") {
-                  replyText =
-                    "I'm sorry, we are fully booked at that time. Would you like to try a different time or another day?";
-                } else {
-                  replyText =
-                    "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-                }
+  // 🔥 NUOVA LOGICA: cerca slot disponibili
+  const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
+  
+  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+    replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+    console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
+  } else {
+    if (currentLang === "en-US") {
+      replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
+    } else {
+      replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+    }
+  }
 
-                action = "ask_time";
+  action = "ask_time";
               } else if (calendarRes && calendarRes.success) {
                 console.log("✅ Prenotazione creata/aggiornata:", {
                   reservation: normalizedRes,
