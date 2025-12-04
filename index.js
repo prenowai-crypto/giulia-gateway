@@ -32,7 +32,7 @@ const APPS_SCRIPT_CONTEXT_URL =
 const BASE_URL = process.env.BASE_URL || "https://giulia-gateway.onrender.com";
 
 // Soglie di fallback (se get_context non le fornisce)
-const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → “grande gruppo”, da confermare
+const LARGE_GROUP_THRESHOLD_DEFAULT = 10; // sopra → "grande gruppo", da confermare
 const EVENT_THRESHOLD_DEFAULT = 45; // sopra → evento gigante, niente Calendar
 
 // ---------- NOTE IMPORTANTI ----------
@@ -602,6 +602,55 @@ async function sendToCalendar(payload) {
   console.log("✅ Risposta da Apps Script:", data);
   return data;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔥 NUOVA FUNZIONE: Controllo chiusure straordinarie via Apps Script
+// ═══════════════════════════════════════════════════════════════════════════
+async function checkClosure(dateStr) {
+  if (!dateStr) {
+    return { isClosed: false, reason: "" };
+  }
+
+  try {
+    console.log(`🔍 Check chiusura: ${dateStr}`);
+
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "check_closure",
+        data: dateStr,
+      }),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Risposta check_closure non JSON:", text);
+      return { isClosed: false, reason: "" };
+    }
+
+    if (!response.ok) {
+      console.error("❌ Errore check_closure:", data);
+      return { isClosed: false, reason: "" };
+    }
+
+    console.log("✅ Check closure:", data);
+
+    if (data.isClosed === true) {
+      console.log(`⛔ GIORNO CHIUSO rilevato: ${dateStr} - ${data.reason}`);
+      return { isClosed: true, reason: data.reason || "Giorno di chiusura" };
+    }
+
+    return { isClosed: false, reason: "" };
+  } catch (err) {
+    console.error("❌ Errore chiamata check_closure:", err);
+    return { isClosed: false, reason: "" };
+  }
+}
+
 // 🔥 PATCH CRITICA: Controllo preventivo disponibilità slot
 async function checkSlotAvailability(dateStr, timeStr, people) {
   if (!dateStr || !timeStr || !people) {
@@ -637,6 +686,12 @@ async function checkSlotAvailability(dateStr, timeStr, people) {
     }
 
     console.log("✅ Check availability:", data);
+
+    // 🔥 PATCH: gestione giorno chiuso da check_availability
+    if (data.reason === "day_closed") {
+      console.log("⛔ GIORNO CHIUSO rilevato da check_availability");
+      return { available: false, reason: "day_closed", closureReason: data.closureReason || "" };
+    }
 
     if (data.reason === "slot_full") {
       console.log("⛔ SLOT PIENO rilevato dal check preventivo");
@@ -749,6 +804,34 @@ function buildAlternativeSlotsMessage(slots, lang = "it-IT") {
     return "I'm sorry, we're fully booked. Would you like to try a different day?";
   } else {
     return "Mi dispiace, siamo al completo. Vuoi provare con un altro giorno?";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔥 NUOVA FUNZIONE: Costruisce messaggio per giorno chiuso
+// ═══════════════════════════════════════════════════════════════════════════
+function buildClosedDayMessage(dateStr, reason, lang = "it-IT") {
+  // Formatta la data in modo leggibile
+  let dateDisplay = dateStr;
+  try {
+    const [y, m, d] = dateStr.split("-");
+    const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    const options = { weekday: 'long', day: 'numeric', month: 'long' };
+    dateDisplay = dateObj.toLocaleDateString(lang === "en-US" ? "en-US" : "it-IT", options);
+  } catch (e) {
+    // fallback: usa la data così com'è
+  }
+
+  if (lang === "en-US") {
+    if (reason && reason.includes("lunedì")) {
+      return `I'm sorry, but the restaurant is closed on Mondays. Would you like to book for another day?`;
+    }
+    return `I'm sorry, but the restaurant will be closed on ${dateDisplay}. Would you like to book for another day?`;
+  } else {
+    if (reason && reason.includes("lunedì")) {
+      return `Mi dispiace, ma il ristorante è chiuso il lunedì. Vuoi prenotare per un altro giorno?`;
+    }
+    return `Mi dispiace, ma il ristorante sarà chiuso ${dateDisplay}. Vuoi prenotare per un altro giorno?`;
   }
 }
 
@@ -1861,59 +1944,92 @@ app.post("/twilio", async (req, res) => {
     }
 
     let slotFull = false;
-    // 🔥 PATCH CRITICA: Check preventivo anche per ask_email/ask_name
-// Problema: GPT potrebbe rispondere "ask_email" invece di "create_reservation" 
-// anche quando ha tutti i dati tranne l'email. In quel caso dobbiamo comunque
-// verificare la disponibilità dello slot PRIMA di chiedere l'email.
+    let dayClosed = false;
 
-if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
-  const r = giulia.reservation;
-  
-  // Se abbiamo data, ora e persone → facciamo check preventivo
-  if (r.date && r.time && r.people && r.people > 0) {
-    console.log(`🔍 Check preventivo (action=${action}): ${r.date} ${r.time} per ${r.people} pax`);
-    
-    try {
-      const availCheck = await checkSlotAvailability(r.date, r.time, r.people);
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🔥 PATCH CRITICA: Controllo chiusure PRIMA di qualsiasi altra operazione
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (giulia.reservation && giulia.reservation.date) {
+      const dateToCheck = giulia.reservation.date;
       
-      if (!availCheck.available) {
-  // ❌ SLOT PIENO: cerca alternative e sovrascrivi la risposta
-  slotFull = true;
-  console.log("⛔ SLOT PIENO rilevato in check preventivo (prima di ask_email/ask_name)");
-
-  // 🔥 NUOVA LOGICA: cerca slot disponibili
-  const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people);
-  
-  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
-    replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
-    console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
-  } else {
-    // Fallback se non troviamo alternative
-    if (currentLang === "en-US") {
-      replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
-    } else {
-      replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+      // Verifica se il giorno è chiuso
+      const closureCheck = await checkClosure(dateToCheck);
+      
+      if (closureCheck.isClosed) {
+        dayClosed = true;
+        console.log(`⛔ GIORNO CHIUSO: ${dateToCheck} - ${closureCheck.reason}`);
+        
+        // Sovrascrivi la risposta di GPT
+        replyText = buildClosedDayMessage(dateToCheck, closureCheck.reason, currentLang);
+        action = "ask_date";
+        
+        // Reset della data per forzare una nuova scelta
+        giulia.reservation.date = null;
+        mergeReservationForCall(callId, giulia.reservation);
+      }
     }
-    console.log("📢 RISPOSTA FALLBACK (no alternative trovate):", replyText);
-  }
 
-  action = "ask_time"; // Torna a chiedere orario
-  
-  // Reset time per forzare la richiesta di un nuovo orario
-  giulia.reservation.time = null;
-  mergeReservationForCall(callId, giulia.reservation);
-}
-    } catch (err) {
-      console.error("❌ Errore check preventivo ask_email/ask_name:", err);
+    // 🔥 PATCH CRITICA: Check preventivo anche per ask_email/ask_name
+    // (solo se il giorno NON è già stato rilevato come chiuso)
+    if (!dayClosed && (action === "ask_email" || action === "ask_name") && giulia.reservation) {
+      const r = giulia.reservation;
+      
+      // Se abbiamo data, ora e persone → facciamo check preventivo
+      if (r.date && r.time && r.people && r.people > 0) {
+        console.log(`🔍 Check preventivo (action=${action}): ${r.date} ${r.time} per ${r.people} pax`);
+        
+        try {
+          const availCheck = await checkSlotAvailability(r.date, r.time, r.people);
+          
+          // 🔥 NUOVO: gestione giorno chiuso da check_availability
+          if (!availCheck.available && availCheck.reason === "day_closed") {
+            dayClosed = true;
+            console.log(`⛔ GIORNO CHIUSO (da check_availability): ${r.date}`);
+            
+            replyText = buildClosedDayMessage(r.date, availCheck.closureReason, currentLang);
+            action = "ask_date";
+            
+            giulia.reservation.date = null;
+            mergeReservationForCall(callId, giulia.reservation);
+          } else if (!availCheck.available) {
+            // ❌ SLOT PIENO: cerca alternative e sovrascrivi la risposta
+            slotFull = true;
+            console.log("⛔ SLOT PIENO rilevato in check preventivo (prima di ask_email/ask_name)");
+
+            // 🔥 NUOVA LOGICA: cerca slot disponibili
+            const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people);
+            
+            if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+              replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+              console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
+            } else {
+              // Fallback se non troviamo alternative
+              if (currentLang === "en-US") {
+                replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
+              } else {
+                replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+              }
+              console.log("📢 RISPOSTA FALLBACK (no alternative trovate):", replyText);
+            }
+
+            action = "ask_time"; // Torna a chiedere orario
+            
+            // Reset time per forzare la richiesta di un nuovo orario
+            giulia.reservation.time = null;
+            mergeReservationForCall(callId, giulia.reservation);
+          }
+        } catch (err) {
+          console.error("❌ Errore check preventivo ask_email/ask_name:", err);
+        }
+      }
     }
-  }
-}
 
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
     // 🔥 PATCH: gestisci EVENTO GIGANTE anche se il modello non usa create_reservation
-    if (giulia.reservation) {
+    // (solo se il giorno NON è chiuso)
+    if (!dayClosed && giulia.reservation) {
       const normalizedHuge = normalizeReservationForCalendar(
         giulia.reservation,
         callId
@@ -2069,7 +2185,8 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
 
     // 🔥🔥 PATCH PRINCIPALE: CONTROLLO SLOT PIENI PREVENTIVO
     // Se è una prenotazione finale, prima di inviare al Calendar controlliamo la disponibilità
-    if (action === "create_reservation" && giulia.reservation) {
+    // (solo se il giorno NON è già stato rilevato come chiuso)
+    if (!dayClosed && action === "create_reservation" && giulia.reservation) {
       const normalizedRes = normalizeReservationForCalendar(
         giulia.reservation,
         callId
@@ -2121,27 +2238,34 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
             numericPeople || 2
           );
 
-          if (!availCheck.available) {
-  // ❌ SLOT PIENO: cerca alternative
-  slotFull = true;
-  console.log("⛔ Slot pieno rilevato PRIMA della creazione prenotazione");
+          // 🔥 NUOVO: gestione giorno chiuso da check_availability
+          if (!availCheck.available && availCheck.reason === "day_closed") {
+            dayClosed = true;
+            console.log(`⛔ GIORNO CHIUSO (da check_availability in create_reservation): ${date}`);
+            
+            replyText = buildClosedDayMessage(date, availCheck.closureReason, currentLang);
+            action = "ask_date";
+          } else if (!availCheck.available) {
+            // ❌ SLOT PIENO: cerca alternative
+            slotFull = true;
+            console.log("⛔ Slot pieno rilevato PRIMA della creazione prenotazione");
 
-  // 🔥 NUOVA LOGICA: cerca slot disponibili
-  const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
-  
-  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
-    replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
-    console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
-  } else {
-    if (currentLang === "en-US") {
-      replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
-    } else {
-      replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-    }
-    console.log("📢 RISPOSTA FALLBACK:", replyText);
-  }
+            // 🔥 NUOVA LOGICA: cerca slot disponibili
+            const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
+            
+            if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+              replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+              console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
+            } else {
+              if (currentLang === "en-US") {
+                replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
+              } else {
+                replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+              }
+              console.log("📢 RISPOSTA FALLBACK:", replyText);
+            }
 
-  action = "ask_time"; // torna a chiedere orario
+            action = "ask_time"; // torna a chiedere orario
           } else {
             // ✅ SLOT DISPONIBILE: procedi con la prenotazione normale
             try {
@@ -2156,25 +2280,31 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
               });
 
               // Doppio controllo: anche Apps Script potrebbe rifiutare
-              if (!calendarRes.success && calendarRes.reason === "slot_full") {
-  slotFull = true;
-  console.log("⛔ Prenotazione rifiutata per capienza (conferma Apps Script):", calendarRes);
+              if (!calendarRes.success && calendarRes.reason === "day_closed") {
+                dayClosed = true;
+                console.log(`⛔ GIORNO CHIUSO (conferma Apps Script): ${date}`);
+                
+                replyText = buildClosedDayMessage(date, calendarRes.closureReason || "", currentLang);
+                action = "ask_date";
+              } else if (!calendarRes.success && calendarRes.reason === "slot_full") {
+                slotFull = true;
+                console.log("⛔ Prenotazione rifiutata per capienza (conferma Apps Script):", calendarRes);
 
-  // 🔥 NUOVA LOGICA: cerca slot disponibili
-  const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
-  
-  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
-    replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
-    console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
-  } else {
-    if (currentLang === "en-US") {
-      replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
-    } else {
-      replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-    }
-  }
+                // 🔥 NUOVA LOGICA: cerca slot disponibili
+                const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
+                
+                if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+                  replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+                  console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
+                } else {
+                  if (currentLang === "en-US") {
+                    replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
+                  } else {
+                    replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+                  }
+                }
 
-  action = "ask_time";
+                action = "ask_time";
               } else if (calendarRes && calendarRes.success) {
                 console.log("✅ Prenotazione creata/aggiornata:", {
                   reservation: normalizedRes,
@@ -2237,9 +2367,10 @@ if ((action === "ask_email" || action === "ask_name") && giulia.reservation) {
     // - prenotazione finale andata a buon fine
     // - cancellazione andata a buon fine
     // - evento gigante (mandiamo mail al ristorante e stop)
+    // MA NON se il giorno era chiuso o lo slot era pieno
     const shouldHangup =
       ((action === "create_reservation" || action === "cancel_reservation") &&
-        !slotFull) ||
+        !slotFull && !dayClosed) ||
       isHugeEventReservation;
 
     let twiml;
