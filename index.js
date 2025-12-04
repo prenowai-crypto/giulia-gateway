@@ -1966,6 +1966,51 @@ app.post("/twilio", async (req, res) => {
         // Reset della data per forzare una nuova scelta
         giulia.reservation.date = null;
         mergeReservationForCall(callId, giulia.reservation);
+      } else {
+        // ═══════════════════════════════════════════════════════════════════════════
+        // 🔥 PATCH: GPT ha rifiutato la data MA il giorno è APERTO → correggi!
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Rileva se GPT sta erroneamente rifiutando la data
+        const gptRefusedDate = (
+          action === "ask_date" && 
+          replyText && (
+            replyText.toLowerCase().includes("chius") ||
+            replyText.toLowerCase().includes("non possiamo") ||
+            replyText.toLowerCase().includes("non è possibile") ||
+            replyText.toLowerCase().includes("cannot") ||
+            replyText.toLowerCase().includes("closed") ||
+            replyText.toLowerCase().includes("è un sabato") ||
+            replyText.toLowerCase().includes("è un lunedì") ||
+            replyText.toLowerCase().includes("è una domenica") ||
+            replyText.toLowerCase().includes("is a saturday") ||
+            replyText.toLowerCase().includes("is a monday") ||
+            replyText.toLowerCase().includes("is a sunday")
+          )
+        );
+
+        if (gptRefusedDate) {
+          console.log(`⚠️ GPT ha rifiutato ${dateToCheck} ma Apps Script dice che è APERTO → correggo la risposta`);
+          
+          // Formatta la data in modo leggibile
+          let dateDisplay = dateToCheck;
+          try {
+            const [y, m, d] = dateToCheck.split("-");
+            const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+            const options = { weekday: 'long', day: 'numeric', month: 'long' };
+            dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", options);
+          } catch (e) { /* fallback */ }
+
+          // Sovrascrivi con una risposta corretta
+          if (currentLang === "en-US") {
+            replyText = `Perfect, ${dateDisplay}. What time would you prefer?`;
+          } else {
+            replyText = `Perfetto, ${dateDisplay}. A che ora preferisci?`;
+          }
+          action = "ask_time";
+          
+          // NON resettare la data, è valida!
+          console.log(`✅ Risposta corretta: "${replyText}"`);
+        }
       }
     }
 
