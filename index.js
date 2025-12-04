@@ -397,6 +397,55 @@ function mergeReservationForCall(callId, newRes = {}) {
 
 // ---------- GESTIONE DATA/ORA DAL TESTO ----------
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ESTRAE DATA DAL TESTO CORRENTE (es. "10 dicembre" → "2025-12-10")
+// ═══════════════════════════════════════════════════════════════════════════
+function extractDateFromText(text) {
+  if (!text) return null;
+  
+  const t = normalizeText(text);
+  const nowRome = getNowInRome();
+  const today = startOfDay(nowRome);
+  const currentYear = today.getFullYear();
+  
+  // Mappa mesi italiano/inglese → numero mese (0-indexed)
+  const monthsIT = {
+    "gennaio": 0, "febbraio": 1, "marzo": 2, "aprile": 3, "maggio": 4, "giugno": 5,
+    "luglio": 6, "agosto": 7, "settembre": 8, "ottobre": 9, "novembre": 10, "dicembre": 11
+  };
+  const monthsEN = {
+    "january": 0, "february": 1, "march": 2, "april": 3, "may": 4, "june": 5,
+    "july": 6, "august": 7, "september": 8, "october": 9, "november": 10, "december": 11
+  };
+  
+  // Pattern: "[giorno settimana] DD mese" (es. "mercoledì 10 dicembre", "10 dicembre")
+  const allMonths = Object.keys(monthsIT).concat(Object.keys(monthsEN)).join("|");
+  const dateRegex = new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${allMonths})`, "i");
+  
+  const match = t.match(dateRegex);
+  if (match) {
+    const day = parseInt(match[1]);
+    const monthName = match[2].toLowerCase();
+    const month = monthsIT[monthName] !== undefined ? monthsIT[monthName] : monthsEN[monthName];
+    
+    if (month !== undefined && day >= 1 && day <= 31) {
+      // Determina l'anno: se la data è nel passato, usa l'anno prossimo
+      let year = currentYear;
+      const candidateDate = new Date(year, month, day);
+      if (candidateDate < today) {
+        year = currentYear + 1;
+      }
+      
+      const result = new Date(year, month, day);
+      const iso = toISODate(result);
+      console.log(`📆 Data estratta dal testo: "${text}" → ${iso}`);
+      return iso;
+    }
+  }
+  
+  return null;
+}
+
 // Prende da TUTTA la conversazione utente parole tipo
 // "domani", "dopo domani", "dopodomani", "stasera", "oggi",
 // "tomorrow", "day after tomorrow", "tonight", "this evening", "today",
@@ -1951,7 +2000,15 @@ app.post("/twilio", async (req, res) => {
     // Questo è necessario perché GPT mette date=null per i giorni della settimana
     // ═══════════════════════════════════════════════════════════════════════════
     if (giulia.reservation && !giulia.reservation.date) {
-      const forcedInferredDate = inferDateFromConversation(callId);
+      // Prima prova dalla history
+      let forcedInferredDate = inferDateFromConversation(callId);
+      
+      // Se non trova nella history, estrai dal testo corrente
+      if (!forcedInferredDate && text) {
+        forcedInferredDate = extractDateFromText(text);
+        console.log(`🔍 Tentativo estrazione data dal testo: "${text}" → ${forcedInferredDate || "non trovata"}`);
+      }
+      
       if (forcedInferredDate) {
         giulia.reservation.date = forcedInferredDate;
         mergeReservationForCall(callId, giulia.reservation);
