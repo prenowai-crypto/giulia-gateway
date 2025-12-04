@@ -1947,6 +1947,19 @@ app.post("/twilio", async (req, res) => {
     let dayClosed = false;
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // 🔥 PATCH: FORZA INFERIMENTO DATA se GPT non l'ha messa
+    // Questo è necessario perché GPT mette date=null per i giorni della settimana
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (giulia.reservation && !giulia.reservation.date) {
+      const forcedInferredDate = inferDateFromConversation(callId);
+      if (forcedInferredDate) {
+        giulia.reservation.date = forcedInferredDate;
+        mergeReservationForCall(callId, giulia.reservation);
+        console.log(`🔥 FORZA DATA INFERITA nel flusso /twilio: ${forcedInferredDate}`);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // 🔥 PATCH CRITICA: Controllo chiusure PRIMA di qualsiasi altra operazione
     // ═══════════════════════════════════════════════════════════════════════════
     if (giulia.reservation && giulia.reservation.date) {
@@ -1975,6 +1988,7 @@ app.post("/twilio", async (req, res) => {
           action === "ask_date" && 
           replyText && (
             replyText.toLowerCase().includes("chius") ||
+            replyText.toLowerCase().includes("giorno di chiusura") ||
             replyText.toLowerCase().includes("non possiamo") ||
             replyText.toLowerCase().includes("non è possibile") ||
             replyText.toLowerCase().includes("cannot") ||
