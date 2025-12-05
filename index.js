@@ -1,5 +1,9 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
+// VERSIONE CON 3 FIX CRITICI:
+// 1. Data/ora corrente dettagliata nel prompt
+// 2. Stato persistente della prenotazione
+// 3. Stop loop email - forza create_reservation
 // ===============================
 
 import express from "express";
@@ -96,6 +100,43 @@ const callContexts = new Map();
 // Stato della prenotazione per ogni chiamata (CallSid -> reservation cumulata)
 const callReservations = new Map();
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 2: FUNZIONI PER STATO PERSISTENTE DELLA PRENOTAZIONE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Funzione per ottenere lo stato attuale della prenotazione
+function getReservationState(callId) {
+  return callReservations.get(callId) || {
+    date: null,
+    time: null,
+    people: null,
+    name: null,
+    customerEmail: null
+  };
+}
+
+// Funzione per verificare se abbiamo tutti i dati obbligatori
+function hasAllRequiredData(state) {
+  return state && 
+         state.date && String(state.date).trim() !== "" &&
+         state.time && String(state.time).trim() !== "" &&
+         state.people && state.people > 0 &&
+         state.name && String(state.name).trim() !== "";
+}
+
+// Funzione per verificare se l'utente sta confermando
+function isUserConfirming(userText) {
+  const t = (userText || "").toLowerCase().trim();
+  return /^(sì|si|yes|ok|va bene|perfetto|esatto|corretto|confermo|conferma|d'accordo|giusto|exactly|correct|that's right|right)/.test(t) ||
+         /conferm|confirm/.test(t);
+}
+
+// Funzione per verificare se l'utente vuole cambiare qualcosa
+function isUserChanging(userText) {
+  const t = (userText || "").toLowerCase().trim();
+  return /cambia|modifica|sposta|altro|diverso|change|different|move|switch|no,?\s*(vorrei|preferi|invece)/.test(t);
+}
+
 // ---------- MIDDLEWARE ----------
 app.use(cors());
 app.use(bodyParser.json());
@@ -146,10 +187,67 @@ function normalizeText(str) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-// Utility: ora corrente in fuso Europe/Rome
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 1: FUNZIONI PER CALCOLARE DATA/ORA CORRENTE IN MODO DETTAGLIATO
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Ottiene la data/ora corrente nel fuso Europe/Rome
 function getNowInRome() {
   const nowString = new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" });
   return new Date(nowString);
+}
+
+// Calcola il calendario dei prossimi 14 giorni per aiutare GPT
+function buildCalendarInfo() {
+  const now = getNowInRome();
+  const giorni = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+  const mesi = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 
+                'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+  
+  const giornoSettimana = giorni[now.getDay()];
+  const giorno = now.getDate();
+  const mese = mesi[now.getMonth()];
+  const anno = now.getFullYear();
+  const ore = now.getHours().toString().padStart(2, '0');
+  const minuti = now.getMinutes().toString().padStart(2, '0');
+  
+  // Calcola le date per i prossimi 14 giorni
+  const prossimiGiorni = [];
+  for (let i = 0; i <= 14; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + i);
+    const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    prossimiGiorni.push({
+      offset: i,
+      giorno: giorni[d.getDay()],
+      data: isoDate,
+      display: `${d.getDate()}/${d.getMonth() + 1}`,
+      dayOfWeek: d.getDay()
+    });
+  }
+  
+  // Trova "questo sabato" e "sabato prossimo"
+  const questoSabato = prossimiGiorni.find(g => g.dayOfWeek === 6);
+  const sabatoProssimo = prossimiGiorni.filter(g => g.dayOfWeek === 6)[1] || questoSabato;
+  
+  // Trova "questa domenica" e "domenica prossima"
+  const questaDomenica = prossimiGiorni.find(g => g.dayOfWeek === 0);
+  const domenicaProssima = prossimiGiorni.filter(g => g.dayOfWeek === 0)[1] || questaDomenica;
+  
+  return {
+    now,
+    giornoSettimana,
+    giorno,
+    mese,
+    anno,
+    ore,
+    minuti,
+    prossimiGiorni,
+    questoSabato,
+    sabatoProssimo,
+    questaDomenica,
+    domenicaProssima
+  };
 }
 
 function startOfDay(date) {
@@ -982,9 +1080,11 @@ function getRestaurantNameForCall(callId) {
   return DEFAULT_RESTAURANT_NAME;
 }
 
-// ---------- SYSTEM PROMPT DINAMICO ----------
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 1: SYSTEM PROMPT CON DATA/ORA DETTAGLIATA E CALENDARIO
+// ═══════════════════════════════════════════════════════════════════════════
 
-function buildSystemPrompt(context, todayDateIso) { 
+function buildSystemPrompt(context, reservationState = null) { 
   const restaurantName =
     (context && context.restaurant && context.restaurant.name) ||
     DEFAULT_RESTAURANT_NAME;
@@ -1031,12 +1131,73 @@ function buildSystemPrompt(context, todayDateIso) {
   const bookingPolicyText =
     (context && context.rules && context.rules.bookingPolicyText) || "";
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 1: CALCOLA DATA/ORA CORRENTE E CALENDARIO PROSSIMI GIORNI
+  // ═══════════════════════════════════════════════════════════════════════════
+  const calInfo = buildCalendarInfo();
+  const todayDateIso = toISODate(calInfo.now);
+  
+  // Costruisci il calendario in formato leggibile
+  const calendarioSettimana = calInfo.prossimiGiorni.slice(0, 10).map(g => {
+    let label = "";
+    if (g.offset === 0) label = " (OGGI)";
+    else if (g.offset === 1) label = " (domani)";
+    else if (g.offset === 2) label = " (dopodomani)";
+    return `  ${g.giorno}: ${g.data}${label}`;
+  }).join('\n');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 2: INCLUDI LO STATO ATTUALE DELLA PRENOTAZIONE NEL PROMPT
+  // ═══════════════════════════════════════════════════════════════════════════
+  let statoPrenotazione = "";
+  if (reservationState) {
+    const datiRaccolti = [];
+    if (reservationState.date) datiRaccolti.push(`- Data: ${reservationState.date}`);
+    if (reservationState.time) datiRaccolti.push(`- Ora: ${reservationState.time}`);
+    if (reservationState.people) datiRaccolti.push(`- Persone: ${reservationState.people}`);
+    if (reservationState.name) datiRaccolti.push(`- Nome: ${reservationState.name}`);
+    if (reservationState.customerEmail) datiRaccolti.push(`- Email: ${reservationState.customerEmail}`);
+    
+    if (datiRaccolti.length > 0) {
+      statoPrenotazione = `
+
+══════════════════════════════════════════════════════════════════════════════
+⚠️ DATI GIÀ RACCOLTI PER QUESTA PRENOTAZIONE - NON PERDERE QUESTI DATI!
+══════════════════════════════════════════════════════════════════════════════
+${datiRaccolti.join('\n')}
+
+IMPORTANTE: 
+- Se l'utente conferma (dice "sì", "confermo", "ok", "va bene"), USA QUESTI DATI nel JSON!
+- NON azzerare i campi già compilati!
+- Se hai già date, time, people e name → usa action="create_reservation"
+══════════════════════════════════════════════════════════════════════════════
+`;
+    }
+  }
+
   const basePrompt = `
 Sei ${RECEPTIONIST_NAME}, la receptionist di un ristorante italiano chiamato ${restaurantName}.
-La data di oggi è: ${todayDateIso}.
-Tutte le date relative come "domani", "dopodomani", "fra 2 giorni", "between X days", "X days from now" devono essere calcolate rispetto a questa data.
 
+══════════════════════════════════════════════════════════════════════════════
+📅 DATA E ORA ATTUALI - USA QUESTI DATI PER CALCOLARE LE DATE!
+══════════════════════════════════════════════════════════════════════════════
+OGGI È: ${calInfo.giornoSettimana} ${calInfo.giorno} ${calInfo.mese} ${calInfo.anno}, ore ${calInfo.ore}:${calInfo.minuti}
+Data ISO di oggi: ${todayDateIso}
 
+CALENDARIO PROSSIMI GIORNI (RIFERIMENTO ESATTO PER CONVERTIRE I GIORNI):
+${calendarioSettimana}
+
+REGOLE TASSATIVE PER LE DATE:
+1. "domani" = ${calInfo.prossimiGiorni[1].data} (${calInfo.prossimiGiorni[1].giorno})
+2. "dopodomani" = ${calInfo.prossimiGiorni[2].data} (${calInfo.prossimiGiorni[2].giorno})
+3. Quando il cliente dice un giorno della settimana (es. "martedì", "sabato"):
+   - CERCA nel calendario sopra il PROSSIMO giorno con quel nome
+   - CONVERTI SEMPRE in data YYYY-MM-DD
+   - NON lasciare date=null se il cliente ha detto un giorno!
+4. "questo sabato" = ${calInfo.questoSabato ? calInfo.questoSabato.data : 'N/A'}
+5. "sabato prossimo" = ${calInfo.sabatoProssimo ? calInfo.sabatoProssimo.data : 'N/A'}
+══════════════════════════════════════════════════════════════════════════════
+${statoPrenotazione}
 LINGUE:
 - Capisci sia italiano sia inglese.
 - Se il cliente parla soprattutto in italiano, rispondi in italiano.
@@ -1144,26 +1305,6 @@ COME PARLI DELLA DATA A VOCE:
   - NON trasformare queste espressioni in date con giorno e mese (es. niente "2 novembre" o "November 2nd" se il cliente ha detto "domani").
 - Puoi usare giorno e mese (es. "2 novembre", "November 2nd") solo se il cliente li ha già detti esplicitamente o se sta già parlando in quel modo.
 
-REGOLA SUL GIORNO DELLA SETTIMANA (IMPORTANTISSIMA):
-- NON devi mai calcolare o indovinare il giorno della settimana associato a una data (es. "lunedì", "martedì", "domenica").
-- I modelli non hanno un calendario interno: quindi NON devi mai dire tu spontaneamente "il 26 è lunedì" o simili.
-- Se il cliente NON menziona esplicitamente un giorno della settimana, tu NON devi mai introdurlo.
-- Usa SEMPRE e solo la forma che dice il cliente:
-  • "domani"
-  • "dopodomani"
-  • "il 26 novembre"
-  • "tra due giorni"
-  • "in tre giorni"
-- SE il cliente menziona un giorno della settimana (es. "sabato", "domenica", "Monday", "Tuesday"), allora:
-  • NELLA REPLY_TEXT puoi usarlo ("sabato alle 20 va bene")
-  • NEL JSON devi lasciare reservation.date = null (sarà il sistema a calcolare la data corretta).
-- NON usare mai gli orari di apertura ("lunedì chiuso") per dedurre la data:
-  puoi usarli solo SE il cliente chiede esplicitamente qualcosa come
-  "siete aperti lunedì?"
-- Se il cliente chiede una data assoluta (es. "il 26 novembre alle 20"):
-  • NON devi mai dire "il 26 è lunedì/domenica".
-  • Devi limitarti a confermare esattamente ciò che ha detto.
-
 GESTIONE CANCELLAZIONI:
 - Se il cliente vuole annullare una prenotazione (es. "vorrei cancellare la prenotazione", "puoi annullare il tavolo di domani a nome Mirko"):
   - prova a capire chiaramente:
@@ -1187,7 +1328,6 @@ GESTIONE DATE RELATIVE:
 - "stasera" / "tonight" / "this evening" → stessa data di oggi, orario serale.
 - "domani sera" / "tomorrow evening" → data di domani, orario serale.
 - Non inventare mai una data o un orario se il cliente non li ha ancora detti o se non sono chiari: in quel caso usa "ask_date" o "ask_time".
-- Se il cliente usa un giorno della settimana ("sabato", "domenica", ecc.), NEL JSON devi lasciare "reservation.date" vuoto (null). NON devi mai inserire una data completa (con giorno/mese/anno). La data verrà calcolata dal sistema.
 
 GESTIONE DATE RELATIVE AVANZATE (MOLTO IMPORTANTE — AGGIUNTA PATCH):
 - Le seguenti espressioni indicano giorni futuri rispetto ad oggi.
@@ -1220,18 +1360,6 @@ GESTIONE DATE RELATIVE AVANZATE (MOLTO IMPORTANTE — AGGIUNTA PATCH):
   - "in un paio di giorni" → +2 giorni
   - "in pochi giorni" → +3 giorni
   - "in alcuni giorni" → +3 giorni
-
-- ATTENZIONE:
-  Questa regola **NON** si applica ai giorni della settimana
-  ("sabato", "domenica", "lunedì", "Monday", "Tuesday").
-  In quel caso reservation.date = null.
-
-- Quando calcoli la data, devi SEMPRE inserire il valore assoluto in JSON:
-  "reservation.date": "YYYY-MM-DD"
-
-- Nella reply_text puoi continuare a usare le forme relative:
-  es. "tra due giorni alle 21".
-
 
 GESTIONE NUMERO DI PERSONE:
 - Se il cliente dice frasi come "da 3 a 4 persone" o "from 3 to 4 people", interpreta SEMPRE il numero FINALE come numero di persone (4). Non sommare, non inventare numeri più alti.
@@ -1315,6 +1443,16 @@ USO DELLE ACTION (IMPORTANTISSIMO):
 - Usa "cancel_reservation" SOLO quando il cliente vuole annullare una prenotazione e hai capito almeno la data (e se possibile nome).
 - Per richieste solo informative, usa "answer_menu" o "answer_generic" e lascia tutta la "reservation" a null.
 
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ REGOLA CRITICA - CONFERMA EMAIL E COMPLETAMENTO PRENOTAZIONE
+═══════════════════════════════════════════════════════════════════════════════
+Quando il cliente CONFERMA l'email (dice "sì", "confermo", "esatto", "corretto", "giusto"):
+1. NON tornare a chiedere la data o altri dati già raccolti!
+2. Se hai già date, time, people, name → USA action="create_reservation"
+3. Mantieni TUTTI i dati già raccolti nel JSON di risposta
+4. NON azzerare mai campi che erano già compilati
+═══════════════════════════════════════════════════════════════════════════════
+
 FORMATO DI USCITA:
 Devi SEMPRE rispondere in questo formato JSON, SOLO JSON, senza testo fuori:
 
@@ -1387,13 +1525,11 @@ function extractJsonFromText(text = "") {
   return text;
 }
 
-// ---------- GPT: funzione ottimizzata ----------
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 2 & 3: FUNZIONE askGiulia() CON STATO PERSISTENTE E FORZATURA CREATE
+// ═══════════════════════════════════════════════════════════════════════════
 async function askGiulia(callId, userText) {
   const apiKey = process.env.OPENAI_API_KEY;
-
-  // PATCH: definisco la data di oggi per buildSystemPrompt
-  const todayDateIso = new Date().toISOString().split("T")[0];
-
 
   if (!apiKey) {
     console.error("❌ Manca OPENAI_API_KEY nelle Environment Variables di Render");
@@ -1404,22 +1540,32 @@ async function askGiulia(callId, userText) {
   await ensureContextForCall(callId);
   const context = getContextForCall(callId);
 
+  // FIX 2: Ottieni lo stato attuale della prenotazione
+  const reservationState = getReservationState(callId);
+  console.log("📊 Stato prenotazione PRE-GPT:", JSON.stringify(reservationState));
+
   let convo = conversations.get(callId);
+  
+  // FIX 1 & 2: Costruisci il system prompt con data corrente E stato prenotazione
+  const systemPrompt = buildSystemPrompt(context, reservationState);
+  
   if (!convo) {
-    // Primo messaggio: system con prompt dinamico + contesto ristorante
-    const systemPrompt = buildSystemPrompt(context, todayDateIso);
+    // Primo messaggio
     convo = {
       messages: [{ role: "system", content: systemPrompt }],
     };
+  } else {
+    // FIX 2: AGGIORNA il system prompt ad ogni turno con lo stato attuale
+    convo.messages[0] = { role: "system", content: systemPrompt };
   }
 
   // Aggiungiamo il messaggio dell'utente
   convo.messages.push({ role: "user", content: userText });
 
-  // Limitiamo la cronologia: system + ultimi 5 messaggi
-  if (convo.messages.length > 7) {
+  // Limitiamo la cronologia: system + ultimi 10 messaggi (aumentato da 5)
+  if (convo.messages.length > 12) {
     const systemMsg = convo.messages[0];
-    const recent = convo.messages.slice(-5);
+    const recent = convo.messages.slice(-10);
     convo.messages = [systemMsg, ...recent];
   }
 
@@ -1432,8 +1578,8 @@ async function askGiulia(callId, userText) {
     body: JSON.stringify({
       model: "gpt-4o-mini",
       messages: convo.messages,
-      max_completion_tokens: 200,
-      temperature: 0.3,
+      max_completion_tokens: 300, // Aumentato per risposte più complete
+      temperature: 0.2, // Ridotto per più determinismo
       response_format: { type: "json_object" },
     }),
   });
@@ -1572,6 +1718,8 @@ async function askGiulia(callId, userText) {
         && finalInferredDate) {
       console.log("🔥 PATCH DATA: uso la data inferita:", finalInferredDate);
       parsed.reservation.date = finalInferredDate;
+      // Aggiorna anche lo stato persistente
+      mergeReservationForCall(callId, { date: finalInferredDate });
     }
 
     // Se GPT non ha messo l'orario ma è stato inferito dal sistema (già fatto nel normalize)
@@ -1605,17 +1753,54 @@ async function askGiulia(callId, userText) {
     };
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 3: FORZA create_reservation SE ABBIAMO TUTTI I DATI E L'UTENTE CONFERMA
+  // ═══════════════════════════════════════════════════════════════════════════
+  const currentState = getReservationState(callId);
+  console.log("📊 Stato prenotazione POST-MERGE:", JSON.stringify(currentState));
+  
+  if (hasAllRequiredData(currentState)) {
+    const userConfirms = isUserConfirming(userText);
+    const userChanges = isUserChanging(userText);
+    
+    console.log(`🔍 Check forzatura: hasAll=${true}, confirms=${userConfirms}, changes=${userChanges}, action=${parsed.action}`);
+    
+    // Se abbiamo tutti i dati E l'utente sta confermando E NON sta cambiando qualcosa
+    if (userConfirms && !userChanges && 
+        parsed.action !== "create_reservation" && 
+        parsed.action !== "cancel_reservation" &&
+        parsed.action !== "answer_menu" &&
+        parsed.action !== "answer_generic") {
+      
+      console.log("🔧 FIX 3: FORZATURA create_reservation - abbiamo tutti i dati e l'utente conferma");
+      
+      parsed.action = "create_reservation";
+      // Assicurati che la reservation abbia tutti i dati dallo stato persistente
+      parsed.reservation = { ...currentState };
+      
+      // Genera un messaggio di conferma appropriato se GPT non l'ha fatto
+      if (!parsed.reply_text.toLowerCase().includes("prenotazione") &&
+          !parsed.reply_text.toLowerCase().includes("reservation") &&
+          !parsed.reply_text.toLowerCase().includes("ti aspettiamo") &&
+          !parsed.reply_text.toLowerCase().includes("we look forward")) {
+        
+        const nomeCliente = currentState.name?.split(' ')[0] || "";
+        parsed.reply_text = `Perfetto${nomeCliente ? ' ' + nomeCliente : ''}! Ho registrato la tua prenotazione. Ti aspettiamo, buona serata!`;
+      }
+    }
+  }
+
   // SAFETY NET 3: create_reservation senza dati minimi → declassa ad ask_*
+  // (usa lo stato persistente per la verifica)
   if (parsed.action === "create_reservation") {
-    const r = parsed.reservation || {};
-    const hasDate = r.date && String(r.date).trim() !== "";
-    const hasTime = r.time && String(r.time).trim() !== "";
-    const hasName = r.name && String(r.name).trim() !== "";
+    const hasDate = currentState.date && String(currentState.date).trim() !== "";
+    const hasTime = currentState.time && String(currentState.time).trim() !== "";
+    const hasName = currentState.name && String(currentState.name).trim() !== "";
 
     if (!hasDate || !hasTime || !hasName) {
       console.warn(
-        "⚠️ create_reservation senza data/ora/nome completi, declasso ad ask_*",
-        parsed.reservation
+        "⚠️ create_reservation senza data/ora/nome completi nello stato, declasso ad ask_*",
+        currentState
       );
       if (!hasDate) {
         parsed.action = "ask_date";
@@ -1624,18 +1809,21 @@ async function askGiulia(callId, userText) {
       } else if (!hasName) {
         parsed.action = "ask_name";
       }
+    } else {
+      // Abbiamo tutto! Assicuriamoci che la reservation nel JSON abbia tutti i dati
+      parsed.reservation = { ...currentState };
+      console.log("✅ create_reservation con dati completi:", JSON.stringify(parsed.reservation));
     }
   }
 
   // SAFETY NET 4: se chiede ancora ask_email ma abbiamo già email + dati completi
   // → promuovi a create_reservation SOLO se la reply_text NON è una domanda
   if (parsed.action === "ask_email") {
-    const r = parsed.reservation || {};
-    const hasDate = r.date && String(r.date).trim() !== "";
-    const hasTime = r.time && String(r.time).trim() !== "";
-    const hasName = r.name && String(r.name).trim() !== "";
+    const hasDate = currentState.date && String(currentState.date).trim() !== "";
+    const hasTime = currentState.time && String(currentState.time).trim() !== "";
+    const hasName = currentState.name && String(currentState.name).trim() !== "";
     const hasEmail =
-      r.customerEmail && String(r.customerEmail).trim() !== "";
+      currentState.customerEmail && String(currentState.customerEmail).trim() !== "";
 
     const isQuestion =
       typeof parsed.reply_text === "string" &&
@@ -1646,6 +1834,7 @@ async function askGiulia(callId, userText) {
         "⚠️ ask_email ma abbiamo già data/ora/nome/email e la risposta non è una domanda → promuovo a create_reservation"
       );
       parsed.action = "create_reservation";
+      parsed.reservation = { ...currentState };
     }
   }
 
@@ -1825,7 +2014,6 @@ app.post("/twilio", async (req, res) => {
   const callId = CallSid || (isDebug ? "debug-call" : "unknown-call");
 
   console.log("📞 /twilio body:", req.body);
-  const todayDateIso = new Date().toISOString().split("T")[0];
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
 
   // Modalità debug via curl (JSON in/out)
@@ -1897,6 +2085,10 @@ app.post("/twilio", async (req, res) => {
         currentLang === "en-US"
           ? "Thank you, have a nice evening."
           : "Grazie a te, buona serata.";
+
+      // Pulizia stato alla fine della chiamata
+      callReservations.delete(callId);
+      conversations.delete(callId);
 
       const goodbyeTwiml = `
         <Response>
