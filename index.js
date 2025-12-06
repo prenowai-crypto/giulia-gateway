@@ -1,10 +1,11 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
-// VERSIONE CON 3 FIX CRITICI + DEBUG CON CALENDAR:
+// VERSIONE CON 5 FIX CRITICI:
 // 1. Data/ora corrente dettagliata nel prompt
 // 2. Stato persistente della prenotazione
 // 3. Stop loop email - forza create_reservation
 // 4. Modalità debug invia anche a Calendar
+// 5. FIX: Data non sovrascritta + GPT chiusure + Debug risposta
 // ===============================
 
 import express from "express";
@@ -664,19 +665,34 @@ function inferDateFromConversation(callId) {
   return null;
 }
 
-// Normalizza la data/ora della prenotazione per il Calendar
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 5a: Normalizza la data/ora - NON sovrascrivere data se già presente!
+// ═══════════════════════════════════════════════════════════════════════════
 function normalizeReservationForCalendar(reservation = {}, callId) {
   let { date, time, people, name, customerEmail } = reservation;
 
   // se il modello ha messo "null" come stringa, trattalo come null
   if (date === "null") date = null;
 
-  // 1) se riusciamo a capire "oggi/domani/dopodomani/tonight/tomorrow/this saturday", usiamo quella
-  const inferred = inferDateFromConversation(callId);
-  if (inferred) {
-    date = inferred;
-  } else if (typeof date === "string" && date.trim() !== "") {
-    // 2) se è una data esplicita, evitiamo prenotazioni nel passato
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 5a: SOVRASCRIVE LA DATA INFERITA SOLO SE GPT NON HA GIÀ UNA DATA VALIDA
+  // ═══════════════════════════════════════════════════════════════════════════
+  const hasValidDate = date && typeof date === "string" && date.trim() !== "" && /^\d{4}-\d{2}-\d{2}$/.test(date);
+  
+  if (!hasValidDate) {
+    // Solo se GPT non ha fornito una data valida, usiamo l'inferenza
+    const inferred = inferDateFromConversation(callId);
+    if (inferred) {
+      console.log(`🔧 FIX 5a: Data GPT mancante/invalida, uso inferita: ${inferred}`);
+      date = inferred;
+    }
+  } else {
+    console.log(`✅ FIX 5a: Data GPT valida (${date}), NON sovrascrivo con inferenza`);
+  }
+  
+  // Se dopo tutto non abbiamo ancora una data valida, proviamo il parsing
+  if (typeof date === "string" && date.trim() !== "" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    // Data valida in formato ISO, verifichiamo che non sia nel passato
     const parts = date.split("-");
     if (parts.length === 3) {
       let [y, m, d] = parts.map((p) => p.trim());
@@ -689,7 +705,6 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
         const todayRome = startOfDay(getNowInRome());
 
         // Se la data è nel passato, spostala in avanti di anni
-        // fino a quando non è almeno oggi (prossimo periodo).
         while (candidate.getTime() < todayRome.getTime()) {
           candidate.setFullYear(candidate.getFullYear() + 1);
         }
@@ -699,7 +714,7 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
     }
   }
 
-  // 3) Inferenza orario di default se mancante (pranzo/sera/stanotte/late)
+  // Inferenza orario di default se mancante (pranzo/sera/stanotte/late)
   if (!time) {
     const allUserTextRaw = getAllUserText(callId);
     const t = normalizeText(allUserTextRaw);
@@ -1082,7 +1097,7 @@ function getRestaurantNameForCall(callId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FIX 1: SYSTEM PROMPT CON DATA/ORA DETTAGLIATA E CALENDARIO
+// FIX 1 + FIX 5b: SYSTEM PROMPT CON DATA/ORA DETTAGLIATA + GESTIONE CHIUSURE
 // ═══════════════════════════════════════════════════════════════════════════
 
 function buildSystemPrompt(context, reservationState = null) { 
@@ -1138,12 +1153,14 @@ function buildSystemPrompt(context, reservationState = null) {
   const calInfo = buildCalendarInfo();
   const todayDateIso = toISODate(calInfo.now);
   
-  // Costruisci il calendario in formato leggibile
+  // Costruisci il calendario in formato leggibile CON indicazione lunedì chiuso
   const calendarioSettimana = calInfo.prossimiGiorni.slice(0, 10).map(g => {
     let label = "";
     if (g.offset === 0) label = " (OGGI)";
     else if (g.offset === 1) label = " (domani)";
     else if (g.offset === 2) label = " (dopodomani)";
+    // FIX 5b: Marca i lunedì come CHIUSI nel calendario
+    if (g.dayOfWeek === 1) label += " ⛔ CHIUSO";
     return `  ${g.giorno}: ${g.data}${label}`;
   }).join('\n');
 
@@ -1197,6 +1214,30 @@ REGOLE TASSATIVE PER LE DATE:
    - NON lasciare date=null se il cliente ha detto un giorno!
 4. "questo sabato" = ${calInfo.questoSabato ? calInfo.questoSabato.data : 'N/A'}
 5. "sabato prossimo" = ${calInfo.sabatoProssimo ? calInfo.sabatoProssimo.data : 'N/A'}
+
+══════════════════════════════════════════════════════════════════════════════
+⛔ GIORNI DI CHIUSURA - GESTIONE IMMEDIATA (MOLTO IMPORTANTE!)
+══════════════════════════════════════════════════════════════════════════════
+Il ristorante è CHIUSO:
+- TUTTI I LUNEDÌ (giorno di chiusura settimanale)
+- Chiusure straordinarie: ${closingRulesText || "nessuna"}
+
+REGOLA FONDAMENTALE:
+Quando il cliente chiede di prenotare per un LUNEDÌ o per un giorno di chiusura straordinaria:
+1. RIFIUTA IMMEDIATAMENTE la data
+2. Spiega che siamo chiusi quel giorno
+3. Proponi un giorno alternativo (es. martedì, mercoledì, ecc.)
+4. NON procedere MAI con la raccolta di altri dati (orario, persone, nome) per un giorno chiuso!
+
+Esempi di risposte corrette:
+- Cliente: "Vorrei prenotare per lunedì"
+  → "Mi dispiace, il lunedì siamo chiusi. Vuoi prenotare per martedì o un altro giorno?"
+- Cliente: "Prenotazione per lunedì 8 dicembre"
+  → "Purtroppo lunedì 8 dicembre siamo chiusi. Posso proporti martedì 9 o mercoledì 10?"
+- Cliente: "Lunedì prossimo alle 20"
+  → "Il lunedì il ristorante è chiuso. Preferisci prenotare per martedì alle 20?"
+
+NON dire mai frasi come "Lunedì prossimo è il 15 dicembre. Quante persone sarete?" se il lunedì è chiuso!
 ══════════════════════════════════════════════════════════════════════════════
 ${statoPrenotazione}
 LINGUE:
@@ -1712,11 +1753,15 @@ async function askGiulia(callId, userText) {
   // ===============================
   const finalInferredDate = inferDateFromConversation(callId);
 
-  // Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
+  // FIX 5a: Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
+  // MA solo se la reservation non ha già una data valida!
   if (parsed.reservation) {
+    const hasValidDateInReservation = parsed.reservation.date && 
+                                       typeof parsed.reservation.date === "string" && 
+                                       parsed.reservation.date.trim() !== "" &&
+                                       /^\d{4}-\d{2}-\d{2}$/.test(parsed.reservation.date);
 
-    if ((!parsed.reservation.date || parsed.reservation.date === null) 
-        && finalInferredDate) {
+    if (!hasValidDateInReservation && finalInferredDate) {
       console.log("🔥 PATCH DATA: uso la data inferita:", finalInferredDate);
       parsed.reservation.date = finalInferredDate;
       // Aggiorna anche lo stato persistente
@@ -2018,7 +2063,7 @@ app.post("/twilio", async (req, res) => {
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // FIX 4: MODALITÀ DEBUG CON INVIO A CALENDAR
+  // FIX 4 + FIX 5c: MODALITÀ DEBUG CON INVIO A CALENDAR + SOVRASCRITTURA RISPOSTA
   // ═══════════════════════════════════════════════════════════════════════════
   if (isDebug) {
     try {
@@ -2030,8 +2075,13 @@ app.post("/twilio", async (req, res) => {
       
       const giulia = await askGiulia(callId, text.trim());
       
+      // Determina la lingua per i messaggi di errore
+      const currentLang = getCallLanguage(callId);
+      
       // Se è create_reservation, invia anche a Calendar
       if (giulia.action === "create_reservation" && giulia.reservation) {
+        // FIX 5a: Usa la data dalla reservation di GPT, non da normalizeReservationForCalendar
+        // perché ora normalizeReservationForCalendar non sovrascrive più date valide
         const normalized = normalizeReservationForCalendar(giulia.reservation, callId);
         const { date, time, people, name, customerEmail } = normalized;
         
@@ -2057,12 +2107,42 @@ app.post("/twilio", async (req, res) => {
             if (closureCheck.isClosed) {
               console.log("⛔ DEBUG: Giorno chiuso, prenotazione non inviata");
               giulia.calendarResult = { success: false, reason: "day_closed", closureReason: closureCheck.reason };
+              
+              // ═══════════════════════════════════════════════════════════════════════════
+              // FIX 5c: SOVRASCRIVE LA RISPOSTA ANCHE IN DEBUG MODE
+              // ═══════════════════════════════════════════════════════════════════════════
+              giulia.reply_text = buildClosedDayMessage(date, closureCheck.reason, currentLang);
+              giulia.action = "ask_date";
+              // Reset della data nello stato
+              giulia.reservation.date = null;
+              mergeReservationForCall(callId, { date: null });
+              console.log("🔧 FIX 5c DEBUG: Risposta sovrascritta per giorno chiuso");
+              
             } else {
               // Check disponibilità slot
               const availCheck = await checkSlotAvailability(date, time, numericPeople);
               if (!availCheck.available) {
                 console.log("⛔ DEBUG: Slot pieno, prenotazione non inviata");
                 giulia.calendarResult = { success: false, reason: availCheck.reason };
+                
+                // FIX 5c: Sovrascrive la risposta anche per slot pieno
+                if (availCheck.reason === "day_closed") {
+                  giulia.reply_text = buildClosedDayMessage(date, availCheck.closureReason || "", currentLang);
+                  giulia.action = "ask_date";
+                } else {
+                  // Cerca alternative
+                  const alternativeSlots = await findAvailableSlots(date, time, numericPeople);
+                  if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+                    giulia.reply_text = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+                  } else {
+                    giulia.reply_text = currentLang === "en-US" 
+                      ? "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?"
+                      : "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+                  }
+                  giulia.action = "ask_time";
+                }
+                console.log("🔧 FIX 5c DEBUG: Risposta sovrascritta per slot pieno");
+                
               } else {
                 // Invia a Calendar
                 console.log("📅 DEBUG: Invio prenotazione a Calendar");
