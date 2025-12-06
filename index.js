@@ -1,9 +1,10 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
-// VERSIONE CON 3 FIX CRITICI:
+// VERSIONE CON 3 FIX CRITICI + DEBUG CON CALENDAR:
 // 1. Data/ora corrente dettagliata nel prompt
 // 2. Stato persistente della prenotazione
 // 3. Stop loop email - forza create_reservation
+// 4. Modalità debug invia anche a Calendar
 // ===============================
 
 import express from "express";
@@ -2016,10 +2017,105 @@ app.post("/twilio", async (req, res) => {
   console.log("📞 /twilio body:", req.body);
   console.log("📲 Numero chiamante (From):", From, "postFinal:", postFinal);
 
-  // Modalità debug via curl (JSON in/out)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 4: MODALITÀ DEBUG CON INVIO A CALENDAR
+  // ═══════════════════════════════════════════════════════════════════════════
   if (isDebug) {
     try {
+      // Assicura contesto caricato (necessario per le soglie)
+      await ensureContextForCall(callId);
+      
+      // Salva il testo utente nella cronologia per inferDateFromConversation
+      appendUserText(callId, text.trim());
+      
       const giulia = await askGiulia(callId, text.trim());
+      
+      // Se è create_reservation, invia anche a Calendar
+      if (giulia.action === "create_reservation" && giulia.reservation) {
+        const normalized = normalizeReservationForCalendar(giulia.reservation, callId);
+        const { date, time, people, name, customerEmail } = normalized;
+        
+        if (date && time && name) {
+          const { largeGroupThreshold, eventThreshold } = getThresholdsForCall(callId);
+          const numericPeople = typeof people === "number" && !isNaN(people) ? people : 2;
+          
+          // Check se è evento gigante
+          if (numericPeople >= eventThreshold) {
+            console.log("🎪 DEBUG: Evento gigante rilevato, invio notifica proprietario");
+            await sendOwnerEmail({
+              name,
+              people: numericPeople,
+              date,
+              time,
+              phone: From || "debug",
+              customerEmail: customerEmail || "",
+            });
+            giulia.calendarResult = { success: true, type: "huge_event_notified" };
+          } else {
+            // Check chiusura
+            const closureCheck = await checkClosure(date);
+            if (closureCheck.isClosed) {
+              console.log("⛔ DEBUG: Giorno chiuso, prenotazione non inviata");
+              giulia.calendarResult = { success: false, reason: "day_closed", closureReason: closureCheck.reason };
+            } else {
+              // Check disponibilità slot
+              const availCheck = await checkSlotAvailability(date, time, numericPeople);
+              if (!availCheck.available) {
+                console.log("⛔ DEBUG: Slot pieno, prenotazione non inviata");
+                giulia.calendarResult = { success: false, reason: availCheck.reason };
+              } else {
+                // Invia a Calendar
+                console.log("📅 DEBUG: Invio prenotazione a Calendar");
+                try {
+                  const calendarRes = await sendToCalendar({
+                    source: "debug",
+                    nome: name,
+                    persone: numericPeople,
+                    data: date,
+                    ora: time,
+                    telefono: From || "debug-phone",
+                    email: customerEmail || "",
+                  });
+                  giulia.calendarResult = calendarRes;
+                  console.log("✅ DEBUG: Prenotazione inviata a Calendar:", calendarRes);
+                } catch (calErr) {
+                  console.error("❌ DEBUG: Errore invio Calendar:", calErr);
+                  giulia.calendarResult = { success: false, error: calErr.message };
+                }
+              }
+            }
+          }
+        } else {
+          console.warn("⚠️ DEBUG: create_reservation ma dati incompleti, non invio a Calendar");
+          giulia.calendarResult = { success: false, reason: "incomplete_data", missing: { date: !date, time: !time, name: !name } };
+        }
+      }
+      
+      // Se è cancel_reservation, gestisci anche la cancellazione
+      if (giulia.action === "cancel_reservation" && giulia.reservation) {
+        const normalized = normalizeReservationForCalendar(giulia.reservation, callId);
+        const { date, time, name } = normalized;
+        
+        if (date) {
+          console.log("🗑️ DEBUG: Invio cancellazione a Calendar");
+          try {
+            const calendarRes = await sendToCalendar({
+              action: "cancel_reservation",
+              source: "debug",
+              nome: name || "",
+              data: date,
+              ora: time || null,
+              telefono: From || "debug-phone",
+            });
+            giulia.calendarResult = calendarRes;
+            console.log("✅ DEBUG: Cancellazione inviata a Calendar:", calendarRes);
+          } catch (calErr) {
+            console.error("❌ DEBUG: Errore cancellazione Calendar:", calErr);
+            giulia.calendarResult = { success: false, error: calErr.message };
+          }
+        }
+      }
+      
       return res.status(200).json(giulia);
     } catch (error) {
       console.error("Errore /twilio debug:", error);
