@@ -2386,11 +2386,39 @@ app.post("/twilio", async (req, res) => {
       }
     }
 
+   // ═══════════════════════════════════════════════════════════════════════════
+    // 🔥 FIX 7c: ESTRAI DATA DAL TESTO UTENTE prima del check chiusure
     // ═══════════════════════════════════════════════════════════════════════════
-    // 🔥 PATCH CRITICA: Controllo chiusure PRIMA di qualsiasi altra operazione
+    // GPT spesso mette date: null anche quando l'utente ha specificato una data.
+    // Dobbiamo estrarre la data dal testo utente per verificare le chiusure.
     // ═══════════════════════════════════════════════════════════════════════════
-    if (giulia.reservation && giulia.reservation.date) {
-      const dateToCheck = giulia.reservation.date;
+    let dateToCheck = giulia.reservation?.date || null;
+    
+    // Se GPT non ha messo la data, proviamo a estrarla dal testo utente
+    if (!dateToCheck) {
+      // Prima prova estrazione esplicita (es. "21 dicembre" → 2025-12-21)
+      const explicitDate = extractDateFromText(userText);
+      if (explicitDate) {
+        dateToCheck = explicitDate;
+        console.log(`🔍 FIX 7c: Data estratta dal testo utente: ${dateToCheck}`);
+      } else {
+        // Fallback: usa inferDateFromConversation
+        const inferredDate = inferDateFromConversation(callId);
+        if (inferredDate) {
+          dateToCheck = inferredDate;
+          console.log(`🔍 FIX 7c: Data inferita dalla conversazione: ${dateToCheck}`);
+        }
+      }
+      
+      // Aggiorna la reservation con la data trovata
+      if (dateToCheck) {
+        giulia.reservation = giulia.reservation || {};
+        giulia.reservation.date = dateToCheck;
+        mergeReservationForCall(callId, { date: dateToCheck });
+      }
+    }
+    
+    if (dateToCheck) {
       
       // Verifica se il giorno è chiuso
       const closureCheck = await checkClosure(dateToCheck);
@@ -2568,8 +2596,11 @@ app.post("/twilio", async (req, res) => {
         } catch (err) {
           console.error("❌ FIX 6 - Errore check anticipato:", err);
           // In caso di errore, non blocchiamo il flusso
-        }
+       }
       }
+    } else {
+      // Nessuna data disponibile - non possiamo verificare chiusure
+      console.log(`⚠️ FIX 7c: Nessuna data disponibile per check chiusure`);
     }
 
     let isLargeGroupReservation = false;
