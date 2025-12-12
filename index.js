@@ -1751,9 +1751,20 @@ async function askGiulia(callId, userText) {
   );
 
   // ===============================
-  // PATCH DATA INFERITA AUTOMATICA
+  // PATCH DATA INFERITA AUTOMATICA (FIX 7d: priorità a date esplicite)
   // ===============================
-  const finalInferredDate = inferDateFromConversation(callId);
+  // FIX 7d: PRIMA prova estrazione data ESPLICITA dal testo (es. "21 dicembre" → 2025-12-21)
+  // SOLO come fallback usa inferDateFromConversation (es. "domenica" → prossima domenica)
+  let finalInferredDate = extractDateFromText(userText);
+  if (finalInferredDate) {
+    console.log("🔥 FIX 7d: Data ESPLICITA estratta dal testo utente:", finalInferredDate);
+  } else {
+    // Fallback: inferisci da pattern relativi (domani, domenica, etc.)
+    finalInferredDate = inferDateFromConversation(callId);
+    if (finalInferredDate) {
+      console.log("🔥 PATCH DATA: uso la data inferita (relativa):", finalInferredDate);
+    }
+  }
 
   // FIX 5a: Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
   // MA solo se la reservation non ha già una data valida!
@@ -1764,7 +1775,7 @@ async function askGiulia(callId, userText) {
                                        /^\d{4}-\d{2}-\d{2}$/.test(parsed.reservation.date);
 
     if (!hasValidDateInReservation && finalInferredDate) {
-      console.log("🔥 PATCH DATA: uso la data inferita:", finalInferredDate);
+      console.log("🔥 PATCH DATA: applico data:", finalInferredDate);
       parsed.reservation.date = finalInferredDate;
       // Aggiorna anche lo stato persistente
       mergeReservationForCall(callId, { date: finalInferredDate });
