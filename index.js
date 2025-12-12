@@ -2090,6 +2090,77 @@ app.post("/twilio", async (req, res) => {
       
       // Determina la lingua per i messaggi di errore
       const currentLang = getCallLanguage(callId);
+      // ═══════════════════════════════════════════════════════════════════════════
+      // FIX 7e: ANTI-ALLUCINAZIONE ANCHE IN MODALITÀ DEBUG
+      // ═══════════════════════════════════════════════════════════════════════════
+      // GPT a volte inventa chiusure inesistenti. Verifichiamo con Apps Script.
+      const dateToCheckDebug = giulia.reservation?.date || null;
+      
+      if (dateToCheckDebug) {
+        const replyLower = (giulia.reply_text || "").toLowerCase();
+        const gptMentionsClosure = (
+          replyLower.includes("chius") ||
+          replyLower.includes("closed") ||
+          replyLower.includes("giorno di chiusura") ||
+          replyLower.includes("we're closed") ||
+          replyLower.includes("is closed")
+        );
+        
+        if (gptMentionsClosure) {
+          console.log(`🔍 FIX 7e DEBUG: GPT menziona chiusura per ${dateToCheckDebug}, verifico...`);
+          
+          const closureCheckDebug = await checkClosure(dateToCheckDebug);
+          
+          if (!closureCheckDebug.isClosed) {
+            // GPT ha ALLUCINATO! La data è aperta.
+            console.log(`✅ FIX 7e DEBUG: ${dateToCheckDebug} è APERTO - GPT ha allucinato!`);
+            
+            // Formatta la data
+            let dateDisplay = dateToCheckDebug;
+            try {
+              const [y, m, d] = dateToCheckDebug.split("-");
+              const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+              const options = { weekday: 'long', day: 'numeric', month: 'long' };
+              dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", options);
+            } catch (e) { /* fallback */ }
+            
+            // Correggi la risposta in base ai dati mancanti
+            const r = giulia.reservation || {};
+            const hasTime = r.time && String(r.time).trim() !== "";
+            const hasPeople = r.people && r.people > 0;
+            const hasName = r.name && String(r.name).trim() !== "";
+            
+            if (!hasTime) {
+              giulia.reply_text = currentLang === "en-US" 
+                ? `Perfect, ${dateDisplay}. What time would you prefer?`
+                : `Perfetto, ${dateDisplay}. A che ora preferisci?`;
+              giulia.action = "ask_time";
+            } else if (!hasPeople) {
+              giulia.reply_text = currentLang === "en-US"
+                ? `Perfect, ${dateDisplay} at ${r.time}. How many people will you be?`
+                : `Perfetto, ${dateDisplay} alle ${r.time}. Quante persone sarete?`;
+              giulia.action = "ask_people";
+            } else if (!hasName) {
+              giulia.reply_text = currentLang === "en-US"
+                ? `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people. May I have your name?`
+                : `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone. Posso avere il tuo nome?`;
+              giulia.action = "ask_name";
+            } else {
+              giulia.reply_text = currentLang === "en-US"
+                ? `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people under ${r.name}. Would you like to leave an email?`
+                : `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone a nome ${r.name}. Vuoi lasciarmi un'email?`;
+              giulia.action = "ask_email";
+            }
+            
+            console.log(`✅ FIX 7e DEBUG: Risposta corretta: "${giulia.reply_text}"`);
+          } else {
+            console.log(`⛔ FIX 7e DEBUG: ${dateToCheckDebug} è davvero CHIUSO - GPT corretto`);
+          }
+        }
+      }
+      // ═══════════════════════════════════════════════════════════════════════════
+      
+      // Se è create_reservation, invia anche a Calendar
       
       // Se è create_reservation, invia anche a Calendar
       if (giulia.action === "create_reservation" && giulia.reservation) {
