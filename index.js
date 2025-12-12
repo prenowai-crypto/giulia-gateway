@@ -1,11 +1,12 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
-// VERSIONE CON 5 FIX CRITICI:
+// VERSIONE CON 6 FIX CRITICI:
 // 1. Data/ora corrente dettagliata nel prompt
 // 2. Stato persistente della prenotazione
 // 3. Stop loop email - forza create_reservation
 // 4. Modalità debug invia anche a Calendar
 // 5. FIX: Data non sovrascritta + GPT chiusure + Debug risposta
+// 6. FIX: Check anticipato disponibilità slot (UX critica)
 // ===============================
 
 import express from "express";
@@ -2453,61 +2454,49 @@ app.post("/twilio", async (req, res) => {
       }
     }
 
-    // 🔥 PATCH CRITICA: Check preventivo anche per ask_email/ask_name
-    // (solo se il giorno NON è già stato rilevato come chiuso)
-    if (!dayClosed && (action === "ask_email" || action === "ask_name") && giulia.reservation) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🔥🔥 FIX 6: CHECK ANTICIPATO DISPONIBILITÀ SLOT (UX CRITICA)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Trigger IMMEDIATO appena abbiamo date + time + people, PRIMA di chiedere nome/email
+    // Questo evita che il cliente investa 5-6 turni per poi scoprire che lo slot è pieno
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (!dayClosed && !slotFull && giulia.reservation) {
       const r = giulia.reservation;
       
-      // Se abbiamo data, ora e persone → facciamo check preventivo
-      if (r.date && r.time && r.people && r.people > 0) {
-        console.log(`🔍 Check preventivo (action=${action}): ${r.date} ${r.time} per ${r.people} pax`);
+      // Verifica se abbiamo i 3 dati base
+      const hasDate = r.date && String(r.date).trim() !== "";
+      const hasTime = r.time && String(r.time).trim() !== "";
+      const hasPeople = r.people && r.people > 0;
+      
+      // FIX 6: Trigger su QUALSIASI action quando abbiamo i 3 dati base
+      // Escludiamo solo le azioni che non dovrebbero triggare il check
+      const shouldCheckNow = (
+        hasDate && hasTime && hasPeople &&
+        action !== "create_reservation" &&  // evita doppio check (verrà fatto dopo)
+        action !== "cancel_reservation" &&
+        action !== "answer_menu" &&
+        action !== "answer_generic"
+      );
+      
+      if (shouldCheckNow) {
+        console.log(`🔍 FIX 6 - Check anticipato slot (action=${action}): ${r.date} ${r.time} per ${r.people} pax`);
         
         try {
           const availCheck = await checkSlotAvailability(r.date, r.time, r.people);
           
-          // 🔥 NUOVO: gestione giorno chiuso da check_availability
+          // Gestione giorno chiuso
           if (!availCheck.available && availCheck.reason === "day_closed") {
             dayClosed = true;
-            console.log(`⛔ GIORNO CHIUSO (da check_availability): ${r.date}`);
+            console.log(`⛔ FIX 6 - GIORNO CHIUSO: ${r.date}`);
             
             replyText = buildClosedDayMessage(r.date, availCheck.closureReason, currentLang);
             action = "ask_date";
             
             giulia.reservation.date = null;
             mergeReservationForCall(callId, giulia.reservation);
+            
           } else if (!availCheck.available) {
-            // ❌ SLOT PIENO: cerca alternative e sovrascrivi la risposta
-            slotFull = true;
-            console.log("⛔ SLOT PIENO rilevato in check preventivo (prima di ask_email/ask_name)");
-
-            // 🔥 NUOVA LOGICA: cerca slot disponibili
-            const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people);
-            
-            if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
-              replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
-              console.log("📢 RISPOSTA CON ALTERNATIVE:", replyText);
-            } else {
-              // Fallback se non troviamo alternative
-              if (currentLang === "en-US") {
-                replyText = "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?";
-              } else {
-                replyText = "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
-              }
-              console.log("📢 RISPOSTA FALLBACK (no alternative trovate):", replyText);
-            }
-
-            action = "ask_time"; // Torna a chiedere orario
-            
-            // Reset time per forzare la richiesta di un nuovo orario
-            giulia.reservation.time = null;
-            mergeReservationForCall(callId, giulia.reservation);
-          }
-        } catch (err) {
-          console.error("❌ Errore check preventivo ask_email/ask_name:", err);
-        }
-      }
-    }
-
+            // ❌ SLOT PIENO: cerca alternative
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
