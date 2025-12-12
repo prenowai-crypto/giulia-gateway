@@ -2495,8 +2495,38 @@ app.post("/twilio", async (req, res) => {
             giulia.reservation.date = null;
             mergeReservationForCall(callId, giulia.reservation);
             
-          } else if (!availCheck.available) {
-            // ❌ SLOT PIENO: cerca alternative
+         } else if (!availCheck.available) {
+            // ❌ SLOT PIENO: cerca alternative SUBITO
+            slotFull = true;
+            console.log(`⛔ FIX 6 - SLOT PIENO rilevato ANTICIPATAMENTE (prima di chiedere nome/email)`);
+
+            const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people);
+            
+            if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
+              replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
+              console.log("📢 FIX 6 - RISPOSTA CON ALTERNATIVE:", replyText);
+            } else {
+              replyText = currentLang === "en-US" 
+                ? "I'm sorry, we're fully booked at that time. Would you like to try a different time or another day?"
+                : "Mi dispiace, a quell'ora siamo al completo. Vuoi provare con un altro orario o un altro giorno?";
+              console.log("📢 FIX 6 - RISPOSTA FALLBACK:", replyText);
+            }
+
+            action = "ask_time";
+            
+            // Reset time per forzare la richiesta di un nuovo orario
+            giulia.reservation.time = null;
+            mergeReservationForCall(callId, giulia.reservation);
+          } else {
+            console.log(`✅ FIX 6 - Slot disponibile: ${r.date} ${r.time} per ${r.people} pax`);
+          }
+        } catch (err) {
+          console.error("❌ FIX 6 - Errore check anticipato:", err);
+          // In caso di errore, non blocchiamo il flusso
+        }
+      }
+    }
+
     let isLargeGroupReservation = false;
     let isHugeEventReservation = false;
 
