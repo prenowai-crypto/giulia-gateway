@@ -1,12 +1,13 @@
 // ===============================
 // Receptionist AI Gateway - GPT + Calendar
-// VERSIONE CON 6 FIX CRITICI:
+// VERSIONE CON 7 FIX CRITICI:
 // 1. Data/ora corrente dettagliata nel prompt
 // 2. Stato persistente della prenotazione
 // 3. Stop loop email - forza create_reservation
 // 4. Modalità debug invia anche a Calendar
 // 5. FIX: Data non sovrascritta + GPT chiusure + Debug risposta
 // 6. FIX: Check anticipato disponibilità slot (UX critica)
+// 7. FIX: Anti-allucinazione GPT chiusure + correzione action
 // ===============================
 
 import express from "express";
@@ -2400,6 +2401,11 @@ app.post("/twilio", async (req, res) => {
         
         // Sovrascrivi la risposta di GPT
         replyText = buildClosedDayMessage(dateToCheck, closureCheck.reason, currentLang);
+        
+        // FIX 7b: Correggi action se GPT ha usato "none" invece di "ask_date"
+        if (action === "none") {
+          console.log(`🔧 FIX 7b: Correggo action da "none" a "ask_date" per chiusura legittima`);
+        }
         action = "ask_date";
         
         // Reset della data per forzare una nuova scelta
@@ -2407,29 +2413,36 @@ app.post("/twilio", async (req, res) => {
         mergeReservationForCall(callId, giulia.reservation);
       } else {
         // ═══════════════════════════════════════════════════════════════════════════
-        // 🔥 PATCH: GPT ha rifiutato la data MA il giorno è APERTO → correggi!
+        // 🔥 FIX 7: ANTI-ALLUCINAZIONE GPT CHIUSURE
         // ═══════════════════════════════════════════════════════════════════════════
-        // Rileva se GPT sta erroneamente rifiutando la data
-        const gptRefusedDate = (
-          action === "ask_date" && 
-          replyText && (
-            replyText.toLowerCase().includes("chius") ||
-            replyText.toLowerCase().includes("giorno di chiusura") ||
-            replyText.toLowerCase().includes("non possiamo") ||
-            replyText.toLowerCase().includes("non è possibile") ||
-            replyText.toLowerCase().includes("cannot") ||
-            replyText.toLowerCase().includes("closed") ||
-            replyText.toLowerCase().includes("è un sabato") ||
-            replyText.toLowerCase().includes("è un lunedì") ||
-            replyText.toLowerCase().includes("è una domenica") ||
-            replyText.toLowerCase().includes("is a saturday") ||
-            replyText.toLowerCase().includes("is a monday") ||
-            replyText.toLowerCase().includes("is a sunday")
-          )
+        // GPT a volte "inventa" chiusure che non esistono. Questa patch:
+        // 1. Rileva se GPT sta parlando di chiusure (con qualsiasi action)
+        // 2. Verifica con checkClosure() se è davvero chiuso
+        // 3. Se NON è chiuso → corregge la risposta (anti-allucinazione)
+        // 4. Se È chiuso ma action="none" → corregge action a "ask_date"
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        const replyLower = (replyText || "").toLowerCase();
+        const gptMentionsClosure = (
+          replyLower.includes("chius") ||
+          replyLower.includes("giorno di chiusura") ||
+          replyLower.includes("non possiamo") ||
+          replyLower.includes("non è possibile") ||
+          replyLower.includes("cannot") ||
+          replyLower.includes("closed") ||
+          replyLower.includes("we're closed") ||
+          replyLower.includes("is closed") ||
+          replyLower.includes("are closed")
         );
 
-        if (gptRefusedDate) {
-          console.log(`⚠️ GPT ha rifiutato ${dateToCheck} ma Apps Script dice che è APERTO → correggo la risposta`);
+        if (gptMentionsClosure) {
+          console.log(`🔍 FIX 7: GPT menziona chiusura per ${dateToCheck}, verifico con Apps Script...`);
+          
+          // Ri-verifica con Apps Script (già fatto sopra, ma per sicurezza)
+          // closureCheck.isClosed è false qui (siamo nel ramo else)
+          
+          console.log(`✅ FIX 7: Apps Script conferma che ${dateToCheck} è APERTO`);
+          console.log(`⚠️ FIX 7: GPT ha ALLUCINATO una chiusura! Correggo la risposta.`);
           
           // Formatta la data in modo leggibile
           let dateDisplay = dateToCheck;
@@ -2440,16 +2453,48 @@ app.post("/twilio", async (req, res) => {
             dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", options);
           } catch (e) { /* fallback */ }
 
-          // Sovrascrivi con una risposta corretta
-          if (currentLang === "en-US") {
-            replyText = `Perfect, ${dateDisplay}. What time would you prefer?`;
+          // Determina cosa chiedere dopo in base ai dati mancanti
+          const r = giulia.reservation || {};
+          const hasTime = r.time && String(r.time).trim() !== "";
+          const hasPeople = r.people && r.people > 0;
+          const hasName = r.name && String(r.name).trim() !== "";
+
+          if (!hasTime) {
+            // Manca l'orario
+            if (currentLang === "en-US") {
+              replyText = `Perfect, ${dateDisplay}. What time would you prefer?`;
+            } else {
+              replyText = `Perfetto, ${dateDisplay}. A che ora preferisci?`;
+            }
+            action = "ask_time";
+          } else if (!hasPeople) {
+            // Manca il numero di persone
+            if (currentLang === "en-US") {
+              replyText = `Perfect, ${dateDisplay} at ${r.time}. How many people will you be?`;
+            } else {
+              replyText = `Perfetto, ${dateDisplay} alle ${r.time}. Quante persone sarete?`;
+            }
+            action = "ask_people";
+          } else if (!hasName) {
+            // Manca il nome
+            if (currentLang === "en-US") {
+              replyText = `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people. May I have your name for the reservation?`;
+            } else {
+              replyText = `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone. Posso avere il tuo nome per la prenotazione?`;
+            }
+            action = "ask_name";
           } else {
-            replyText = `Perfetto, ${dateDisplay}. A che ora preferisci?`;
+            // Abbiamo tutto, chiedi email o procedi
+            if (currentLang === "en-US") {
+              replyText = `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people under the name ${r.name}. Would you like to leave an email for confirmation?`;
+            } else {
+              replyText = `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone a nome ${r.name}. Vuoi lasciarmi un'email per la conferma?`;
+            }
+            action = "ask_email";
           }
-          action = "ask_time";
           
           // NON resettare la data, è valida!
-          console.log(`✅ Risposta corretta: "${replyText}"`);
+          console.log(`✅ FIX 7: Risposta corretta: "${replyText}" (action=${action})`);
         }
       }
     }
