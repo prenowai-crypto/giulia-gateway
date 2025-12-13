@@ -1516,6 +1516,23 @@ Esempi di risposte corrette:
 
 NON dire mai frasi come "Lunedì prossimo è il 15 dicembre. Quante persone sarete?" se il lunedì è chiuso!
 ══════════════════════════════════════════════════════════════════════════════
+⚠️ REGOLA SUGLI ORARI - NON INVENTARE RESTRIZIONI!
+══════════════════════════════════════════════════════════════════════════════
+Gli orari di apertura (pranzo e cena) sono gli STESSI per TUTTI i giorni in cui siamo aperti.
+- NON dire MAI che un giorno specifico (es. domenica, sabato) ha orari diversi dagli altri
+- NON dire MAI "siamo aperti solo a pranzo" o "solo a cena" per un giorno specifico
+- Se il cliente prenota per la domenica a cena, procedi normalmente come per qualsiasi altro giorno
+- L'unica eccezione è il LUNEDÌ che è CHIUSO (niente pranzo né cena)
+
+ESEMPI SBAGLIATI (da NON fare):
+❌ "La domenica siamo aperti solo a pranzo"
+❌ "Il sabato non facciamo servizio a pranzo"
+❌ "Di domenica chiudiamo prima"
+
+ESEMPIO CORRETTO:
+✅ "Perfetto, domenica 21 dicembre alle 20:30 per 5 persone. Posso avere il tuo nome?"
+══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════
 ${statoPrenotazione}
 LINGUE:
 - Capisci sia italiano sia inglese.
