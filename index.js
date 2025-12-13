@@ -465,6 +465,113 @@ async function handleAntiHallucinationFix(giulia, dateToCheck, userText, current
   
   console.log(`✅ FIX 8: Risposta corretta: "${giulia.reply_text}" (action=${giulia.action})`);
   return { corrected: true, giulia };
+}// ═══════════════════════════════════════════════════════════════════════════
+// FIX 9: ANTI-INVENZIONE ORARI (GPT inventa "solo pranzo" o "solo cena")
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Rileva se GPT sta inventando restrizioni di orario inesistenti
+ */
+function detectFakeTimeRestriction(replyText) {
+  if (!replyText) return { detected: false };
+  
+  const t = replyText.toLowerCase();
+  
+  const restrictionPatterns = [
+    /solo a pranzo/i,
+    /solo a cena/i,
+    /aperti solo/i,
+    /only (?:for )?lunch/i,
+    /only (?:for )?dinner/i,
+    /open only/i,
+    /non facciamo (?:servizio )?(?:a )?pranzo/i,
+    /non facciamo (?:servizio )?(?:a )?cena/i,
+    /chiudiamo prima/i,
+    /we don't serve lunch/i,
+    /we don't serve dinner/i,
+  ];
+  
+  for (const pattern of restrictionPatterns) {
+    if (pattern.test(t)) {
+      return { detected: true, reason: "fake_time_restriction" };
+    }
+  }
+  
+  return { detected: false };
+}
+
+/**
+ * Corregge la risposta se GPT inventa restrizioni di orario
+ */
+function fixFakeTimeRestriction(giulia, userText, currentLang, callId) {
+  const fakeRestriction = detectFakeTimeRestriction(giulia.reply_text);
+  
+  if (!fakeRestriction.detected) {
+    return { corrected: false, giulia };
+  }
+  
+  console.log(`⚠️ FIX 9: GPT ha inventato restrizione orari! Correggo...`);
+  
+  const r = giulia.reservation || {};
+  const allUserText = getAllUserText(callId) + " " + (userText || "");
+  
+  // Estrai time se non presente
+  let hasTime = r.time && String(r.time).trim() !== "";
+  if (!hasTime) {
+    const extracted = extractTimeFromText(allUserText);
+    if (extracted) {
+      r.time = extracted;
+      hasTime = true;
+    }
+  }
+  
+  // Estrai people se non presente
+  let hasPeople = r.people && r.people > 0;
+  if (!hasPeople) {
+    const extracted = extractPeopleFromText(allUserText);
+    if (extracted) {
+      r.people = extracted;
+      hasPeople = true;
+    }
+  }
+  
+  giulia.reservation = r;
+  mergeReservationForCall(callId, r);
+  
+  // Formatta data
+  let dateDisplay = r.date || "";
+  if (r.date) {
+    try {
+      const [y, m, d] = r.date.split("-");
+      const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+      dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", 
+        { weekday: 'long', day: 'numeric', month: 'long' });
+    } catch (e) {}
+  }
+  
+  // Costruisci risposta corretta
+  const hasName = r.name && String(r.name).trim() !== "";
+  const timeDisplay = hasTime ? r.time.substring(0,5) : "";
+  
+  if (!hasTime) {
+    giulia.reply_text = currentLang === "en-US" 
+      ? `Perfect, ${dateDisplay} for ${r.people || 2} people. What time would you prefer?`
+      : `Perfetto, ${dateDisplay} per ${r.people || 2} persone. A che ora preferisci?`;
+    giulia.action = "ask_time";
+  } else if (!hasName) {
+    giulia.reply_text = currentLang === "en-US"
+      ? `Perfect, ${dateDisplay} at ${timeDisplay} for ${r.people || 2} people. May I have your name?`
+      : `Perfetto, ${dateDisplay} alle ${timeDisplay} per ${r.people || 2} persone. Posso avere il tuo nome?`;
+    giulia.action = "ask_name";
+  } else {
+    giulia.reply_text = currentLang === "en-US"
+      ? `Perfect, ${dateDisplay} at ${timeDisplay} for ${r.people || 2} under ${r.name}. Would you like to leave an email?`
+      : `Perfetto, ${dateDisplay} alle ${timeDisplay} per ${r.people || 2} a nome ${r.name}. Vuoi lasciarmi un'email?`;
+    giulia.action = "ask_email";
+  }
+  
+  console.log(`✅ FIX 9: Risposta corretta: "${giulia.reply_text}"`);
+  return { corrected: true, giulia };
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 1: FUNZIONI PER CALCOLARE DATA/ORA CORRENTE IN MODO DETTAGLIATO
@@ -2400,9 +2507,15 @@ app.post("/twilio", async (req, res) => {
           giulia, dateToCheckDebug, text.trim(), currentLang, callId, checkClosure
         );
         
-        if (antiHallResult.corrected) {
+       if (antiHallResult.corrected) {
           console.log("🔧 FIX 8 DEBUG: Risposta corretta per anti-allucinazione");
         }
+      }
+      
+      // FIX 9: Anti-invenzione orari
+      const fix9ResultDebug = fixFakeTimeRestriction(giulia, text.trim(), currentLang, callId);
+      if (fix9ResultDebug.corrected) {
+        console.log("🔧 FIX 9 DEBUG: Corretta invenzione orari");
       }
       // ═══════════════════════════════════════════════════════════════════════════
       
@@ -2756,7 +2869,18 @@ app.post("/twilio", async (req, res) => {
         replyText = giulia.reply_text;
         action = giulia.action;
         console.log("🔧 FIX 8 TWILIO: Risposta corretta per anti-allucinazione");
-      } else {
+      }
+      
+      // FIX 9: Anti-invenzione orari (dopo FIX 8)
+      const fix9Result = fixFakeTimeRestriction(giulia, userText, currentLang, callId);
+      if (fix9Result.corrected) {
+        replyText = giulia.reply_text;
+        action = giulia.action;
+        console.log("🔧 FIX 9 TWILIO: Corretta invenzione orari");
+      }
+      
+      // Se non corretto da FIX 8 o FIX 9, verifica chiusura standard
+      if (!antiHallResult.corrected && !fix9Result.corrected) {
         // Se non corretto da FIX 8, verifica chiusura standard
         const closureCheck = await checkClosure(dateToCheck);
         
