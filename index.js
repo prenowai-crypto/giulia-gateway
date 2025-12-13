@@ -209,9 +209,9 @@ function extractTimeFromText(text) {
   if (itMatch) {
     let hour = parseInt(itMatch[1]);
     const minutes = itMatch[2] ? parseInt(itMatch[2]) : 0;
-    if (hour <= 12 && hour >= 1 && !t.includes("mattina") && !t.includes("pranzo")) {
-      hour += 12;
-    }
+    if (hour < 12 && hour >= 1 && !t.includes("mattina") && !t.includes("pranzo")) {
+    hour += 12;
+  }
     if (hour === 24) hour = 0;
     return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
   }
