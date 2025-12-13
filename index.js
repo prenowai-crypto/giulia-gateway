@@ -190,7 +190,282 @@ function normalizeText(str) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 8a: ESTRAZIONE TIME/PEOPLE DAL TESTO UTENTE
+// ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Estrae l'orario dal testo utente
+ * Es: "alle 20", "ore 21:30", "at 8pm", "20:30"
+ */
+function extractTimeFromText(text) {
+  if (!text) return null;
+  
+  const t = text.toLowerCase().trim();
+  
+  // Pattern: "alle 20", "alle 20:30", "ore 20", "ore 20:30"
+  const itTimePattern = /(?:alle|ore)\s*(\d{1,2})(?::(\d{2}))?/i;
+  const itMatch = t.match(itTimePattern);
+  if (itMatch) {
+    let hour = parseInt(itMatch[1]);
+    const minutes = itMatch[2] ? parseInt(itMatch[2]) : 0;
+    if (hour <= 12 && hour >= 1 && !t.includes("mattina") && !t.includes("pranzo")) {
+      hour += 12;
+    }
+    if (hour === 24) hour = 0;
+    return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+  }
+  
+  // Pattern: "at 8", "at 8:30", "at 8pm"
+  const enTimePattern = /at\s*(\d{1,2})(?::(\d{2}))?\s*(pm|am)?/i;
+  const enMatch = t.match(enTimePattern);
+  if (enMatch) {
+    let hour = parseInt(enMatch[1]);
+    const minutes = enMatch[2] ? parseInt(enMatch[2]) : 0;
+    const ampm = enMatch[3] ? enMatch[3].toLowerCase() : null;
+    
+    if (ampm === 'pm' && hour < 12) hour += 12;
+    if (ampm === 'am' && hour === 12) hour = 0;
+    if (!ampm && hour <= 12 && hour >= 1) hour += 12;
+    
+    return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+  }
+  
+  // Pattern: "20:30" diretto
+  const directMatch = t.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (directMatch) {
+    const hour = parseInt(directMatch[1]);
+    const minutes = parseInt(directMatch[2]);
+    if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
+      return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Estrae il numero di persone dal testo utente
+ */
+function extractPeopleFromText(text) {
+  if (!text) return null;
+  
+  const t = text.toLowerCase().trim();
+  
+  const patterns = [
+    /(?:per|siamo|saremo|in)\s*(\d+)\s*(?:person[ae]|pax)?/i,
+    /(\d+)\s*(?:person[ae]|pax|coperti)/i,
+    /(?:for|we are)\s*(\d+)\s*(?:people|persons)?/i,
+    /(\d+)\s*(?:people|persons|guests)/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = t.match(pattern);
+    if (match) {
+      const num = parseInt(match[1]);
+      if (num > 0 && num < 100) return num;
+    }
+  }
+  
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 8b: RILEVAMENTO PROPOSTE DATE ALTERNATIVE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Rileva se GPT sta proponendo date alternative (senza dire "chiuso")
+ */
+function detectAlternativeDateProposal(replyText) {
+  if (!replyText) return { detected: false };
+  
+  const t = replyText.toLowerCase();
+  
+  // Pattern: "martedì 16 o giovedì 18"
+  const giorni = ['lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato', 'domenica',
+                  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  
+  const orPattern = /(\w+)\s*(\d{1,2})?\s*(?:o|or|oppure)\s*(\w+)\s*(\d{1,2})?/i;
+  const orMatch = t.match(orPattern);
+  
+  if (orMatch) {
+    const word1 = orMatch[1].toLowerCase();
+    const word2 = orMatch[3].toLowerCase();
+    
+    const isDay1 = giorni.some(g => word1.includes(g.substring(0, 4)));
+    const isDay2 = giorni.some(g => word2.includes(g.substring(0, 4)));
+    
+    if (isDay1 && isDay2) {
+      return { detected: true, reason: "alternative_days" };
+    }
+  }
+  
+  // Pattern: frasi che propongono
+  const proposalPatterns = [
+    /ti propongo/i,
+    /che ne dici di/i,
+    /posso offrirti/i,
+    /preferisci (?:invece )?/i,
+    /what about/i,
+    /how about/i,
+    /in alternativa/i,
+  ];
+  
+  for (const pattern of proposalPatterns) {
+    if (pattern.test(t)) {
+      return { detected: true, reason: "proposal_phrase" };
+    }
+  }
+  
+  return { detected: false };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 8c: PROTEZIONE DATA ORIGINALE
+// ═══════════════════════════════════════════════════════════════════════════
+
+const protectedDates = new Map();
+
+function setProtectedDate(callId, date) {
+  if (callId && date) {
+    console.log(`🛡️ FIX 8c: Protezione data attivata: ${date}`);
+    protectedDates.set(callId, date);
+  }
+}
+
+function getProtectedDate(callId) {
+  return protectedDates.get(callId) || null;
+}
+
+function clearProtectedDate(callId) {
+  if (callId) {
+    protectedDates.delete(callId);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 8d: FUNZIONE UNIFICATA ANTI-ALLUCINAZIONE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Gestisce l'anti-allucinazione GPT - UNIFICATA per debug e Twilio
+ */
+async function handleAntiHallucinationFix(giulia, dateToCheck, userText, currentLang, callId, checkClosureFn) {
+  if (!dateToCheck) return { corrected: false, giulia };
+  
+  const replyLower = (giulia.reply_text || "").toLowerCase();
+  
+  // STEP 1: Rileva se GPT menziona chiusure
+  const gptMentionsClosure = (
+    replyLower.includes("chius") ||
+    replyLower.includes("closed") ||
+    replyLower.includes("non possiamo") ||
+    replyLower.includes("cannot") ||
+    replyLower.includes("we're closed") ||
+    replyLower.includes("is closed")
+  );
+  
+  // STEP 2: FIX 8b - Rileva proposte alternative
+  const alternativeProposal = detectAlternativeDateProposal(giulia.reply_text);
+  
+  // STEP 3: FIX 8c - Verifica cambio data
+  const protectedDate = getProtectedDate(callId);
+  const dateWasChanged = protectedDate && giulia.reservation?.date && 
+                         protectedDate !== giulia.reservation.date;
+  
+  // Se nessun segnale di problema, esci
+  if (!gptMentionsClosure && !alternativeProposal.detected && !dateWasChanged) {
+    return { corrected: false, giulia };
+  }
+  
+  console.log(`🔍 FIX 8: Rilevato problema:`, { gptMentionsClosure, alternativeProposal, dateWasChanged, protectedDate });
+  
+  // STEP 4: Verifica con Apps Script
+  const closureCheck = await checkClosureFn(dateToCheck);
+  
+  if (closureCheck.isClosed) {
+    console.log(`⛔ FIX 8: ${dateToCheck} è davvero CHIUSO`);
+    clearProtectedDate(callId);
+    return { corrected: false, giulia };
+  }
+  
+  // STEP 5: GPT ha ALLUCINATO! Correggi
+  console.log(`✅ FIX 8: ${dateToCheck} è APERTO - GPT ha allucinato!`);
+  
+  // Formatta data
+  let dateDisplay = dateToCheck;
+  try {
+    const [y, m, d] = dateToCheck.split("-");
+    const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", 
+      { weekday: 'long', day: 'numeric', month: 'long' });
+  } catch (e) {}
+  
+  // FIX 8a: Estrai time/people da TUTTO il testo utente della conversazione
+  const r = giulia.reservation || {};
+  const allUserText = getAllUserText(callId) + " " + (userText || "");
+  
+  let hasTime = r.time && String(r.time).trim() !== "";
+  let hasPeople = r.people && r.people > 0;
+  let hasName = r.name && String(r.name).trim() !== "";
+  
+  // Se manca time, prova a estrarlo
+  if (!hasTime) {
+    const extracted = extractTimeFromText(allUserText);
+    if (extracted) { 
+      r.time = extracted; 
+      hasTime = true; 
+      console.log(`🔧 FIX 8a: Time estratto: ${extracted}`);
+    }
+  }
+  
+  // Se manca people, prova a estrarlo
+  if (!hasPeople) {
+    const extracted = extractPeopleFromText(allUserText);
+    if (extracted) { 
+      r.people = extracted; 
+      hasPeople = true; 
+      console.log(`🔧 FIX 8a: People estratto: ${extracted}`);
+    }
+  }
+  
+  // Ripristina data protetta
+  r.date = dateToCheck;
+  giulia.reservation = r;
+  
+  // Aggiorna stato persistente
+  mergeReservationForCall(callId, r);
+  
+  // Costruisci risposta corretta
+  if (!hasTime) {
+    giulia.reply_text = currentLang === "en-US" 
+      ? `Perfect, ${dateDisplay}. What time would you prefer?`
+      : `Perfetto, ${dateDisplay}. A che ora preferisci?`;
+    giulia.action = "ask_time";
+  } else if (!hasPeople) {
+    const timeDisplay = r.time.substring(0,5);
+    giulia.reply_text = currentLang === "en-US"
+      ? `Perfect, ${dateDisplay} at ${timeDisplay}. How many people?`
+      : `Perfetto, ${dateDisplay} alle ${timeDisplay}. Quante persone?`;
+    giulia.action = "ask_people";
+  } else if (!hasName) {
+    const timeDisplay = r.time.substring(0,5);
+    giulia.reply_text = currentLang === "en-US"
+      ? `Perfect, ${dateDisplay} at ${timeDisplay} for ${r.people}. Your name?`
+      : `Perfetto, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Il tuo nome?`;
+    giulia.action = "ask_name";
+  } else {
+    const timeDisplay = r.time.substring(0,5);
+    giulia.reply_text = currentLang === "en-US"
+      ? `Perfect, ${dateDisplay} at ${timeDisplay} for ${r.people} under ${r.name}. Would you like to leave an email?`
+      : `Perfetto, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone a nome ${r.name}. Vuoi lasciarmi un'email?`;
+    giulia.action = "ask_email";
+  }
+  
+  console.log(`✅ FIX 8: Risposta corretta: "${giulia.reply_text}" (action=${giulia.action})`);
+  return { corrected: true, giulia };
+}
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 1: FUNZIONI PER CALCOLARE DATA/ORA CORRENTE IN MODO DETTAGLIATO
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1765,7 +2040,15 @@ async function askGiulia(callId, userText) {
       console.log("🔥 PATCH DATA: uso la data inferita (relativa):", finalInferredDate);
     }
   }
-
+// ═══════════════════════════════════════════════════════════════════════════
+  // FIX 8c: PROTEGGI LA DATA ORIGINALE
+  // ═══════════════════════════════════════════════════════════════════════════
+  const dateToProtect = parsed.reservation?.date || finalInferredDate;
+  if (dateToProtect && /^\d{4}-\d{2}-\d{2}$/.test(dateToProtect)) {
+    if (!isUserChanging(userText) && !getProtectedDate(callId)) {
+      setProtectedDate(callId, dateToProtect);
+    }
+  }
   // FIX 5a: Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
   // MA solo se la reservation non ha già una data valida!
   if (parsed.reservation) {
@@ -2090,72 +2373,18 @@ app.post("/twilio", async (req, res) => {
       
       // Determina la lingua per i messaggi di errore
       const currentLang = getCallLanguage(callId);
+  // ═══════════════════════════════════════════════════════════════════════════
+      // FIX 8: ANTI-ALLUCINAZIONE UNIFICATO (DEBUG)
       // ═══════════════════════════════════════════════════════════════════════════
-      // FIX 7e: ANTI-ALLUCINAZIONE ANCHE IN MODALITÀ DEBUG
-      // ═══════════════════════════════════════════════════════════════════════════
-      // GPT a volte inventa chiusure inesistenti. Verifichiamo con Apps Script.
-      const dateToCheckDebug = giulia.reservation?.date || null;
+      const dateToCheckDebug = giulia.reservation?.date || getProtectedDate(callId);
       
       if (dateToCheckDebug) {
-        const replyLower = (giulia.reply_text || "").toLowerCase();
-        const gptMentionsClosure = (
-          replyLower.includes("chius") ||
-          replyLower.includes("closed") ||
-          replyLower.includes("giorno di chiusura") ||
-          replyLower.includes("we're closed") ||
-          replyLower.includes("is closed")
+        const antiHallResult = await handleAntiHallucinationFix(
+          giulia, dateToCheckDebug, text.trim(), currentLang, callId, checkClosure
         );
         
-        if (gptMentionsClosure) {
-          console.log(`🔍 FIX 7e DEBUG: GPT menziona chiusura per ${dateToCheckDebug}, verifico...`);
-          
-          const closureCheckDebug = await checkClosure(dateToCheckDebug);
-          
-          if (!closureCheckDebug.isClosed) {
-            // GPT ha ALLUCINATO! La data è aperta.
-            console.log(`✅ FIX 7e DEBUG: ${dateToCheckDebug} è APERTO - GPT ha allucinato!`);
-            
-            // Formatta la data
-            let dateDisplay = dateToCheckDebug;
-            try {
-              const [y, m, d] = dateToCheckDebug.split("-");
-              const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-              const options = { weekday: 'long', day: 'numeric', month: 'long' };
-              dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", options);
-            } catch (e) { /* fallback */ }
-            
-            // Correggi la risposta in base ai dati mancanti
-            const r = giulia.reservation || {};
-            const hasTime = r.time && String(r.time).trim() !== "";
-            const hasPeople = r.people && r.people > 0;
-            const hasName = r.name && String(r.name).trim() !== "";
-            
-            if (!hasTime) {
-              giulia.reply_text = currentLang === "en-US" 
-                ? `Perfect, ${dateDisplay}. What time would you prefer?`
-                : `Perfetto, ${dateDisplay}. A che ora preferisci?`;
-              giulia.action = "ask_time";
-            } else if (!hasPeople) {
-              giulia.reply_text = currentLang === "en-US"
-                ? `Perfect, ${dateDisplay} at ${r.time}. How many people will you be?`
-                : `Perfetto, ${dateDisplay} alle ${r.time}. Quante persone sarete?`;
-              giulia.action = "ask_people";
-            } else if (!hasName) {
-              giulia.reply_text = currentLang === "en-US"
-                ? `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people. May I have your name?`
-                : `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone. Posso avere il tuo nome?`;
-              giulia.action = "ask_name";
-            } else {
-              giulia.reply_text = currentLang === "en-US"
-                ? `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people under ${r.name}. Would you like to leave an email?`
-                : `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone a nome ${r.name}. Vuoi lasciarmi un'email?`;
-              giulia.action = "ask_email";
-            }
-            
-            console.log(`✅ FIX 7e DEBUG: Risposta corretta: "${giulia.reply_text}"`);
-          } else {
-            console.log(`⛔ FIX 7e DEBUG: ${dateToCheckDebug} è davvero CHIUSO - GPT corretto`);
-          }
+        if (antiHallResult.corrected) {
+          console.log("🔧 FIX 8 DEBUG: Risposta corretta per anti-allucinazione");
         }
       }
       // ═══════════════════════════════════════════════════════════════════════════
@@ -2200,6 +2429,7 @@ app.post("/twilio", async (req, res) => {
               // Reset della data nello stato
               giulia.reservation.date = null;
               mergeReservationForCall(callId, { date: null });
+              clearProtectedDate(callId);
               console.log("🔧 FIX 5c DEBUG: Risposta sovrascritta per giorno chiuso");
               
             } else {
@@ -2346,9 +2576,10 @@ app.post("/twilio", async (req, res) => {
           ? "Thank you, have a nice evening."
           : "Grazie a te, buona serata.";
 
-      // Pulizia stato alla fine della chiamata
+     // Pulizia stato alla fine della chiamata
       callReservations.delete(callId);
       conversations.delete(callId);
+      protectedDates.delete(callId);
 
       const goodbyeTwiml = `
         <Response>
@@ -2469,26 +2700,21 @@ app.post("/twilio", async (req, res) => {
     }
 
    // ═══════════════════════════════════════════════════════════════════════════
-    // 🔥 FIX 7c: ESTRAI DATA DAL TESTO UTENTE prima del check chiusure
+    // FIX 8: ANTI-ALLUCINAZIONE UNIFICATO (TWILIO)
     // ═══════════════════════════════════════════════════════════════════════════
-    // GPT spesso mette date: null anche quando l'utente ha specificato una data.
-    // Dobbiamo estrarre la data dal testo utente per verificare le chiusure.
-    // ═══════════════════════════════════════════════════════════════════════════
-    let dateToCheck = giulia.reservation?.date || null;
+    let dateToCheck = giulia.reservation?.date || getProtectedDate(callId);
     
-    // Se GPT non ha messo la data, proviamo a estrarla dal testo utente
+    // Se GPT non ha messo la data, proviamo a estrarla
     if (!dateToCheck) {
-      // Prima prova estrazione esplicita (es. "21 dicembre" → 2025-12-21)
       const explicitDate = extractDateFromText(userText);
       if (explicitDate) {
         dateToCheck = explicitDate;
-        console.log(`🔍 FIX 7c: Data estratta dal testo utente: ${dateToCheck}`);
+        console.log(`🔍 FIX 8: Data estratta dal testo utente: ${dateToCheck}`);
       } else {
-        // Fallback: usa inferDateFromConversation
         const inferredDate = inferDateFromConversation(callId);
         if (inferredDate) {
           dateToCheck = inferredDate;
-          console.log(`🔍 FIX 7c: Data inferita dalla conversazione: ${dateToCheck}`);
+          console.log(`🔍 FIX 8: Data inferita dalla conversazione: ${dateToCheck}`);
         }
       }
       
@@ -2497,118 +2723,41 @@ app.post("/twilio", async (req, res) => {
         giulia.reservation = giulia.reservation || {};
         giulia.reservation.date = dateToCheck;
         mergeReservationForCall(callId, { date: dateToCheck });
+        if (!getProtectedDate(callId)) {
+          setProtectedDate(callId, dateToCheck);
+        }
       }
     }
     
     if (dateToCheck) {
+      // Prima: applica anti-allucinazione FIX 8
+      const antiHallResult = await handleAntiHallucinationFix(
+        giulia, dateToCheck, userText, currentLang, callId, checkClosure
+      );
       
-      // Verifica se il giorno è chiuso
-      const closureCheck = await checkClosure(dateToCheck);
-      
-      if (closureCheck.isClosed) {
-        dayClosed = true;
-        console.log(`⛔ GIORNO CHIUSO: ${dateToCheck} - ${closureCheck.reason}`);
-        
-        // Sovrascrivi la risposta di GPT
-        replyText = buildClosedDayMessage(dateToCheck, closureCheck.reason, currentLang);
-        
-        // FIX 7b: Correggi action se GPT ha usato "none" invece di "ask_date"
-        if (action === "none") {
-          console.log(`🔧 FIX 7b: Correggo action da "none" a "ask_date" per chiusura legittima`);
-        }
-        action = "ask_date";
-        
-        // Reset della data per forzare una nuova scelta
-        giulia.reservation.date = null;
-        mergeReservationForCall(callId, giulia.reservation);
+      if (antiHallResult.corrected) {
+        replyText = giulia.reply_text;
+        action = giulia.action;
+        console.log("🔧 FIX 8 TWILIO: Risposta corretta per anti-allucinazione");
       } else {
-        // ═══════════════════════════════════════════════════════════════════════════
-        // 🔥 FIX 7: ANTI-ALLUCINAZIONE GPT CHIUSURE
-        // ═══════════════════════════════════════════════════════════════════════════
-        // GPT a volte "inventa" chiusure che non esistono. Questa patch:
-        // 1. Rileva se GPT sta parlando di chiusure (con qualsiasi action)
-        // 2. Verifica con checkClosure() se è davvero chiuso
-        // 3. Se NON è chiuso → corregge la risposta (anti-allucinazione)
-        // 4. Se È chiuso ma action="none" → corregge action a "ask_date"
-        // ═══════════════════════════════════════════════════════════════════════════
+        // Se non corretto da FIX 8, verifica chiusura standard
+        const closureCheck = await checkClosure(dateToCheck);
         
-        const replyLower = (replyText || "").toLowerCase();
-        const gptMentionsClosure = (
-          replyLower.includes("chius") ||
-          replyLower.includes("giorno di chiusura") ||
-          replyLower.includes("non possiamo") ||
-          replyLower.includes("non è possibile") ||
-          replyLower.includes("cannot") ||
-          replyLower.includes("closed") ||
-          replyLower.includes("we're closed") ||
-          replyLower.includes("is closed") ||
-          replyLower.includes("are closed")
-        );
-
-        if (gptMentionsClosure) {
-          console.log(`🔍 FIX 7: GPT menziona chiusura per ${dateToCheck}, verifico con Apps Script...`);
+        if (closureCheck.isClosed) {
+          dayClosed = true;
+          console.log(`⛔ GIORNO CHIUSO: ${dateToCheck} - ${closureCheck.reason}`);
           
-          // Ri-verifica con Apps Script (già fatto sopra, ma per sicurezza)
-          // closureCheck.isClosed è false qui (siamo nel ramo else)
+          replyText = buildClosedDayMessage(dateToCheck, closureCheck.reason, currentLang);
+          action = "ask_date";
           
-          console.log(`✅ FIX 7: Apps Script conferma che ${dateToCheck} è APERTO`);
-          console.log(`⚠️ FIX 7: GPT ha ALLUCINATO una chiusura! Correggo la risposta.`);
-          
-          // Formatta la data in modo leggibile
-          let dateDisplay = dateToCheck;
-          try {
-            const [y, m, d] = dateToCheck.split("-");
-            const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-            const options = { weekday: 'long', day: 'numeric', month: 'long' };
-            dateDisplay = dateObj.toLocaleDateString(currentLang === "en-US" ? "en-US" : "it-IT", options);
-          } catch (e) { /* fallback */ }
-
-          // Determina cosa chiedere dopo in base ai dati mancanti
-          const r = giulia.reservation || {};
-          const hasTime = r.time && String(r.time).trim() !== "";
-          const hasPeople = r.people && r.people > 0;
-          const hasName = r.name && String(r.name).trim() !== "";
-
-          if (!hasTime) {
-            // Manca l'orario
-            if (currentLang === "en-US") {
-              replyText = `Perfect, ${dateDisplay}. What time would you prefer?`;
-            } else {
-              replyText = `Perfetto, ${dateDisplay}. A che ora preferisci?`;
-            }
-            action = "ask_time";
-          } else if (!hasPeople) {
-            // Manca il numero di persone
-            if (currentLang === "en-US") {
-              replyText = `Perfect, ${dateDisplay} at ${r.time}. How many people will you be?`;
-            } else {
-              replyText = `Perfetto, ${dateDisplay} alle ${r.time}. Quante persone sarete?`;
-            }
-            action = "ask_people";
-          } else if (!hasName) {
-            // Manca il nome
-            if (currentLang === "en-US") {
-              replyText = `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people. May I have your name for the reservation?`;
-            } else {
-              replyText = `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone. Posso avere il tuo nome per la prenotazione?`;
-            }
-            action = "ask_name";
-          } else {
-            // Abbiamo tutto, chiedi email o procedi
-            if (currentLang === "en-US") {
-              replyText = `Perfect, ${dateDisplay} at ${r.time} for ${r.people} people under the name ${r.name}. Would you like to leave an email for confirmation?`;
-            } else {
-              replyText = `Perfetto, ${dateDisplay} alle ${r.time} per ${r.people} persone a nome ${r.name}. Vuoi lasciarmi un'email per la conferma?`;
-            }
-            action = "ask_email";
-          }
-          
-          // NON resettare la data, è valida!
-          console.log(`✅ FIX 7: Risposta corretta: "${replyText}" (action=${action})`);
+          giulia.reservation.date = null;
+          mergeReservationForCall(callId, giulia.reservation);
+          clearProtectedDate(callId);
         }
       }
+    } else {
+      console.log(`⚠️ FIX 8: Nessuna data disponibile per check`);
     }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // 🔥🔥 FIX 6: CHECK ANTICIPATO DISPONIBILITÀ SLOT (UX CRITICA)
     // ═══════════════════════════════════════════════════════════════════════════
