@@ -374,12 +374,25 @@ async function handleAntiHallucinationFix(giulia, dateToCheck, userText, current
   const dateWasChanged = protectedDate && giulia.reservation?.date && 
                          protectedDate !== giulia.reservation.date;
   
-  // Se nessun segnale di problema, esci
-  if (!gptMentionsClosure && !alternativeProposal.detected && !dateWasChanged) {
-    return { corrected: false, giulia };
-  }
+ // ═══════════════════════════════════════════════════════════════════════════
+   // FIX 12: NUOVA LOGICA - Attiva SOLO quando GPT allucina chiusura
+   // NON attivare solo perché la data è cambiata (potrebbe essere il cliente!)
+   // ═══════════════════════════════════════════════════════════════════════════
+   
+   // Se GPT NON menziona chiusure E NON propone alternative → lascia passare
+   if (!gptMentionsClosure && !alternativeProposal.detected) {
+     // Se il cliente ha cambiato idea, aggiorna la data protetta
+     if (dateWasChanged && isUserChanging(userText)) {
+       const newDate = giulia.reservation?.date;
+       if (newDate) {
+         console.log(`🔄 FIX 12: Cliente ha cambiato idea, aggiorno protectedDate: ${protectedDate} → ${newDate}`);
+         setProtectedDate(callId, newDate);
+       }
+     }
+     return { corrected: false, giulia };
+   }
   
-  console.log(`🔍 FIX 8: Rilevato problema:`, { gptMentionsClosure, alternativeProposal, dateWasChanged, protectedDate });
+  console.log(`🔍 FIX 8: Rilevata possibile allucinazione chiusura:`, { gptMentionsClosure, alternativeProposal, dateWasChanged, protectedDate });
   
   // STEP 4: Verifica con Apps Script
   const closureCheck = await checkClosureFn(dateToCheck);
