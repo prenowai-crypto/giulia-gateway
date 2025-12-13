@@ -2497,6 +2497,13 @@ app.post("/twilio", async (req, res) => {
       
       // Determina la lingua per i messaggi di errore
       const currentLang = getCallLanguage(callId);
+      
+      // FIX 10: Corregge action=none quando GPT rileva chiusura
+      if (giulia.action === "none" && /chius|closed/i.test(giulia.reply_text)) {
+        giulia.action = "ask_date";
+        console.log("🔧 FIX 10 DEBUG: action none→ask_date (chiusura rilevata)");
+      }
+      
   // ═══════════════════════════════════════════════════════════════════════════
       // FIX 8: ANTI-ALLUCINAZIONE UNIFICATO (DEBUG)
       // ═══════════════════════════════════════════════════════════════════════════
@@ -2796,6 +2803,13 @@ app.post("/twilio", async (req, res) => {
       giulia.reply_text ||
       "Scusa, non ho capito bene. Puoi ripetere per favore?";
     let action = giulia.action || "none";
+
+    // FIX 10: Corregge action=none quando GPT rileva chiusura
+    if (action === "none" && /chius|closed/i.test(replyText)) {
+      action = "ask_date";
+      giulia.action = "ask_date";
+      console.log("🔧 FIX 10 TWILIO: action none→ask_date (chiusura rilevata)");
+    }
 
     // Protezione: create_reservation con ancora domanda → declassa ad ask_time
     if (action === "create_reservation" && /\?/.test(replyText)) {
