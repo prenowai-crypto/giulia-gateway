@@ -1604,7 +1604,7 @@ async function ensureContextForCall(callId) {
   if (callContexts.has(callId)) {
     return callContexts.get(callId);
   }
-  const ctx = await fetchRestaurantContext();
+  const ctx = await fetchRestaurantContext(callId);
   callContexts.set(callId, ctx);
   return ctx;
 }
@@ -2704,18 +2704,19 @@ app.post("/twilio", async (req, res) => {
           // Check se è evento gigante
           if (numericPeople >= eventThreshold) {
             console.log("🎪 DEBUG: Evento gigante rilevato, invio notifica proprietario");
-            await sendOwnerEmail({
-              name,
-              people: numericPeople,
-              date,
-              time,
-              phone: From || "debug",
-              customerEmail: customerEmail || "",
-            });
+await sendOwnerEmail({
+  name,
+  people: numericPeople,
+  date,
+  time,
+  phone: From || "debug",
+  customerEmail: customerEmail || "",
+  callId,
+});
             giulia.calendarResult = { success: true, type: "huge_event_notified" };
           } else {
             // Check chiusura
-            const closureCheck = await checkClosure(date);
+            const closureCheck = await checkClosure(date, callId);
             if (closureCheck.isClosed) {
               console.log("⛔ DEBUG: Giorno chiuso, prenotazione non inviata");
               giulia.calendarResult = { success: false, reason: "day_closed", closureReason: closureCheck.reason };
@@ -2733,7 +2734,7 @@ app.post("/twilio", async (req, res) => {
               
             } else {
               // Check disponibilità slot
-              const availCheck = await checkSlotAvailability(date, time, numericPeople);
+              const availCheck = await checkSlotAvailability(date, time, numericPeople, callId);
               if (!availCheck.available) {
                 console.log("⛔ DEBUG: Slot pieno, prenotazione non inviata");
                 giulia.calendarResult = { success: false, reason: availCheck.reason };
@@ -2744,7 +2745,7 @@ app.post("/twilio", async (req, res) => {
                   giulia.action = "ask_date";
                 } else {
                   // Cerca alternative
-                  const alternativeSlots = await findAvailableSlots(date, time, numericPeople);
+                  const alternativeSlots = await findAvailableSlots(date, time, numericPeople, callId);
                   if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
                     giulia.reply_text = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
                   } else {
@@ -2761,14 +2762,14 @@ app.post("/twilio", async (req, res) => {
                 console.log("📅 DEBUG: Invio prenotazione a Calendar");
                 try {
                   const calendarRes = await sendToCalendar({
-                    source: "debug",
-                    nome: name,
-                    persone: numericPeople,
-                    data: date,
-                    ora: time,
-                    telefono: From || "debug-phone",
-                    email: customerEmail || "",
-                  });
+  source: "debug",
+  nome: name,
+  persone: numericPeople,
+  data: date,
+  ora: time,
+  telefono: From || "debug-phone",
+  email: customerEmail || "",
+}, callId);
                   giulia.calendarResult = calendarRes;
                   console.log("✅ DEBUG: Prenotazione inviata a Calendar:", calendarRes);
                 } catch (calErr) {
@@ -2792,14 +2793,14 @@ app.post("/twilio", async (req, res) => {
         if (date) {
           console.log("🗑️ DEBUG: Invio cancellazione a Calendar");
           try {
-            const calendarRes = await sendToCalendar({
-              action: "cancel_reservation",
-              source: "debug",
-              nome: name || "",
-              data: date,
-              ora: time || null,
-              telefono: From || "debug-phone",
-            });
+          const calendarRes = await sendToCalendar({
+  action: "cancel_reservation",
+  source: "debug",
+  nome: name || "",
+  data: date,
+  ora: time || null,
+  telefono: From || "debug-phone",
+}, callId);
             giulia.calendarResult = calendarRes;
             console.log("✅ DEBUG: Cancellazione inviata a Calendar:", calendarRes);
           } catch (calErr) {
