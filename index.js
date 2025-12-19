@@ -2356,6 +2356,47 @@ async function askGiulia(callId, userText) {
       setProtectedDate(callId, dateToProtect);
     }
   }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 14: PROTEZIONE ORARIO - Previene allucinazioni di cambio orario
+  // ═══════════════════════════════════════════════════════════════════════════
+  const currentProtectedTime = getProtectedTime(callId);
+  const gptTime = parsed.reservation?.time;
+  
+  // STEP 1: Se abbiamo un orario valido da GPT e non c'è ancora protezione → attiva
+  if (gptTime && /^\d{2}:\d{2}:\d{2}$/.test(gptTime)) {
+    if (!currentProtectedTime) {
+      setProtectedTime(callId, gptTime);
+    } else if (gptTime !== currentProtectedTime) {
+      // STEP 2: GPT ha cambiato l'orario - verifica se l'utente l'ha richiesto
+      const userWantsNewTime = userMentionsNewTime(userText);
+      
+      if (userWantsNewTime) {
+        // L'utente ha esplicitamente menzionato un nuovo orario → aggiorna
+        console.log(`🔄 FIX 14: Utente ha richiesto nuovo orario: ${currentProtectedTime} → ${gptTime}`);
+        setProtectedTime(callId, gptTime);
+      } else {
+        // L'utente NON ha menzionato un nuovo orario → RIPRISTINA
+        console.log(`⚠️ FIX 14: GPT ha allucinato cambio orario! ${currentProtectedTime} → ${gptTime}`);
+        console.log(`🛡️ FIX 14: Ripristino orario protetto: ${currentProtectedTime}`);
+        
+        parsed.reservation.time = currentProtectedTime;
+        mergeReservationForCall(callId, { time: currentProtectedTime });
+        
+        // Correggi anche la reply_text se menziona l'orario sbagliato
+        const wrongTimeDisplay = gptTime.substring(0, 5);
+        const correctTimeDisplay = currentProtectedTime.substring(0, 5);
+        
+        if (parsed.reply_text && parsed.reply_text.includes(wrongTimeDisplay)) {
+          parsed.reply_text = parsed.reply_text.replace(
+            new RegExp(wrongTimeDisplay.replace(':', ':?'), 'g'), 
+            correctTimeDisplay
+          );
+          console.log(`🔧 FIX 14: Corretto orario nella reply_text: ${wrongTimeDisplay} → ${correctTimeDisplay}`);
+        }
+      }
+    }
+  }
+  // ═══════════════════════════════════════════════════════════════════════════
   // FIX 5a: Se GPT non ha messo la data ma noi l'abbiamo inferita → inseriscila
   // MA solo se la reservation non ha già una data valida!
   if (parsed.reservation) {
@@ -2939,6 +2980,7 @@ await sendOwnerEmail({
       callReservations.delete(callId);
       conversations.delete(callId);
       protectedDates.delete(callId);
+      protectedTimes.delete(callId);  // FIX 14
 
       const goodbyeTwiml = `
         <Response>
