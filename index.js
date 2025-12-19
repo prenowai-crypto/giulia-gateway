@@ -1279,10 +1279,11 @@ function normalizeReservationForCalendar(reservation = {}, callId) {
 }
 
 // Invio dati a Google Apps Script per creare/aggiornare/cancellare evento su Calendar
-async function sendToCalendar(payload) {
-  console.log("📅 Invio dati a Apps Script:", payload);
+async function sendToCalendar(payload, callId = null) {
+  const appsScriptUrl = callId ? getAppsScriptUrlForCall(callId) : APPS_SCRIPT_URL;
+  console.log("📅 Invio dati a Apps Script:", payload, "URL:", appsScriptUrl);
 
-  const response = await fetch(APPS_SCRIPT_URL, {
+  const response = await fetch(appsScriptUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1309,15 +1310,16 @@ async function sendToCalendar(payload) {
 // ═══════════════════════════════════════════════════════════════════════════
 // 🔥 NUOVA FUNZIONE: Controllo chiusure straordinarie via Apps Script
 // ═══════════════════════════════════════════════════════════════════════════
-async function checkClosure(dateStr) {
+async function checkClosure(dateStr, callId = null) {
   if (!dateStr) {
     return { isClosed: false, reason: "" };
   }
 
   try {
-    console.log(`🔍 Check chiusura: ${dateStr}`);
+    const appsScriptUrl = callId ? getAppsScriptUrlForCall(callId) : APPS_SCRIPT_URL;
+    console.log(`🔍 Check chiusura: ${dateStr} (URL: ${appsScriptUrl})`);
 
-    const response = await fetch(APPS_SCRIPT_URL, {
+    const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
