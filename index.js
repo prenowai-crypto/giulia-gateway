@@ -26,6 +26,11 @@ const DEFAULT_RESTAURANT_NAME = process.env.RESTAURANT_NAME || "Ristorante";
 
 // Email di fallback del ristorante (usata solo se get_context non la fornisce)
 const OWNER_EMAIL_DEFAULT = process.env.OWNER_EMAIL || "prenowai@gmail.com";
+// ═══════════════════════════════════════════════════════════════════════════
+// MULTI-TENANT: Registry Google Sheet ID
+// ═══════════════════════════════════════════════════════════════════════════
+const REGISTRY_SHEET_ID = "1AdXq1EagVhPsX-UT4HENfuQ1mxUN39kWtECiY6he8bg";
+const REGISTRY_SHEET_NAME = "Registry"; // Nome del foglio/tab
 
 // Web App di Google Apps Script (Giulia Calendar Gateway)
 const APPS_SCRIPT_URL =
