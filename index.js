@@ -108,7 +108,133 @@ const callContexts = new Map();
 
 // Stato della prenotazione per ogni chiamata (CallSid -> reservation cumulata)
 const callReservations = new Map();
+// ═══════════════════════════════════════════════════════════════════════════
+// MULTI-TENANT: Cache e funzioni per Registry
+// ═══════════════════════════════════════════════════════════════════════════
 
+// Cache del Registry (evita chiamate ripetute a Google Sheets)
+let registryCache = null;
+let registryCacheTime = 0;
+const REGISTRY_CACHE_TTL = 5 * 60 * 1000; // 5 minuti
+
+/**
+ * Legge il Registry da Google Sheets (con cache)
+ * @returns {Promise<Array>} Array di oggetti con le config dei ristoranti
+ */
+async function fetchRegistry() {
+  const now = Date.now();
+  
+  // Se la cache è valida, usala
+  if (registryCache && (now - registryCacheTime) < REGISTRY_CACHE_TTL) {
+    console.log("📋 Registry: uso cache");
+    return registryCache;
+  }
+  
+  try {
+    // Legge il foglio Registry via API pubblica di Google Sheets
+    const url = `https://docs.google.com/spreadsheets/d/${REGISTRY_SHEET_ID}/gviz/tq?tqx=out:json&sheet=${REGISTRY_SHEET_NAME}`;
+    console.log("🌐 Registry: fetch da Google Sheets...");
+    
+    const response = await fetch(url);
+    const text = await response.text();
+    
+    // Google restituisce JSONP, dobbiamo estrarre il JSON
+    const jsonMatch = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?$/);
+    if (!jsonMatch) {
+      console.error("❌ Registry: formato risposta non valido");
+      return registryCache || []; // fallback a cache vecchia se esiste
+    }
+    
+    const data = JSON.parse(jsonMatch[1]);
+    const rows = data.table.rows || [];
+    const cols = data.table.cols || [];
+    
+    // Estrai headers dalla prima riga (cols contiene i nomi)
+    const headers = cols.map(c => c.label || "");
+    
+    // Converti in array di oggetti
+    const registry = rows.map(row => {
+      const obj = {};
+      row.c.forEach((cell, idx) => {
+        const key = headers[idx];
+        if (key) {
+          obj[key] = cell ? (cell.v !== null ? cell.v : "") : "";
+        }
+      });
+      return obj;
+    });
+    
+    console.log(`✅ Registry: caricati ${registry.length} ristoranti`);
+    
+    // Aggiorna cache
+    registryCache = registry;
+    registryCacheTime = now;
+    
+    return registry;
+  } catch (err) {
+    console.error("❌ Registry: errore fetch:", err);
+    return registryCache || []; // fallback a cache vecchia
+  }
+}
+
+/**
+ * Trova la configurazione del ristorante dal numero Twilio chiamato
+ * @param {string} twilioNumber - Numero "To" dalla chiamata Twilio
+ * @returns {Promise<Object|null>} Config del ristorante o null
+ */
+async function getRestaurantByTwilioNumber(twilioNumber) {
+  if (!twilioNumber) {
+    console.warn("⚠️ Registry: nessun numero Twilio fornito");
+    return null;
+  }
+  
+  const registry = await fetchRegistry();
+  
+  // Normalizza il numero (rimuovi spazi, assicura formato)
+  const normalizedInput = twilioNumber.replace(/\s/g, "").trim();
+  
+  // Cerca nel registry
+  const match = registry.find(r => {
+    if (!r.twilio_number) return false;
+    const normalizedRegistry = String(r.twilio_number).replace(/\s/g, "").trim();
+    return normalizedRegistry === normalizedInput;
+  });
+  
+  if (match) {
+    console.log(`✅ Registry: trovato ristorante "${match.restaurant_name}" per numero ${twilioNumber}`);
+    return match;
+  }
+  
+  console.warn(`⚠️ Registry: nessun ristorante trovato per numero ${twilioNumber}`);
+  return null;
+}
+
+// Mappa CallSid -> config ristorante (per non ri-cercare ad ogni turno)
+const callRestaurantConfigs = new Map();
+
+/**
+ * Ottiene o carica la config del ristorante per una chiamata
+ * @param {string} callId - CallSid della chiamata
+ * @param {string} twilioNumber - Numero "To" (opzionale, usato solo al primo turno)
+ * @returns {Promise<Object|null>}
+ */
+async function getRestaurantConfigForCall(callId, twilioNumber = null) {
+  // Se già in cache per questa chiamata, usa quella
+  if (callRestaurantConfigs.has(callId)) {
+    return callRestaurantConfigs.get(callId);
+  }
+  
+  // Altrimenti cerca nel registry
+  if (twilioNumber) {
+    const config = await getRestaurantByTwilioNumber(twilioNumber);
+    if (config) {
+      callRestaurantConfigs.set(callId, config);
+      return config;
+    }
+  }
+  
+  return null;
+}
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 2: FUNZIONI PER STATO PERSISTENTE DELLA PRENOTAZIONE
 // ═══════════════════════════════════════════════════════════════════════════
