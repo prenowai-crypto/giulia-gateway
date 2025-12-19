@@ -508,7 +508,66 @@ function clearProtectedDate(callId) {
     protectedDates.delete(callId);
   }
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX 14: PROTEZIONE ORARIO ORIGINALE (anti-allucinazione time)
+// ═══════════════════════════════════════════════════════════════════════════
 
+const protectedTimes = new Map();
+
+function setProtectedTime(callId, time) {
+  if (callId && time && /^\d{2}:\d{2}:\d{2}$/.test(time)) {
+    console.log(`🛡️ FIX 14: Protezione orario attivata: ${time}`);
+    protectedTimes.set(callId, time);
+  }
+}
+
+function getProtectedTime(callId) {
+  return protectedTimes.get(callId) || null;
+}
+
+function clearProtectedTime(callId) {
+  if (callId) {
+    protectedTimes.delete(callId);
+  }
+}
+
+/**
+ * Rileva se l'utente sta esplicitamente menzionando un NUOVO orario
+ */
+function userMentionsNewTime(userText) {
+  if (!userText) return false;
+  
+  const t = userText.toLowerCase().trim();
+  
+  // Pattern espliciti di orario
+  const timePatterns = [
+    /(?:alle|ore)\s*\d{1,2}(?::\d{2})?/i,
+    /\b\d{1,2}:\d{2}\b/,
+    /(?:at|around)\s*\d{1,2}(?::\d{2})?\s*(?:pm|am)?/i,
+    /(?:verso le|intorno alle)\s*\d{1,2}/i,
+    /(?:per le|entro le)\s*\d{1,2}/i,
+    /\b(?:pranzo|cena|sera|mezzogiorno|mezzanotte)\b/i,
+    /\b(?:lunch|dinner|evening|noon|midnight)\b/i,
+  ];
+  
+  // Pattern di cambio orario esplicito
+  const changePatterns = [
+    /(?:cambia|sposta|modifica).*(?:ora|orario)/i,
+    /(?:change|move).*(?:time|hour)/i,
+    /(?:facciamo|meglio|preferisco).*(?:alle|ore)\s*\d/i,
+    /(?:anzi|invece).*(?:alle|ore)\s*\d/i,
+  ];
+  
+  for (const pattern of timePatterns) {
+    if (pattern.test(t)) return true;
+  }
+  
+  for (const pattern of changePatterns) {
+    if (pattern.test(t)) return true;
+  }
+  
+  return false;
+}
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 8d: FUNZIONE UNIFICATA ANTI-ALLUCINAZIONE
 // ═══════════════════════════════════════════════════════════════════════════
