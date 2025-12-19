@@ -2802,12 +2802,35 @@ app.post("/twilio", async (req, res) => {
   }
 
   // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto (default IT)
+  // Primo ingresso: nessun SpeechResult -> messaggio di benvenuto (default IT)
   if (!SpeechResult) {
     setCallLanguage(callId, "it-IT");
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MULTI-TENANT: Identifica il ristorante dal numero Twilio chiamato (To)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const twilioNumberCalled = req.body.To || null;
+    console.log(`📞 Numero Twilio chiamato (To): ${twilioNumberCalled}`);
+    
+    let restaurantConfig = null;
+    if (twilioNumberCalled) {
+      restaurantConfig = await getRestaurantConfigForCall(callId, twilioNumberCalled);
+      if (restaurantConfig) {
+        console.log(`✅ MULTI-TENANT: Ristorante identificato: ${restaurantConfig.restaurant_name}`);
+        console.log(`   - Apps Script URL: ${restaurantConfig.apps_script_url}`);
+        console.log(`   - Sheet ID: ${restaurantConfig.sheet_id}`);
+      } else {
+        console.warn(`⚠️ MULTI-TENANT: Nessun ristorante trovato per ${twilioNumberCalled}, uso default`);
+      }
+    }
+
     // Carico subito il contesto per avere il nome corretto del ristorante
+    // TODO: In futuro, passare restaurantConfig a ensureContextForCall per usare l'URL specifico
     const ctx = await ensureContextForCall(callId);
-    const restaurantName =
+    
+    // Usa il nome dal Registry se disponibile, altrimenti dal context
+    const restaurantName = 
+      (restaurantConfig && restaurantConfig.restaurant_name) ||
       (ctx && ctx.restaurant && ctx.restaurant.name) ||
       DEFAULT_RESTAURANT_NAME;
 
