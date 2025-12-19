@@ -53,8 +53,9 @@ const EVENT_THRESHOLD_DEFAULT = 45; // sopra → evento gigante, niente Calendar
 // (Apps Script + Foglio Config). Questi valori sono solo fallback.
 
 // invio mail al proprietario per gruppi enormi (evento) tramite Apps Script
-async function sendOwnerEmail({ name, people, date, time, phone, customerEmail }) {
+async function sendOwnerEmail({ name, people, date, time, phone, customerEmail, callId = null }) {
   try {
+    const appsScriptUrl = callId ? getAppsScriptUrlForCall(callId) : APPS_SCRIPT_URL;
     const payload = {
       action: "notify_big_event", // gestito in Apps Script
       nome: name,
@@ -65,9 +66,9 @@ async function sendOwnerEmail({ name, people, date, time, phone, customerEmail }
       email: customerEmail || "",
     };
 
-    console.log("📧 Invio richiesta evento grande a Apps Script:", payload);
+    console.log("📧 Invio richiesta evento grande a Apps Script:", payload, "URL:", appsScriptUrl);
 
-    const response = await fetch(APPS_SCRIPT_URL, {
+    const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1357,15 +1358,16 @@ async function checkClosure(dateStr, callId = null) {
 }
 
 // 🔥 PATCH CRITICA: Controllo preventivo disponibilità slot
-async function checkSlotAvailability(dateStr, timeStr, people) {
+async function checkSlotAvailability(dateStr, timeStr, people, callId = null) {
   if (!dateStr || !timeStr || !people) {
     return { available: true }; // se mancano dati, lascia proseguire
   }
 
   try {
-    console.log(`🔍 Check preventivo slot: ${dateStr} ${timeStr} per ${people} pax`);
+    const appsScriptUrl = callId ? getAppsScriptUrlForCall(callId) : APPS_SCRIPT_URL;
+    console.log(`🔍 Check preventivo slot: ${dateStr} ${timeStr} per ${people} pax (URL: ${appsScriptUrl})`);
     
-    const response = await fetch(APPS_SCRIPT_URL, {
+    const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1416,15 +1418,16 @@ async function checkSlotAvailability(dateStr, timeStr, people) {
  * @param {number} people - Numero persone
  * @returns {Object} { success, sameDay: [...], nextDays: [...] }
  */
-async function findAvailableSlots(dateStr, timeStr, people) {
+async function findAvailableSlots(dateStr, timeStr, people, callId = null) {
   if (!dateStr || !people) {
     return { success: false, sameDay: [], nextDays: [] };
   }
 
   try {
-    console.log(`🔍 Ricerca slot disponibili: ${dateStr} ${timeStr || ''} per ${people} pax`);
+    const appsScriptUrl = callId ? getAppsScriptUrlForCall(callId) : APPS_SCRIPT_URL;
+    console.log(`🔍 Ricerca slot disponibili: ${dateStr} ${timeStr || ''} per ${people} pax (URL: ${appsScriptUrl})`);
 
-    const response = await fetch(APPS_SCRIPT_URL, {
+    const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1542,9 +1545,10 @@ function buildClosedDayMessage(dateStr, reason, lang = "it-IT") {
 
 // ---------- CONTESTO RISTORANTE (get_context) ----------
 
-async function fetchRestaurantContext() {
+async function fetchRestaurantContext(callId = null) {
   try {
-    const url = `${APPS_SCRIPT_URL}?action=get_context`;
+    const appsScriptUrl = callId ? getAppsScriptUrlForCall(callId) : APPS_SCRIPT_URL;
+    const url = `${appsScriptUrl}?action=get_context`;
     console.log("🌐 Chiamata get_context:", url);
 
     const response = await fetch(url);
