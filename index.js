@@ -234,6 +234,18 @@ async function getRestaurantConfigForCall(callId, twilioNumber = null) {
   }
   
   return null;
+}/**
+ * Ottiene l'URL di Apps Script da usare per una chiamata
+ * Usa l'URL dal Registry se disponibile, altrimenti fallback al default
+ * @param {string} callId - CallSid della chiamata
+ * @returns {string} URL di Apps Script
+ */
+function getAppsScriptUrlForCall(callId) {
+  const config = callRestaurantConfigs.get(callId);
+  if (config && config.apps_script_url && config.apps_script_url.trim() !== "") {
+    return config.apps_script_url.trim();
+  }
+  return APPS_SCRIPT_URL; // fallback al default
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 2: FUNZIONI PER STATO PERSISTENTE DELLA PRENOTAZIONE
