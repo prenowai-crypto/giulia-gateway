@@ -167,6 +167,11 @@ async function fetchRegistry() {
     
     console.log(`✅ Registry: caricati ${registry.length} ristoranti`);
     
+    // DEBUG: mostra i numeri Twilio caricati
+    registry.forEach((r, i) => {
+      console.log(`   [${i}] twilio_number: "${r.twilio_number}" | restaurant: "${r.restaurant_name}"`);
+    });
+    
     // Aggiorna cache
     registryCache = registry;
     registryCacheTime = now;
