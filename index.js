@@ -3082,7 +3082,7 @@ await sendOwnerEmail({
       // Se non corretto da FIX 8 o FIX 9, verifica chiusura standard
       if (!antiHallResult.corrected && !fix9Result.corrected) {
         // Se non corretto da FIX 8, verifica chiusura standard
-        const closureCheck = await checkClosure(dateToCheck);
+        const closureCheck = await checkClosure(dateToCheck, callId);
         
         if (closureCheck.isClosed) {
           dayClosed = true;
@@ -3127,7 +3127,7 @@ await sendOwnerEmail({
         console.log(`🔍 FIX 6 - Check anticipato slot (action=${action}): ${r.date} ${r.time} per ${r.people} pax`);
         
         try {
-          const availCheck = await checkSlotAvailability(r.date, r.time, r.people);
+         const availCheck = await checkSlotAvailability(r.date, r.time, r.people, callId);
           
           // Gestione giorno chiuso
           if (!availCheck.available && availCheck.reason === "day_closed") {
@@ -3145,7 +3145,7 @@ await sendOwnerEmail({
             slotFull = true;
             console.log(`⛔ FIX 6 - SLOT PIENO rilevato ANTICIPATAMENTE (prima di chiedere nome/email)`);
 
-            const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people);
+           const alternativeSlots = await findAvailableSlots(r.date, r.time, r.people, callId);
             
             if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
               replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
@@ -3229,14 +3229,15 @@ await sendOwnerEmail({
         );
 
         // Invio email al proprietario tramite Apps Script
-        await sendOwnerEmail({
-          name,
-          people: numericPeople,
-          date,
-          time,
-          phone: From,
-          customerEmail,
-        });
+      await sendOwnerEmail({
+  name,
+  people: numericPeople,
+  date,
+  time,
+  phone: From,
+  customerEmail,
+  callId,
+});
 
         const restaurantEmailForCall = getRestaurantEmailForCall(callId);
         const spelledOwnerEmail = spellEmailForTTS(
@@ -3278,13 +3279,13 @@ await sendOwnerEmail({
       } else {
         try {
           const calendarRes = await sendToCalendar({
-            action: "cancel_reservation",
-            source: "twilio",
-            nome: name || "",
-            data: date,
-            ora: time || null,
-            telefono: From,
-          });
+  action: "cancel_reservation",
+  source: "twilio",
+  nome: name || "",
+  data: date,
+  ora: time || null,
+  telefono: From,
+}, callId);
 
           if (calendarRes && calendarRes.success) {
             if (currentLang === "en-US") {
@@ -3356,13 +3357,14 @@ await sendOwnerEmail({
           isHugeEventReservation = true;
 
           await sendOwnerEmail({
-            name,
-            people: numericPeople,
-            date,
-            time,
-            phone: From,
-            customerEmail,
-          });
+  name,
+  people: numericPeople,
+  date,
+  time,
+  phone: From,
+  customerEmail,
+  callId,
+});
 
           const restaurantEmailForCall = getRestaurantEmailForCall(callId);
           const spelledOwnerEmail = spellEmailForTTS(
@@ -3384,10 +3386,11 @@ await sendOwnerEmail({
         } else {
           // 🔥 CONTROLLO PREVENTIVO DISPONIBILITÀ SLOT
           const availCheck = await checkSlotAvailability(
-            date,
-            time,
-            numericPeople || 2
-          );
+  date,
+  time,
+  numericPeople || 2,
+  callId
+);
 
           // 🔥 NUOVO: gestione giorno chiuso da check_availability
           if (!availCheck.available && availCheck.reason === "day_closed") {
@@ -3402,7 +3405,7 @@ await sendOwnerEmail({
             console.log("⛔ Slot pieno rilevato PRIMA della creazione prenotazione");
 
             // 🔥 NUOVA LOGICA: cerca slot disponibili
-            const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
+            const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2, callId);
             
             if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
               replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
@@ -3420,15 +3423,15 @@ await sendOwnerEmail({
           } else {
             // ✅ SLOT DISPONIBILE: procedi con la prenotazione normale
             try {
-              const calendarRes = await sendToCalendar({
-                source: "twilio",
-                nome: name,
-                persone: numericPeople,
-                data: date,
-                ora: time,
-                telefono: From,
-                email: customerEmail || "",
-              });
+             const calendarRes = await sendToCalendar({
+  source: "twilio",
+  nome: name,
+  persone: numericPeople,
+  data: date,
+  ora: time,
+  telefono: From,
+  email: customerEmail || "",
+}, callId);
 
               // Doppio controllo: anche Apps Script potrebbe rifiutare
               if (!calendarRes.success && calendarRes.reason === "day_closed") {
@@ -3442,7 +3445,7 @@ await sendOwnerEmail({
                 console.log("⛔ Prenotazione rifiutata per capienza (conferma Apps Script):", calendarRes);
 
                 // 🔥 NUOVA LOGICA: cerca slot disponibili
-                const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2);
+                const alternativeSlots = await findAvailableSlots(date, time, numericPeople || 2, callId);
                 
                 if (alternativeSlots.success && (alternativeSlots.sameDay.length > 0 || alternativeSlots.nextDays.length > 0)) {
                   replyText = buildAlternativeSlotsMessage(alternativeSlots, currentLang);
