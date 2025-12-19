@@ -2649,6 +2649,21 @@ app.post("/twilio", async (req, res) => {
   // ═══════════════════════════════════════════════════════════════════════════
   if (isDebug) {
     try {
+      // ═══════════════════════════════════════════════════════════════════════════
+      // MULTI-TENANT: Identifica il ristorante dal numero Twilio anche in DEBUG
+      // ═══════════════════════════════════════════════════════════════════════════
+      const twilioNumberCalledDebug = req.body.To || null;
+      if (twilioNumberCalledDebug) {
+        console.log(`📞 DEBUG: Numero Twilio chiamato (To): ${twilioNumberCalledDebug}`);
+        const restaurantConfigDebug = await getRestaurantConfigForCall(callId, twilioNumberCalledDebug);
+        if (restaurantConfigDebug) {
+          console.log(`✅ DEBUG MULTI-TENANT: Ristorante identificato: ${restaurantConfigDebug.restaurant_name}`);
+          console.log(`   - Apps Script URL: ${restaurantConfigDebug.apps_script_url}`);
+        } else {
+          console.warn(`⚠️ DEBUG MULTI-TENANT: Nessun ristorante trovato per ${twilioNumberCalledDebug}, uso default`);
+        }
+      }
+      
       // Assicura contesto caricato (necessario per le soglie)
       await ensureContextForCall(callId);
       
