@@ -150,8 +150,24 @@ async function fetchRegistry() {
     const rows = data.table.rows || [];
     const cols = data.table.cols || [];
     
+    // DEBUG: mostra la struttura delle colonne
+    console.log("📋 Registry cols:", JSON.stringify(cols));
+    console.log("📋 Registry prima riga:", JSON.stringify(rows[0]));
+    
     // Estrai headers dalla prima riga (cols contiene i nomi)
-    const headers = cols.map(c => c.label || "");
+    // Se cols.label è vuoto, la prima riga potrebbe contenere gli headers
+    let headers = cols.map(c => c.label || "");
+    
+    // Se tutti gli headers sono vuoti, usa la prima riga come headers
+    if (headers.every(h => h === "")) {
+      console.log("⚠️ Registry: headers vuoti in cols, uso prima riga");
+      if (rows.length > 0 && rows[0].c) {
+        headers = rows[0].c.map(cell => cell ? (cell.v !== null ? String(cell.v) : "") : "");
+        rows.shift(); // rimuovi la prima riga (era l'header)
+      }
+    }
+    
+    console.log("📋 Registry headers finali:", headers);
     
     // Converti in array di oggetti
     const registry = rows.map(row => {
