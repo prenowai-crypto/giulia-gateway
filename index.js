@@ -2529,6 +2529,11 @@ async function askGiulia(callId, userText) {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SALVA STATO PRE-MERGE PER FIX 15b (prima che il merge aggiunga dati)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const stateBeforeMerge = { ...getReservationState(callId) };
+
   // 2) Unisci la reservation attuale con quella già salvata per questa chiamata
   parsed.reservation = mergeReservationForCall(
     callId,
@@ -2650,8 +2655,9 @@ async function askGiulia(callId, userText) {
   // ═══════════════════════════════════════════════════════════════════════════
   // FIX 15b: PROTEZIONE NOME CONTESTUALE
   // Se l'utente dice solo "Paolo Disdetta" (senza "mi chiamo") e GPT confonde
+  // IMPORTANTE: Usa stateBeforeMerge per verificare se mancava il nome PRIMA del merge
   // ═══════════════════════════════════════════════════════════════════════════
-  const currentStateFor15b = getReservationState(callId);
+  const currentStateFor15b = stateBeforeMerge;
   
   if (isGptConfusingNameWithCancel(parsed, parsed.reply_text, currentStateFor15b)) {
     // L'utente probabilmente stava dando il nome, non chiedendo una cancellazione
