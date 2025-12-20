@@ -641,6 +641,77 @@ function containsCommandWords(text) {
   
   return false;
 }
+/**
+ * FIX 15b: Rileva se GPT sta confondendo un nome con un comando di cancellazione
+ * basandosi sul CONTESTO della conversazione
+ */
+function isGptConfusingNameWithCancel(parsed, replyText, currentState) {
+  if (!replyText) return false;
+  
+  const reply = replyText.toLowerCase();
+  
+  // Se la risposta di GPT parla di cancellare/disdire
+  const mentionsCancellation = (
+    reply.includes("cancell") ||
+    reply.includes("disdett") ||
+    reply.includes("disdire") ||
+    reply.includes("annull") ||
+    reply.includes("cancel") ||
+    reply.includes("quale giorno vuoi cancellare") ||
+    reply.includes("which day") && reply.includes("cancel")
+  );
+  
+  if (!mentionsCancellation) return false;
+  
+  // Verifica contesto: stavamo raccogliendo dati per una prenotazione?
+  const hasDate = currentState.date && String(currentState.date).trim() !== "";
+  const hasTime = currentState.time && String(currentState.time).trim() !== "";
+  const hasPeople = currentState.people && currentState.people > 0;
+  const hasName = currentState.name && String(currentState.name).trim() !== "";
+  
+  // Se abbiamo già date/time/people ma NON il nome → probabilmente stavamo chiedendo il nome
+  if (hasDate && hasTime && hasPeople && !hasName) {
+    return true;
+  }
+  
+  // Se abbiamo almeno 2 dati su 3 (date/time/people) → probabilmente nel flusso prenotazione
+  const dataCount = [hasDate, hasTime, hasPeople].filter(Boolean).length;
+  if (dataCount >= 2 && !hasName) {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * FIX 15b: Estrae un possibile nome dal testo quando non ci sono pattern espliciti
+ * Assume che tutto il testo sia un nome (dopo aver rimosso parole comuni)
+ */
+function extractNameFromBareText(userText) {
+  if (!userText) return null;
+  
+  let text = userText.trim();
+  
+  // Rimuovi punteggiatura finale
+  text = text.replace(/[.,!?]+$/, '').trim();
+  
+  // Se è troppo lungo (più di 5 parole), probabilmente non è un nome
+  const words = text.split(/\s+/);
+  if (words.length > 5) return null;
+  
+  // Se contiene numeri o caratteri speciali, non è un nome
+  if (/\d|@|#|\$|%/.test(text)) return null;
+  
+  // Se è troppo corto (meno di 2 caratteri), non è un nome
+  if (text.length < 2) return null;
+  
+  // Capitalizza correttamente ogni parola
+  const capitalized = words.map(w => 
+    w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+  ).join(' ');
+  
+  return capitalized;
+}
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 8d: FUNZIONE UNIFICATA ANTI-ALLUCINAZIONE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2574,6 +2645,41 @@ async function askGiulia(callId, userText) {
       }
       
       console.log(`✅ FIX 15: Risposta corretta: "${parsed.reply_text}" (action=${parsed.action})`);
+    }
+  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 15b: PROTEZIONE NOME CONTESTUALE
+  // Se l'utente dice solo "Paolo Disdetta" (senza "mi chiamo") e GPT confonde
+  // ═══════════════════════════════════════════════════════════════════════════
+  const currentStateFor15b = getReservationState(callId);
+  
+  if (isGptConfusingNameWithCancel(parsed, parsed.reply_text, currentStateFor15b)) {
+    // L'utente probabilmente stava dando il nome, non chiedendo una cancellazione
+    const extractedName = extractNameFromBareText(userText);
+    
+    if (extractedName) {
+      console.log(`⚠️ FIX 15b: GPT ha confuso nome "${extractedName}" con comando (contesto: stavamo chiedendo nome)`);
+      console.log(`🛡️ FIX 15b: Correggo e salvo il nome`);
+      
+      // Salva il nome
+      parsed.reservation = parsed.reservation || {};
+      parsed.reservation.name = extractedName;
+      mergeReservationForCall(callId, { name: extractedName });
+      
+      // Ripristina i dati che avevamo
+      parsed.reservation.date = currentStateFor15b.date;
+      parsed.reservation.time = currentStateFor15b.time;
+      parsed.reservation.people = currentStateFor15b.people;
+      
+      const currentLang = getCallLanguage(callId);
+      
+      // Costruisci risposta appropriata
+      parsed.reply_text = currentLang === "en-US"
+        ? `Perfect, ${extractedName}. Would you like to leave an email for confirmation?`
+        : `Perfetto, ${extractedName}. Vuoi lasciarmi un'email per la conferma?`;
+      parsed.action = "ask_email";
+      
+      console.log(`✅ FIX 15b: Risposta corretta: "${parsed.reply_text}" (action=${parsed.action})`);
     }
   }
   // ═══════════════════════════════════════════════════════════════════════════
