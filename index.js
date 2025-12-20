@@ -567,6 +567,79 @@ function userMentionsNewTime(userText) {
   }
   
   return false;
+}// ═══════════════════════════════════════════════════════════════════════════
+// FIX 15: PROTEZIONE NOME DA COMANDI (anti-confusione nome-comando)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Rileva se l'utente sta dicendo il proprio nome
+ */
+function userIsProvidingName(userText) {
+  if (!userText) return false;
+  
+  const t = userText.toLowerCase().trim();
+  
+  const namePatterns = [
+    /\b(?:mi chiamo|sono|a nome|nome è)\b/i,
+    /\b(?:my name is|i'm|i am|the name is|under|under the name|call me)\b/i,
+  ];
+  
+  for (const pattern of namePatterns) {
+    if (pattern.test(t)) return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Estrae il nome completo dal testo
+ */
+function extractFullNameFromText(userText) {
+  if (!userText) return null;
+  
+  const t = userText.trim();
+  
+  const patterns = [
+    /(?:mi chiamo|sono|a nome|nome è)\s+(.+?)(?:\.|,|!|\?|$)/i,
+    /(?:my name is|i'm|i am|the name is)\s+(.+?)(?:\.|,|!|\?|$)/i,
+    /(?:under|under the name|call me)\s+(.+?)(?:\.|,|!|\?|$)/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = t.match(pattern);
+    if (match && match[1]) {
+      let name = match[1].trim().replace(/[.,!?]+$/, '').trim();
+      if (name.length > 1) return name;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Verifica se il testo contiene parole che sembrano comandi
+ */
+function containsCommandWords(text) {
+  if (!text) return false;
+  
+  const t = text.toLowerCase();
+  
+  const commandWords = [
+    'cancella', 'cancello', 'cancellare', 'cancellazione',
+    'disdetta', 'disdire', 'disdico',
+    'annulla', 'annullare', 'annullo', 'annullamento',
+    'elimina', 'eliminare',
+    'cancel', 'cancelled', 'cancellation',
+    'delete', 'remove'
+  ];
+  
+  for (const word of commandWords) {
+    // Verifica che sia una parola intera o parte del nome
+    const regex = new RegExp(`\\b${word}\\b|${word}`, 'i');
+    if (regex.test(t)) return true;
+  }
+  
+  return false;
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // FIX 8d: FUNZIONE UNIFICATA ANTI-ALLUCINAZIONE
@@ -2453,6 +2526,54 @@ async function askGiulia(callId, userText) {
           console.log(`🔧 FIX 14: Corretto orario nella reply_text: ${wrongTimeDisplay} → ${correctTimeDisplay}`);
         }
       }
+    }
+  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX 15: PROTEZIONE NOME DA COMANDI
+  // Se l'utente dice "mi chiamo Marco Cancella" ma GPT interpreta come cancellazione
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (parsed.action === "cancel_reservation" && userIsProvidingName(userText)) {
+    const extractedName = extractFullNameFromText(userText);
+    
+    if (extractedName) {
+      console.log(`⚠️ FIX 15: GPT ha confuso nome "${extractedName}" con comando cancellazione!`);
+      console.log(`🛡️ FIX 15: Correggo action e salvo il nome`);
+      
+      // Salva il nome
+      parsed.reservation = parsed.reservation || {};
+      parsed.reservation.name = extractedName;
+      mergeReservationForCall(callId, { name: extractedName });
+      
+      // Determina la prossima action appropriata
+      const currentState = getReservationState(callId);
+      const hasDate = currentState.date && String(currentState.date).trim() !== "";
+      const hasTime = currentState.time && String(currentState.time).trim() !== "";
+      const hasPeople = currentState.people && currentState.people > 0;
+      const currentLang = getCallLanguage(callId);
+      
+      if (hasDate && hasTime && hasPeople) {
+        parsed.reply_text = currentLang === "en-US"
+          ? `Perfect, ${extractedName}. Would you like to leave an email for confirmation?`
+          : `Perfetto, ${extractedName}. Vuoi lasciarmi un'email per la conferma?`;
+        parsed.action = "ask_email";
+      } else if (!hasPeople) {
+        parsed.reply_text = currentLang === "en-US"
+          ? `Thanks ${extractedName}. How many people will you be?`
+          : `Grazie ${extractedName}. Quante persone sarete?`;
+        parsed.action = "ask_people";
+      } else if (!hasTime) {
+        parsed.reply_text = currentLang === "en-US"
+          ? `Thanks ${extractedName}. What time would you prefer?`
+          : `Grazie ${extractedName}. A che ora preferisci?`;
+        parsed.action = "ask_time";
+      } else {
+        parsed.reply_text = currentLang === "en-US"
+          ? `Thanks ${extractedName}. What day would you like to book?`
+          : `Grazie ${extractedName}. Per quale giorno vorresti prenotare?`;
+        parsed.action = "ask_date";
+      }
+      
+      console.log(`✅ FIX 15: Risposta corretta: "${parsed.reply_text}" (action=${parsed.action})`);
     }
   }
   // ═══════════════════════════════════════════════════════════════════════════
