@@ -2237,7 +2237,8 @@ app.post("/twilio", async (req, res) => {
               console.error("❌ Calendar error:", calResult);
               
               // Controlla se è errore email
-              if (calResult?.error?.includes('Invalid email') || calResult?.error?.includes('email')) {
+              // FIX19b: Check SOLO per "Invalid email", NON per "email" generico (quota errors contengono "email")
+              if (calResult?.error?.includes('Invalid email')) {
                 replyText = lang === "en-US"
                   ? "The email seems invalid. Could you repeat it or skip it?"
                   : "L'email non sembra valida. Puoi ripeterla o saltare questo passaggio?";
