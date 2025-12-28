@@ -1279,12 +1279,33 @@ const ValidationPipeline = {
     // ═══════════════════════════════════════════════════════════════════════
     // STEP 1: Estrai/completa data dal testo utente - PRIORITÀ INPUT UTENTE
     // ═══════════════════════════════════════════════════════════════════════
+    let gptOriginalDate = reservation.date; // Salva data originale GPT per correzione testo
     const parsedDate = DateManager.parseFromText(userText, callId);
     if (parsedDate) {
       // Se l'utente ha menzionato una data/giorno, quella ha SEMPRE priorità
       if (reservation.date && reservation.date !== parsedDate) {
         console.log(`📆 Data relativa estratta: "${userText}" → ${parsedDate}`);
         console.log(`⚠️ STEP 1: GPT aveva ${reservation.date}, utente ha detto ${parsedDate}. Correggo!`);
+        
+        // Correggi anche la data numerica nel reply_text (es. "30 dicembre" → "31 dicembre")
+        if (response.reply_text) {
+          const oldDate = new Date(reservation.date + 'T12:00:00');
+          const newDate = new Date(parsedDate + 'T12:00:00');
+          const oldDay = oldDate.getDate();
+          const newDay = newDate.getDate();
+          
+          if (oldDay !== newDay) {
+            // Sostituisci il numero del giorno nel testo
+            // Pattern: "30 dicembre", "30 gennaio", etc.
+            const months = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
+                           'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+            for (const month of months) {
+              const pattern = new RegExp(`\\b${oldDay}\\s+${month}\\b`, 'gi');
+              response.reply_text = response.reply_text.replace(pattern, `${newDay} ${month}`);
+            }
+            console.log(`✅ STEP 1: Corretto testo "${oldDay}" → "${newDay}" nel reply`);
+          }
+        }
       }
       reservation.date = parsedDate;
       console.log(`✅ STEP 1: Data estratta: ${parsedDate}`);
