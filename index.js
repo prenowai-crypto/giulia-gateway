@@ -1287,7 +1287,7 @@ const ValidationPipeline = {
         console.log(`📆 Data relativa estratta: "${userText}" → ${parsedDate}`);
         console.log(`⚠️ STEP 1: GPT aveva ${reservation.date}, utente ha detto ${parsedDate}. Correggo!`);
         
-        // FIX18: Correggi data numerica nel reply_text (es. "30 dicembre" → "1 gennaio")
+        // FIX18/FIX19: Correggi data numerica nel reply_text (es. "30 dicembre 2025" → "1 gennaio 2026")
         if (response.reply_text) {
           const oldDate = new Date(reservation.date + 'T12:00:00');
           const newDate = new Date(parsedDate + 'T12:00:00');
@@ -1295,25 +1295,34 @@ const ValidationPipeline = {
           const newDay = newDate.getDate();
           const oldMonth = oldDate.getMonth();
           const newMonth = newDate.getMonth();
+          const oldYear = oldDate.getFullYear();
+          const newYear = newDate.getFullYear();
           
           const months = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
                          'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
           
+          const oldMonthName = months[oldMonth];
+          const newMonthName = months[newMonth];
+          
+          // Caso 1: Correggi formato completo con anno (es. "30 dicembre 2025" → "1 gennaio 2026")
+          const patternWithYear = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\s+\\d{4}\\b`, 'gi');
+          response.reply_text = response.reply_text.replace(patternWithYear, `${newDay} ${newMonthName} ${newYear}`);
+          
+          // Caso 2: Correggi formato senza anno (es. "30 dicembre" → "1 gennaio")
           if (oldDay !== newDay || oldMonth !== newMonth) {
-            // Sostituisci "X mese_vecchio" con "Y mese_nuovo"
-            const oldMonthName = months[oldMonth];
-            const newMonthName = months[newMonth];
-            
-            // Pattern per trovare la data vecchia nel testo
             const pattern = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\b`, 'gi');
             response.reply_text = response.reply_text.replace(pattern, `${newDay} ${newMonthName}`);
-            
-            // Gestisci anche formato con anno (es. "30 dicembre 2025")
-            const patternWithYear = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\s+\\d{4}\\b`, 'gi');
-            const newYear = newDate.getFullYear();
-            response.reply_text = response.reply_text.replace(patternWithYear, `${newDay} ${newMonthName} ${newYear}`);
-            
-            console.log(`✅ STEP 1: Corretto testo "${oldDay} ${oldMonthName}" → "${newDay} ${newMonthName}" nel reply`);
+          }
+          
+          // FIX19: Caso 3 - Anno sbagliato isolato (es. "2025" dovrebbe essere "2026")
+          if (oldYear !== newYear) {
+            // Sostituisci l'anno SOLO se preceduto da mese o giorno (evita falsi positivi)
+            const yearPattern = new RegExp(`(${newMonthName}|${newDay})\\s+${oldYear}\\b`, 'gi');
+            response.reply_text = response.reply_text.replace(yearPattern, `$1 ${newYear}`);
+          }
+          
+          if (oldDay !== newDay || oldMonth !== newMonth || oldYear !== newYear) {
+            console.log(`✅ STEP 1: Corretto testo "${oldDay} ${oldMonthName} ${oldYear}" → "${newDay} ${newMonthName} ${newYear}" nel reply`);
           }
         }
       }
@@ -1342,21 +1351,42 @@ const ValidationPipeline = {
       }
       
       // ═══════════════════════════════════════════════════════════════════════
-      // STEP 2b: FIX18 - Correggi hallucination chiusure festive
+      // STEP 2b: FIX18/FIX19 - Correggi hallucination chiusure festive
       // Se GPT dice "chiuso" ma il giorno è effettivamente APERTO → correggi!
       // ═══════════════════════════════════════════════════════════════════════
       if (closureCheck.open && response.reply_text && /chius|closed/i.test(response.reply_text)) {
         console.log(`⚠️ STEP 2b: GPT ha detto "chiuso" ma ${reservation.date} è APERTO! Correggo hallucination.`);
         
+        // FIX19: Prima estrai persone dal testo utente o dalla cronologia se non presenti
+        let peopleCount = reservation.people;
+        if (!peopleCount || peopleCount <= 0) {
+          // Prova a estrarre dal testo corrente
+          const allText = StateManager.getAllUserText(callId) + " " + userText;
+          const peopleMatch = allText.match(/(\d+)\s*person[ae]|per\s*(\d+)|in\s*(\d+)|siamo\s*(?:in\s*)?(\d+)|gruppo\s*(?:di\s*)?(\d+)|(\d+)\s*(?:di noi|ospiti|invitati)/i);
+          if (peopleMatch) {
+            peopleCount = parseInt(peopleMatch[1] || peopleMatch[2] || peopleMatch[3] || peopleMatch[4] || peopleMatch[5] || peopleMatch[6]);
+            if (peopleCount > 0) {
+              reservation.people = peopleCount;
+              console.log(`✅ STEP 2b: Persone estratte dalla cronologia: ${peopleCount}`);
+            }
+          }
+        }
+        
         // Costruisci messaggio corretto
-        const dayName = DateManager.getDayName(reservation.date, lang);
         const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
         
-        // Se abbiamo già persone, chiedi orario
-        if (reservation.people && reservation.people > 0) {
+        // Se abbiamo già persone E orario, chiedi nome
+        if (peopleCount && peopleCount > 0 && reservation.time) {
           response.reply_text = lang === "en-US"
-            ? `Perfect, for ${reservation.people} people on ${dateDisplay}. What time would you like?`
-            : `Perfetto, per ${reservation.people} persone ${dateDisplay}. A che ora vorresti prenotare?`;
+            ? `Perfect, for ${peopleCount} people on ${dateDisplay} at ${reservation.time.substring(0,5)}. What's your name?`
+            : `Perfetto, per ${peopleCount} persone ${dateDisplay} alle ${reservation.time.substring(0,5)}. Qual è il tuo nome?`;
+          response.action = "ask_name";
+        }
+        // Se abbiamo persone ma non orario, chiedi orario
+        else if (peopleCount && peopleCount > 0) {
+          response.reply_text = lang === "en-US"
+            ? `Perfect, for ${peopleCount} people on ${dateDisplay}. What time would you like?`
+            : `Perfetto, per ${peopleCount} persone ${dateDisplay}. A che ora vorresti prenotare?`;
           response.action = "ask_time";
         } else {
           // Altrimenti chiedi persone
@@ -1500,10 +1530,25 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 7: Estrai email se presente
+    // STEP 7: Estrai email se presente - FIX19: Proteggi da corruzione GPT
     // ═══════════════════════════════════════════════════════════════════════
+    
+    // FIX19: Se GPT ha restituito un'email senza @, è corrotta - ignorala
+    if (reservation.customerEmail && !reservation.customerEmail.includes('@')) {
+      console.log(`⚠️ STEP 7: Email GPT corrotta (manca @): "${reservation.customerEmail}" - la ignoro`);
+      reservation.customerEmail = null;
+    }
+    
+    // Estrai email dal testo utente se non presente o corrotta
     if (!reservation.customerEmail) {
-      const email = extractEmailFromText(userText);
+      // Prima prova dal testo corrente
+      let email = extractEmailFromText(userText);
+      
+      // Se non trovata, prova dal reply_text di GPT (potrebbe essere lì corretta)
+      if (!email && response.reply_text) {
+        email = extractEmailFromText(response.reply_text);
+      }
+      
       if (email) {
         reservation.customerEmail = sanitizeEmail(email);
         console.log(`✅ STEP 7: Email estratta: ${reservation.customerEmail}`);
@@ -1554,6 +1599,7 @@ const ValidationPipeline = {
     }
     
     // SAFETY NET 3: Utente conferma + tutti i dati → forza create_reservation
+    // FIX19: NON generare messaggi di conferma qui - sarà la route a farlo dopo verificare Calendar
     if (this.isUserConfirming(userText) && hasDate && hasTime && hasPeople && hasName) {
       if (response.action !== "create_reservation" && 
           response.action !== "cancel_reservation" &&
@@ -1563,13 +1609,9 @@ const ValidationPipeline = {
         console.log("🔧 SAFETY NET 3: Tutti i dati + conferma → create_reservation");
         response.action = "create_reservation";
         
-        // Se la risposta non è già una conferma, generala
-        if (!response.reply_text.toLowerCase().includes("prenotazione") &&
-            !response.reply_text.toLowerCase().includes("ti aspettiamo")) {
-          
-          const firstName = hasName ? reservation.name.split(' ')[0] : "";
-          response.reply_text = `Perfetto${firstName ? ' ' + firstName : ''}! Ho registrato la tua prenotazione. Ti aspettiamo, buona serata!`;
-        }
+        // FIX19: Messaggio neutro che verrà sovrascritto dalla route dopo verifica Calendar
+        const firstName = hasName ? reservation.name.split(' ')[0] : "";
+        response.reply_text = `Perfetto${firstName ? ' ' + firstName : ''}! Sto verificando la disponibilità...`;
       }
     }
     
@@ -2092,14 +2134,15 @@ app.post("/twilio", async (req, res) => {
     console.log(`📤 Response: action=${action}, reply="${replyText.substring(0, 80)}..."`);
     
     // ═══════════════════════════════════════════════════════════════════════
-    // GESTIONE CREATE_RESERVATION
+    // GESTIONE CREATE_RESERVATION - FIX19: MAI dire "confermata" prima di verificare!
     // ═══════════════════════════════════════════════════════════════════════
     if (action === "create_reservation" && reservation?.date && reservation?.time && reservation?.name) {
       
       const thresholds = ContextService.getThresholds(callId);
       const people = reservation.people || 2;
+      const isLargeGroup = people > thresholds.largeGroup; // >10 persone
       
-      // EVENTO GIGANTE
+      // EVENTO GIGANTE (>45)
       if (people >= thresholds.event) {
         console.log("🎪 Evento gigante, invio notifica");
         await CalendarService.notifyLargeEvent({
@@ -2158,13 +2201,21 @@ app.post("/twilio", async (req, res) => {
             if (calResult?.success) {
               console.log("✅ Prenotazione creata!");
               
-              // Grande gruppo → messaggio soggetto a conferma
-              if (people > thresholds.largeGroup) {
+              // FIX19: SEMPRE generare il messaggio corretto, MAI usare quello di GPT
+              const firstName = reservation.name.split(' ')[0];
+              const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+              const timeDisplay = reservation.time.substring(0, 5);
+              
+              if (isLargeGroup) {
+                // Grande gruppo → soggetto a conferma
                 replyText = lang === "en-US"
-                  ? `I've registered your request for ${people} people. For large groups, booking is subject to confirmation. You'll receive an update soon. Thank you!`
-                  : `Ho registrato la richiesta per ${people} persone. Per gruppi numerosi la prenotazione è soggetta a conferma. Riceverai un aggiornamento. Grazie!`;
+                  ? `I've registered your request for ${people} people on ${dateDisplay} at ${timeDisplay}. For large groups, booking is subject to confirmation. You'll receive an update soon. Thank you!`
+                  : `Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. Per gruppi numerosi la prenotazione è soggetta a conferma. Riceverai un aggiornamento a breve. Grazie!`;
               } else {
-                replyText = TwilioHelpers.addClosingSalute(replyText, lang);
+                // Prenotazione normale → confermata
+                replyText = lang === "en-US"
+                  ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. We look forward to seeing you, have a nice evening!`
+                  : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo, buona serata!`;
               }
               
               // Aggiungi risultato calendar alla risposta debug
@@ -2174,6 +2225,7 @@ app.post("/twilio", async (req, res) => {
               
             } else if (calResult?.reason === "slot_full") {
               // Double-check slot pieno
+              console.log("⚠️ Calendar: slot_full dopo check disponibilità");
               const alternatives = await CalendarService.findAlternatives(
                 reservation.date, reservation.time, people, callId
               );
@@ -2181,11 +2233,21 @@ app.post("/twilio", async (req, res) => {
               action = "ask_time";
               
             } else {
+              // FIX19: Errore generico - MAI dire "confermata"!
               console.error("❌ Calendar error:", calResult);
-              replyText = lang === "en-US"
-                ? "I'm sorry, there was a problem. Could you try a different time?"
-                : "Mi dispiace, c'è stato un problema. Puoi provare con un altro orario?";
-              action = "ask_time";
+              
+              // Controlla se è errore email
+              if (calResult?.error?.includes('Invalid email') || calResult?.error?.includes('email')) {
+                replyText = lang === "en-US"
+                  ? "The email seems invalid. Could you repeat it or skip it?"
+                  : "L'email non sembra valida. Puoi ripeterla o saltare questo passaggio?";
+                action = "ask_email";
+              } else {
+                replyText = lang === "en-US"
+                  ? "I'm sorry, there was a problem. Could you try a different time?"
+                  : "Mi dispiace, c'è stato un problema. Puoi provare con un altro orario?";
+                action = "ask_time";
+              }
             }
             
           } catch (err) {
