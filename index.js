@@ -1277,14 +1277,17 @@ const ValidationPipeline = {
     let reservation = response.reservation || {};
     
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 1: Estrai/completa data dal testo utente
+    // STEP 1: Estrai/completa data dal testo utente - PRIORITÀ INPUT UTENTE
     // ═══════════════════════════════════════════════════════════════════════
-    if (!reservation.date || reservation.date === "null") {
-      const parsedDate = DateManager.parseFromText(userText, callId);
-      if (parsedDate) {
-        reservation.date = parsedDate;
-        console.log(`✅ STEP 1: Data estratta: ${parsedDate}`);
+    const parsedDate = DateManager.parseFromText(userText, callId);
+    if (parsedDate) {
+      // Se l'utente ha menzionato una data/giorno, quella ha SEMPRE priorità
+      if (reservation.date && reservation.date !== parsedDate) {
+        console.log(`📆 Data relativa estratta: "${userText}" → ${parsedDate}`);
+        console.log(`⚠️ STEP 1: GPT aveva ${reservation.date}, utente ha detto ${parsedDate}. Correggo!`);
       }
+      reservation.date = parsedDate;
+      console.log(`✅ STEP 1: Data estratta: ${parsedDate}`);
     }
     
     // ═══════════════════════════════════════════════════════════════════════
