@@ -1287,23 +1287,33 @@ const ValidationPipeline = {
         console.log(`📆 Data relativa estratta: "${userText}" → ${parsedDate}`);
         console.log(`⚠️ STEP 1: GPT aveva ${reservation.date}, utente ha detto ${parsedDate}. Correggo!`);
         
-        // Correggi anche la data numerica nel reply_text (es. "30 dicembre" → "31 dicembre")
+        // FIX18: Correggi data numerica nel reply_text (es. "30 dicembre" → "1 gennaio")
         if (response.reply_text) {
           const oldDate = new Date(reservation.date + 'T12:00:00');
           const newDate = new Date(parsedDate + 'T12:00:00');
           const oldDay = oldDate.getDate();
           const newDay = newDate.getDate();
+          const oldMonth = oldDate.getMonth();
+          const newMonth = newDate.getMonth();
           
-          if (oldDay !== newDay) {
-            // Sostituisci il numero del giorno nel testo
-            // Pattern: "30 dicembre", "30 gennaio", etc.
-            const months = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
-                           'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
-            for (const month of months) {
-              const pattern = new RegExp(`\\b${oldDay}\\s+${month}\\b`, 'gi');
-              response.reply_text = response.reply_text.replace(pattern, `${newDay} ${month}`);
-            }
-            console.log(`✅ STEP 1: Corretto testo "${oldDay}" → "${newDay}" nel reply`);
+          const months = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
+                         'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+          
+          if (oldDay !== newDay || oldMonth !== newMonth) {
+            // Sostituisci "X mese_vecchio" con "Y mese_nuovo"
+            const oldMonthName = months[oldMonth];
+            const newMonthName = months[newMonth];
+            
+            // Pattern per trovare la data vecchia nel testo
+            const pattern = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\b`, 'gi');
+            response.reply_text = response.reply_text.replace(pattern, `${newDay} ${newMonthName}`);
+            
+            // Gestisci anche formato con anno (es. "30 dicembre 2025")
+            const patternWithYear = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\s+\\d{4}\\b`, 'gi');
+            const newYear = newDate.getFullYear();
+            response.reply_text = response.reply_text.replace(patternWithYear, `${newDay} ${newMonthName} ${newYear}`);
+            
+            console.log(`✅ STEP 1: Corretto testo "${oldDay} ${oldMonthName}" → "${newDay} ${newMonthName}" nel reply`);
           }
         }
       }
@@ -1329,6 +1339,34 @@ const ValidationPipeline = {
         response.reservation = reservation;
         
         return response;
+      }
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // STEP 2b: FIX18 - Correggi hallucination chiusure festive
+      // Se GPT dice "chiuso" ma il giorno è effettivamente APERTO → correggi!
+      // ═══════════════════════════════════════════════════════════════════════
+      if (closureCheck.open && response.reply_text && /chius|closed/i.test(response.reply_text)) {
+        console.log(`⚠️ STEP 2b: GPT ha detto "chiuso" ma ${reservation.date} è APERTO! Correggo hallucination.`);
+        
+        // Costruisci messaggio corretto
+        const dayName = DateManager.getDayName(reservation.date, lang);
+        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+        
+        // Se abbiamo già persone, chiedi orario
+        if (reservation.people && reservation.people > 0) {
+          response.reply_text = lang === "en-US"
+            ? `Perfect, for ${reservation.people} people on ${dateDisplay}. What time would you like?`
+            : `Perfetto, per ${reservation.people} persone ${dateDisplay}. A che ora vorresti prenotare?`;
+          response.action = "ask_time";
+        } else {
+          // Altrimenti chiedi persone
+          response.reply_text = lang === "en-US"
+            ? `Perfect, for ${dateDisplay}. How many people will you be?`
+            : `Perfetto, per ${dateDisplay}. Quante persone sarete?`;
+          response.action = "ask_people";
+        }
+        
+        console.log(`✅ STEP 2b: Corretto messaggio, giorno ${reservation.date} è APERTO`);
       }
     }
     
