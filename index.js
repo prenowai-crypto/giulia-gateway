@@ -1309,23 +1309,53 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 3: Valida giorno settimana nella risposta GPT
+    // STEP 3: Valida giorno settimana - PRIORITÀ ALL'INPUT UTENTE
     // ═══════════════════════════════════════════════════════════════════════
-    if (reservation.date && response.reply_text) {
-      const validation = DateManager.validateDayInText(reservation.date, response.reply_text);
+    if (reservation.date) {
+      // Prima: controlla se l'UTENTE ha menzionato un giorno specifico
+      const userDayValidation = DateManager.validateDayInText(reservation.date, userText);
       
-      if (!validation.valid) {
-        console.log(`⚠️ STEP 3: Giorno sbagliato nella risposta! Correggo.`);
+      if (!userDayValidation.valid) {
+        // L'utente ha detto un giorno diverso dalla data GPT!
+        // CORREGGERE LA DATA per corrispondere al giorno dell'utente
+        console.log(`⚠️ STEP 3: Utente ha detto "${userDayValidation.foundDay}" ma GPT ha generato data per ${userDayValidation.actualDay}`);
         
-        // Sostituisci il giorno sbagliato con quello corretto
-        const wrongDay = validation.foundDay;
-        const correctDay = validation.actualDay;
+        // Trova l'indice del giorno menzionato dall'utente
+        const userDayIndex = DateManager.DAYS_IT.findIndex(d => 
+          normalizeText(d) === normalizeText(userDayValidation.foundDay)
+        );
         
-        // Pattern per trovare e sostituire
-        const regex = new RegExp(wrongDay, 'gi');
-        response.reply_text = response.reply_text.replace(regex, correctDay);
+        if (userDayIndex !== -1) {
+          // Ricalcola la data corretta per il giorno menzionato dall'utente
+          const today = DateManager.getNow();
+          const correctDate = DateManager.getNextWeekday(today, userDayIndex);
+          const correctDateISO = DateManager.toISO(correctDate);
+          
+          console.log(`✅ STEP 3: Corretto DATA ${reservation.date} → ${correctDateISO} (${userDayValidation.foundDay})`);
+          
+          reservation.date = correctDateISO;
+          
+          // Aggiorna anche il testo di risposta se menziona il giorno sbagliato
+          if (response.reply_text) {
+            const wrongDayInReply = userDayValidation.actualDay;
+            const correctDayForReply = userDayValidation.foundDay;
+            const regex = new RegExp(wrongDayInReply, 'gi');
+            response.reply_text = response.reply_text.replace(regex, correctDayForReply);
+          }
+        }
+      } else if (response.reply_text) {
+        // L'utente non ha menzionato un giorno, ma controlliamo il reply_text di GPT
+        const replyValidation = DateManager.validateDayInText(reservation.date, response.reply_text);
         
-        console.log(`✅ STEP 3: Corretto "${wrongDay}" → "${correctDay}"`);
+        if (!replyValidation.valid) {
+          // GPT ha scritto un giorno sbagliato nel testo, correggiamo solo il testo
+          console.log(`⚠️ STEP 3: GPT ha scritto giorno sbagliato nel reply, correggo testo.`);
+          const wrongDay = replyValidation.foundDay;
+          const correctDay = replyValidation.actualDay;
+          const regex = new RegExp(wrongDay, 'gi');
+          response.reply_text = response.reply_text.replace(regex, correctDay);
+          console.log(`✅ STEP 3: Corretto testo "${wrongDay}" → "${correctDay}"`);
+        }
       }
     }
     
