@@ -538,6 +538,7 @@ const DateManager = {
   },
   
   // Parse giorno della settimana
+  // FIX24a: Usa l'ULTIMO giorno menzionato (per gestire "mercoledì... anzi giovedì")
   _parseWeekdayDate(text, today) {
     // "sabato prossimo" / "next saturday"
     if (/sabato prossimo|next saturday/.test(text)) {
@@ -554,7 +555,7 @@ const DateManager = {
       return this.toISO(this.addDays(this.getNextWeekday(today, 0), 7));
     }
     
-    // Giorni generici
+    // Giorni generici - FIX24a: trova l'ULTIMO giorno menzionato
     const weekdays = [
       { patterns: ['domenica', 'sunday'], index: 0 },
       { patterns: ['lunedi', 'monday'], index: 1 },
@@ -565,12 +566,24 @@ const DateManager = {
       { patterns: ['sabato', 'saturday'], index: 6 },
     ];
     
+    // FIX24a: Trova TUTTE le occorrenze e usa l'ultima
+    let lastFoundIndex = -1;
+    let lastFoundPosition = -1;
+    
     for (const wd of weekdays) {
       for (const pattern of wd.patterns) {
-        if (text.includes(pattern)) {
-          return this.toISO(this.getNextWeekday(today, wd.index));
+        // Trova l'ultima occorrenza di questo pattern
+        const pos = text.lastIndexOf(pattern);
+        if (pos !== -1 && pos > lastFoundPosition) {
+          lastFoundPosition = pos;
+          lastFoundIndex = wd.index;
         }
       }
+    }
+    
+    if (lastFoundIndex !== -1) {
+      console.log(`📆 FIX24a: Ultimo giorno trovato a posizione ${lastFoundPosition} → ${this.DAYS_IT[lastFoundIndex]}`);
+      return this.toISO(this.getNextWeekday(today, lastFoundIndex));
     }
     
     return null;
@@ -579,6 +592,7 @@ const DateManager = {
   // ═══════════════════════════════════════════════════════════════════════════
   // VALIDAZIONE GIORNO SETTIMANA
   // Verifica che la risposta GPT non abbia sbagliato
+  // FIX24a: Usa l'ULTIMO giorno menzionato per la validazione
   // ═══════════════════════════════════════════════════════════════════════════
   validateDayInText(dateISO, textToCheck) {
     if (!dateISO || !textToCheck) return { valid: true };
@@ -589,23 +603,34 @@ const DateManager = {
     
     const textLower = normalizeText(textToCheck);
     
-    // Cerca se c'è un nome di giorno nel testo
+    // FIX24a: Trova l'ULTIMO giorno menzionato nel testo
+    let lastFoundDay = -1;
+    let lastFoundPosition = -1;
+    
     for (let i = 0; i < 7; i++) {
       const dayIT = normalizeText(this.DAYS_IT[i]);
       const dayEN = this.DAYS_EN[i];
       
-      if (textLower.includes(dayIT) || textLower.includes(dayEN)) {
-        // Trovato un giorno nel testo - corrisponde?
-        if (i !== actualDayOfWeek) {
-          console.warn(`⚠️ MISMATCH GIORNO: testo dice "${this.DAYS_IT[i]}" ma ${dateISO} è ${actualDayNameIT}`);
-          return {
-            valid: false,
-            foundDay: this.DAYS_IT[i],
-            actualDay: actualDayNameIT,
-            actualDayEN: actualDayNameEN,
-          };
-        }
+      // Cerca l'ultima occorrenza di questo giorno
+      const posIT = textLower.lastIndexOf(dayIT);
+      const posEN = textLower.lastIndexOf(dayEN);
+      const maxPos = Math.max(posIT, posEN);
+      
+      if (maxPos > lastFoundPosition) {
+        lastFoundPosition = maxPos;
+        lastFoundDay = i;
       }
+    }
+    
+    // Se abbiamo trovato un giorno, verifica che corrisponda
+    if (lastFoundDay !== -1 && lastFoundDay !== actualDayOfWeek) {
+      console.warn(`⚠️ MISMATCH GIORNO: ultimo giorno nel testo è "${this.DAYS_IT[lastFoundDay]}" ma ${dateISO} è ${actualDayNameIT}`);
+      return {
+        valid: false,
+        foundDay: this.DAYS_IT[lastFoundDay],
+        actualDay: actualDayNameIT,
+        actualDayEN: actualDayNameEN,
+      };
     }
     
     return { valid: true };
@@ -1790,6 +1815,14 @@ OBIETTIVO:
 5. Email (opzionale, SOLO DOPO aver chiesto il nome)
 
 NON chiedere MAI l'email prima del nome!
+
+⚠️ GESTIONE MODIFICHE DURANTE LA CONVERSAZIONE (FIX24b):
+Se il cliente chiede di MODIFICARE o SPOSTARE qualcosa (orario, data, persone):
+- Parole chiave: "anzi", "invece", "meglio", "spostare", "cambiare", "possiamo fare", "un'ora dopo", "un'ora prima"
+- AGGIORNA immediatamente i dati nella reservation
+- NON procedere con create_reservation
+- Chiedi conferma del nuovo dato o il prossimo dato mancante
+- Esempio: "Possiamo spostare alle 21?" → Aggiorna time a 21:00, action: ask_email o conferma
 
 GESTIONE EMAIL:
 - Chiedi email SOLO DOPO aver ottenuto il nome
