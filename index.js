@@ -1782,8 +1782,18 @@ OBIETTIVO:
 - Email: consigliata ma non obbligatoria
 - Per gruppi >${largeGroupThreshold} persone: prenotazione soggetta a conferma
 
+⚠️ ORDINE OBBLIGATORIO DELLE DOMANDE:
+1. Giorno (se non specificato)
+2. Orario (se non specificato)
+3. Numero persone (se non specificato)
+4. Nome (SEMPRE prima dell'email!)
+5. Email (opzionale, SOLO DOPO aver chiesto il nome)
+
+NON chiedere MAI l'email prima del nome!
+
 GESTIONE EMAIL:
-- Chiedi email con: "Vuoi lasciarmi un'email per la conferma?"
+- Chiedi email SOLO DOPO aver ottenuto il nome
+- Usa: "Vuoi lasciarmi un'email per la conferma?"
 - Se dice no, procedi comunque
 - Quando ti detta l'email, fai spelling e chiedi conferma
 
