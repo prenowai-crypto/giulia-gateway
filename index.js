@@ -1481,6 +1481,30 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
+    // STEP 5b: FIX20 - Intercetta eventi grandi (≥45 persone) → redirige a email
+    // ═══════════════════════════════════════════════════════════════════════
+    if (reservation.people && reservation.people > 0) {
+      const thresholds = ContextService.getThresholds(callId);
+      
+      if (reservation.people >= thresholds.event) {
+        console.log(`🎪 STEP 5b: Evento grande rilevato (${reservation.people} persone >= ${thresholds.event})`);
+        
+        const restaurantEmail = ContextService.getRestaurantEmail(callId);
+        
+        response.action = "none";
+        response.reply_text = lang === "en-US"
+          ? `For groups of ${thresholds.event} or more people, please contact us directly by email at ${restaurantEmail}. We'll be happy to organize your event!`
+          : `Per gruppi di ${thresholds.event} o più persone, ti chiedo di contattarci via email a ${restaurantEmail}. Saremo felici di organizzare il tuo evento!`;
+        
+        // Non procedere con la prenotazione
+        response.reservation = reservation;
+        
+        console.log(`✅ STEP 5b: Rediretto a email per evento grande`);
+        return response;
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
     // STEP 6: Protezione nome da comandi
     // ═══════════════════════════════════════════════════════════════════════
     if (response.action === "cancel_reservation") {
