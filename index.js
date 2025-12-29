@@ -2189,53 +2189,111 @@ app.post("/twilio", async (req, res) => {
         
       } 
       // ═══════════════════════════════════════════════════════════════════════
-      // FIX21b: GRUPPI GRANDI (>10 ma <45) - NO check_availability, crea sempre PENDING
-      // FIX21c: Messaggio "richiesta registrata" (non "confermata")
+      // FIX21b: GRUPPI GRANDI (>10 ma <45) - Check availability, se ok crea PENDING
+      // FIX21c: Messaggio SEMPRE "richiesta registrata, ristoratore confermerà"
+      // FIX21a (code.gs): check_availability conta solo CONFIRMED, non PENDING
       // ═══════════════════════════════════════════════════════════════════════
       else if (isLargeGroup) {
-        console.log(`👥 FIX21b: Gruppo grande (${people} > ${thresholds.largeGroup}), creo PENDING senza check_availability`);
+        console.log(`👥 FIX21b: Gruppo grande (${people} > ${thresholds.largeGroup}), verifico disponibilità...`);
         
-        try {
-          const calResult = await CalendarService.createReservation({
-            source: isDebug ? "debug" : "twilio",
-            name: reservation.name,
-            people,
-            date: reservation.date,
-            time: reservation.time,
-            phone: From || "unknown",
-            customerEmail: reservation.customerEmail,
-          }, callId);
-          
-          const firstName = reservation.name.split(' ')[0];
-          const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
-          const timeDisplay = reservation.time.substring(0, 5);
-          
-          if (calResult?.success) {
-            console.log("✅ Richiesta gruppo registrata come PENDING");
+        const firstName = reservation.name.split(' ')[0];
+        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+        const timeDisplay = reservation.time.substring(0, 5);
+        
+        // CHECK DISPONIBILITÀ (code.gs conta solo CONFIRMED, non PENDING)
+        const availability = await CalendarService.checkAvailability(
+          reservation.date, reservation.time, people, callId
+        );
+        
+        if (!availability.available) {
+          if (availability.reason === "day_closed") {
+            // Giorno chiuso
+            console.log("📅 Gruppo: giorno chiuso");
+            replyText = lang === "en-US"
+              ? "I'm sorry, we're closed that day. Would you like another day?"
+              : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
+            action = "ask_date";
             
-            // FIX21c: Messaggio corretto - NON "confermata" ma "registrata"
-            replyText = lang === "en-US"
-              ? `Thank you ${firstName}! I've registered your request for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant owner will review it and confirm shortly. Have a nice day!`
-              : `Grazie ${firstName}! Ho registrato la tua richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore la esaminerà e ti confermerà a breve. Buona giornata!`;
           } else {
-            // Errore creazione - ma NON dire "slot pieno", potrebbe essere quota
-            console.error("❌ Errore creazione richiesta gruppo:", calResult);
+            // Slot pieno - cerca alternative (ma messaggio per gruppi)
+            console.log("📅 Gruppo: slot pieno, cerco alternative...");
+            const alternatives = await CalendarService.findAlternatives(
+              reservation.date, reservation.time, people, callId
+            );
+            
+            // Messaggio alternativo specifico per gruppi
+            if (alternatives?.sameDay?.length > 0) {
+              const slots = alternatives.sameDay.slice(0, 3).map(s => s.time).join(", ");
+              replyText = lang === "en-US"
+                ? `I'm sorry, that time slot is full. I have availability at ${slots}. For groups, the booking is subject to confirmation by the restaurant. Which time would you prefer?`
+                : `Mi dispiace, quell'orario è al completo. Ho disponibilità alle ${slots}. Per i gruppi la prenotazione è soggetta a conferma del ristoratore. Quale orario preferisci?`;
+            } else {
+              replyText = lang === "en-US"
+                ? "I'm sorry, we're fully booked for that time. Would you like to try a different day?"
+                : "Mi dispiace, siamo al completo per quell'orario. Vuoi provare un altro giorno?";
+            }
+            action = "ask_time";
+          }
+          
+        } else {
+          // SLOT DISPONIBILE - CREA PENDING
+          console.log("✅ Gruppo: slot disponibile, creo PENDING...");
+          
+          try {
+            const calResult = await CalendarService.createReservation({
+              source: isDebug ? "debug" : "twilio",
+              name: reservation.name,
+              people,
+              date: reservation.date,
+              time: reservation.time,
+              phone: From || "unknown",
+              customerEmail: reservation.customerEmail,
+            }, callId);
+            
+            if (calResult?.success) {
+              console.log("✅ Richiesta gruppo registrata come PENDING");
+              
+              // FIX21c: Messaggio corretto - NON "confermata" ma "registrata"
+              replyText = lang === "en-US"
+                ? `Thank you ${firstName}! I've registered your request for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant owner will review it and confirm shortly. Have a nice day!`
+                : `Grazie ${firstName}! Ho registrato la tua richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore la esaminerà e ti confermerà a breve. Buona giornata!`;
+            } else if (calResult?.reason === "slot_full") {
+              // Race condition: slot riempito nel frattempo
+              console.log("⚠️ Gruppo: slot_full dopo check (race condition)");
+              const alternatives = await CalendarService.findAlternatives(
+                reservation.date, reservation.time, people, callId
+              );
+              if (alternatives?.sameDay?.length > 0) {
+                const slots = alternatives.sameDay.slice(0, 3).map(s => s.time).join(", ");
+                replyText = lang === "en-US"
+                  ? `I'm sorry, that slot just filled up. I have availability at ${slots}. Which time would you prefer?`
+                  : `Mi dispiace, quell'orario si è appena riempito. Ho disponibilità alle ${slots}. Quale preferisci?`;
+              } else {
+                replyText = lang === "en-US"
+                  ? "I'm sorry, we're fully booked. Would you like to try a different day?"
+                  : "Mi dispiace, siamo al completo. Vuoi provare un altro giorno?";
+              }
+              action = "ask_time";
+            } else {
+              // Errore generico (es: quota Google)
+              console.error("❌ Errore creazione richiesta gruppo:", calResult);
+              replyText = lang === "en-US"
+                ? "I'm sorry, there was a technical issue. Please try again or contact the restaurant directly."
+                : "Mi dispiace, c'è stato un problema tecnico. Riprova o contatta direttamente il ristorante.";
+              action = "none";
+            }
+            
+            if (isDebug) {
+              gptResponse.calendarResult = calResult;
+            }
+            
+          } catch (err) {
+            console.error("❌ Exception creazione richiesta gruppo:", err);
             replyText = lang === "en-US"
-              ? "I'm sorry, there was a technical issue. Please try again or contact the restaurant directly."
-              : "Mi dispiace, c'è stato un problema tecnico. Riprova o contatta direttamente il ristorante.";
+              ? "I'm sorry, technical problem. Please try again."
+              : "Mi dispiace, problema tecnico. Riprova per favore.";
             action = "none";
           }
-          
-          if (isDebug) {
-            gptResponse.calendarResult = calResult;
-          }
-          
-        } catch (err) {
-          console.error("❌ Exception creazione richiesta gruppo:", err);
-          replyText = lang === "en-US"
-            ? "I'm sorry, technical problem. Please try again."
-            : "Mi dispiace, problema tecnico. Riprova per favore.";
-          action = "none";
         }
       } 
       // ═══════════════════════════════════════════════════════════════════════
