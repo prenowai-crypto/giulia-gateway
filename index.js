@@ -1481,7 +1481,7 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 5b: FIX20 - Intercetta eventi grandi (≥45 persone) → redirige a email
+    // STEP 5b: FIX20/FIX21d - Intercetta eventi grandi (≥45 persone) → redirige a email
     // ═══════════════════════════════════════════════════════════════════════
     if (reservation.people && reservation.people > 0) {
       const thresholds = ContextService.getThresholds(callId);
@@ -1492,9 +1492,10 @@ const ValidationPipeline = {
         const restaurantEmail = ContextService.getRestaurantEmail(callId);
         
         response.action = "none";
+        // FIX21d: Messaggio più umano e naturale, non a "macchinetta"
         response.reply_text = lang === "en-US"
-          ? `For groups of ${thresholds.event} or more people, please contact us directly by email at ${restaurantEmail}. We'll be happy to organize your event!`
-          : `Per gruppi di ${thresholds.event} o più persone, ti chiedo di contattarci via email a ${restaurantEmail}. Saremo felici di organizzare il tuo evento!`;
+          ? `For an event of ${reservation.people} people, I'll note your interest and inform the restaurant owner who will contact you directly. You can also email us at ${restaurantEmail} with your details. We'll be happy to help organize your event!`
+          : `Per un evento di ${reservation.people} persone, prendo nota della tua richiesta e la farò presente al ristoratore che ti contatterà direttamente. Puoi anche scriverci a ${restaurantEmail} con i dettagli. Saremo felici di organizzare il tuo evento!`;
         
         // Non procedere con la prenotazione
         response.reservation = reservation;
@@ -2158,7 +2159,7 @@ app.post("/twilio", async (req, res) => {
     console.log(`📤 Response: action=${action}, reply="${replyText.substring(0, 80)}..."`);
     
     // ═══════════════════════════════════════════════════════════════════════
-    // GESTIONE CREATE_RESERVATION - FIX19: MAI dire "confermata" prima di verificare!
+    // GESTIONE CREATE_RESERVATION - FIX19/FIX21b/FIX21c
     // ═══════════════════════════════════════════════════════════════════════
     if (action === "create_reservation" && reservation?.date && reservation?.time && reservation?.name) {
       
@@ -2166,7 +2167,7 @@ app.post("/twilio", async (req, res) => {
       const people = reservation.people || 2;
       const isLargeGroup = people > thresholds.largeGroup; // >10 persone
       
-      // EVENTO GIGANTE (>45)
+      // EVENTO GIGANTE (≥45) - già gestito da STEP 5b, ma double-check
       if (people >= thresholds.event) {
         console.log("🎪 Evento gigante, invio notifica");
         await CalendarService.notifyLargeEvent({
@@ -2186,7 +2187,61 @@ app.post("/twilio", async (req, res) => {
           : `Per gruppi oltre ${thresholds.event} persone, ti chiedo di scrivere a ${email}. Te la detto: ${spelled}.`;
         action = "none";
         
-      } else {
+      } 
+      // ═══════════════════════════════════════════════════════════════════════
+      // FIX21b: GRUPPI GRANDI (>10 ma <45) - NO check_availability, crea sempre PENDING
+      // FIX21c: Messaggio "richiesta registrata" (non "confermata")
+      // ═══════════════════════════════════════════════════════════════════════
+      else if (isLargeGroup) {
+        console.log(`👥 FIX21b: Gruppo grande (${people} > ${thresholds.largeGroup}), creo PENDING senza check_availability`);
+        
+        try {
+          const calResult = await CalendarService.createReservation({
+            source: isDebug ? "debug" : "twilio",
+            name: reservation.name,
+            people,
+            date: reservation.date,
+            time: reservation.time,
+            phone: From || "unknown",
+            customerEmail: reservation.customerEmail,
+          }, callId);
+          
+          const firstName = reservation.name.split(' ')[0];
+          const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+          const timeDisplay = reservation.time.substring(0, 5);
+          
+          if (calResult?.success) {
+            console.log("✅ Richiesta gruppo registrata come PENDING");
+            
+            // FIX21c: Messaggio corretto - NON "confermata" ma "registrata"
+            replyText = lang === "en-US"
+              ? `Thank you ${firstName}! I've registered your request for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant owner will review it and confirm shortly. Have a nice day!`
+              : `Grazie ${firstName}! Ho registrato la tua richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore la esaminerà e ti confermerà a breve. Buona giornata!`;
+          } else {
+            // Errore creazione - ma NON dire "slot pieno", potrebbe essere quota
+            console.error("❌ Errore creazione richiesta gruppo:", calResult);
+            replyText = lang === "en-US"
+              ? "I'm sorry, there was a technical issue. Please try again or contact the restaurant directly."
+              : "Mi dispiace, c'è stato un problema tecnico. Riprova o contatta direttamente il ristorante.";
+            action = "none";
+          }
+          
+          if (isDebug) {
+            gptResponse.calendarResult = calResult;
+          }
+          
+        } catch (err) {
+          console.error("❌ Exception creazione richiesta gruppo:", err);
+          replyText = lang === "en-US"
+            ? "I'm sorry, technical problem. Please try again."
+            : "Mi dispiace, problema tecnico. Riprova per favore.";
+          action = "none";
+        }
+      } 
+      // ═══════════════════════════════════════════════════════════════════════
+      // PRENOTAZIONI NORMALI (≤10 persone) - check availability come prima
+      // ═══════════════════════════════════════════════════════════════════════
+      else {
         // CHECK DISPONIBILITÀ
         const availability = await CalendarService.checkAvailability(
           reservation.date, reservation.time, people, callId
@@ -2225,22 +2280,15 @@ app.post("/twilio", async (req, res) => {
             if (calResult?.success) {
               console.log("✅ Prenotazione creata!");
               
-              // FIX19: SEMPRE generare il messaggio corretto, MAI usare quello di GPT
+              // FIX19: SEMPRE generare il messaggio corretto
               const firstName = reservation.name.split(' ')[0];
               const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
               const timeDisplay = reservation.time.substring(0, 5);
               
-              if (isLargeGroup) {
-                // Grande gruppo → soggetto a conferma
-                replyText = lang === "en-US"
-                  ? `I've registered your request for ${people} people on ${dateDisplay} at ${timeDisplay}. For large groups, booking is subject to confirmation. You'll receive an update soon. Thank you!`
-                  : `Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. Per gruppi numerosi la prenotazione è soggetta a conferma. Riceverai un aggiornamento a breve. Grazie!`;
-              } else {
-                // Prenotazione normale → confermata
-                replyText = lang === "en-US"
-                  ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. We look forward to seeing you, have a nice evening!`
-                  : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo, buona serata!`;
-              }
+              // Prenotazione normale → confermata
+              replyText = lang === "en-US"
+                ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. We look forward to seeing you, have a nice evening!`
+                : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo, buona serata!`;
               
               // Aggiungi risultato calendar alla risposta debug
               if (isDebug) {
