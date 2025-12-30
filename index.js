@@ -1790,11 +1790,15 @@ const ValidationPipeline = {
     
     // SAFETY NET 3: Utente conferma + tutti i dati → forza create_reservation
     // FIX19: NON generare messaggi di conferma qui - sarà la route a farlo dopo verificare Calendar
+    // FIX25d: NON forzare create se l'intent iniziale era cancellazione
+    const initialIntent = StateManager.getInitialIntent(callId);
     if (this.isUserConfirming(userText) && hasDate && hasTime && hasPeople && hasName) {
       if (response.action !== "create_reservation" && 
           response.action !== "cancel_reservation" &&
           response.action !== "answer_menu" &&
-          response.action !== "answer_generic") {
+          response.action !== "answer_generic" &&
+          initialIntent !== "cancel" &&  // FIX25d: Escludi cancellazioni
+          initialIntent !== "modify") {  // FIX25d: Escludi modifiche
         
         console.log("🔧 SAFETY NET 3: Tutti i dati + conferma → create_reservation");
         response.action = "create_reservation";
