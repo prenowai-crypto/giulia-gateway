@@ -552,28 +552,36 @@ const TimeManager = {
     if (/mezzogiorno|noon/.test(t)) return "12:00:00";
     if (/mezzanotte|midnight/.test(t)) return "00:00:00";
     
-    // "alle 20", "alle 20:30"
-    const itMatch = t.match(/(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/i);
-    if (itMatch) {
-      let hour = parseInt(itMatch[1]);
-      const minutes = itMatch[2] ? parseInt(itMatch[2]) : 0;
+    // Trova TUTTI gli orari e prendi l'ULTIMO (per modifiche: prima dicono vecchio, poi nuovo)
+    let lastTime = null;
+    
+    // Pattern "alle 20", "alle 20:30"
+    const itRegex = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
+    let match;
+    while ((match = itRegex.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minutes = match[2] ? parseInt(match[2]) : 0;
       if (hour >= 1 && hour <= 11 && !t.includes("mattina") && !t.includes("pranzo")) {
         hour += 12;
       }
-      return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-    }
-    
-    // "20:30" diretto
-    const directMatch = t.match(/\b(\d{1,2}):(\d{2})\b/);
-    if (directMatch) {
-      const hour = parseInt(directMatch[1]);
-      const minutes = parseInt(directMatch[2]);
-      if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
-        return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+      if (hour >= 0 && hour <= 23) {
+        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
       }
     }
     
-    return null;
+    if (lastTime) return lastTime;
+    
+    // "20:30" diretto - prendi l'ultimo
+    const directRegex = /\b(\d{1,2}):(\d{2})\b/g;
+    while ((match = directRegex.exec(t)) !== null) {
+      const hour = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
+        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+      }
+    }
+    
+    return lastTime;
   },
   
   inferDefault(text) {
@@ -600,6 +608,14 @@ const PeopleManager = {
     const t = text.toLowerCase().trim();
     
     const patterns = [
+      // Pattern specifici per modifiche
+      /(\d+)\s*in\s*totale/i,                          // "4 in totale"
+      /(\d+)\s*invece\s*di\s*\d+/i,                    // "5 invece di 4"
+      /diventat[io]\s*(\d+)/i,                         // "diventati 5"
+      /adesso\s*(?:siamo\s*)?(?:in\s*)?(\d+)/i,        // "adesso siamo in 5", "adesso 5"
+      /siamo\s*(?:in\s*)?(\d+)/i,                      // "siamo in 5", "siamo 5"
+      
+      // Pattern standard
       /(?:per|siamo|saremo|in)\s*(\d+)\s*(?:person[ae]|pax)?/i,
       /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
       /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
@@ -609,9 +625,14 @@ const PeopleManager = {
       const match = t.match(pattern);
       if (match) {
         const num = parseInt(match[1]);
-        if (num > 0 && num < 100) return num;
+        if (num > 0 && num < 100) {
+          console.log(`👥 PeopleManager: estratto ${num} da "${t.substring(0,30)}"`);
+          return num;
+        }
       }
     }
+    
+    // Pattern per "aggiungere altre X" - richiede contesto (non gestibile qui)
     
     const wordNumbers = {
       'due': 2, 'tre': 3, 'quattro': 4, 'cinque': 5, 'sei': 6,
@@ -968,6 +989,21 @@ const RecapManager = {
     // Prova a capire cosa vuole modificare dal primo messaggio
     const modification = this.extractModification(userText, existingRes);
     
+    // Conta quante modifiche
+    const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
+    
+    if (modCount >= 2) {
+      // Modifiche multiple
+      let changes = [];
+      if (modification.newTime) changes.push(lang === "en-US" ? `time to ${TimeManager.formatForDisplay(modification.newTime)}` : `orario alle ${TimeManager.formatForDisplay(modification.newTime)}`);
+      if (modification.newDate) changes.push(lang === "en-US" ? `date to ${DateManager.formatForDisplay(modification.newDate, lang)}` : `data a ${DateManager.formatForDisplay(modification.newDate, lang)}`);
+      if (modification.newPeople) changes.push(lang === "en-US" ? `${modification.newPeople} people` : `${modification.newPeople} persone`);
+      
+      return lang === "en-US"
+        ? `Hi ${firstName}, I have your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. You want to change: ${changes.join(" and ")}. Correct?`
+        : `Ciao ${firstName}, ho la tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay}. Vuoi cambiare: ${changes.join(" e ")}. Giusto?`;
+    }
+    
     if (modification.newTime) {
       // Ha già detto l'orario nuovo
       const newTimeDisplay = TimeManager.formatForDisplay(modification.newTime);
@@ -1008,18 +1044,24 @@ const RecapManager = {
       : `Ciao ${firstName}, ho la tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay}. Confermi di volerla cancellare?`;
   },
   
-  // Estrae la modifica richiesta dal testo
+  // Estrae la modifica richiesta dal testo - TUTTI i campi
   extractModification(text, existingRes) {
     const result = { newTime: null, newDate: null, newPeople: null };
     if (!text) return result;
     
     // Estrai orario
     const time = TimeManager.parseFromText(text);
-    if (time && time !== existingRes.time) {
-      result.newTime = time;
+    if (time) {
+      // Normalizza il formato dell'orario esistente per confronto
+      const existingTimeNorm = existingRes.time?.includes(':') 
+        ? (existingRes.time.length === 5 ? existingRes.time + ':00' : existingRes.time)
+        : existingRes.time + ':00:00';
+      if (time !== existingTimeNorm && time !== existingRes.time) {
+        result.newTime = time;
+      }
     }
     
-    // Estrai data
+    // Estrai data - usa tutto il testo della conversazione
     const date = DateManager.parseFromText(text);
     if (date && date !== existingRes.date) {
       result.newDate = date;
@@ -1031,6 +1073,7 @@ const RecapManager = {
       result.newPeople = people;
     }
     
+    console.log(`🔍 extractModification: "${text.substring(0,50)}" → time=${result.newTime}, date=${result.newDate}, people=${result.newPeople}`);
     return result;
   },
   
@@ -1062,7 +1105,8 @@ const RecapManager = {
   // Verifica se utente sta confermando
   isConfirming(text) {
     const t = normalizeText(text || "");
-    if (/^(si+|yes|esatto|corretto|giusto|confermo|certo|ok|va bene|proprio|quella|perfetto)/.test(t)) return true;
+    // IMPORTANTE: \b per word boundary, altrimenti "siamo" matcha "si"
+    if (/^(si\b|sii\b|yes\b|esatto|corretto|giusto|confermo|certo|ok\b|va bene|proprio|quella|perfetto)/.test(t)) return true;
     if (/\b(conferm|esatt|corrett|giust|perfett)\b/.test(t)) return true;
     return false;
   },
@@ -1734,7 +1778,20 @@ app.post("/twilio", async (req, res) => {
               STATE.pendingModifications.set(callId, newMod);
               const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
               
-              if (newMod.newTime) {
+              // Conta modifiche
+              const modCount = (newMod.newTime ? 1 : 0) + (newMod.newDate ? 1 : 0) + (newMod.newPeople ? 1 : 0);
+              
+              if (modCount >= 2) {
+                let changes = [];
+                if (newMod.newTime) changes.push(lang === "en-US" ? `${TimeManager.formatForDisplay(newMod.newTime)}` : `alle ${TimeManager.formatForDisplay(newMod.newTime)}`);
+                if (newMod.newDate) changes.push(lang === "en-US" ? `${DateManager.formatForDisplay(newMod.newDate, lang)}` : `${DateManager.formatForDisplay(newMod.newDate, lang)}`);
+                if (newMod.newPeople) changes.push(lang === "en-US" ? `${newMod.newPeople} people` : `${newMod.newPeople} persone`);
+                
+                replyText = lang === "en-US"
+                  ? `Okay ${firstName}, changing to: ${changes.join(", ")}. Confirm?`
+                  : `Ok ${firstName}, modifico: ${changes.join(", ")}. Confermi?`;
+              }
+              else if (newMod.newTime) {
                 replyText = lang === "en-US"
                   ? `Okay ${firstName}, moving to ${TimeManager.formatForDisplay(newMod.newTime)}. Confirm?`
                   : `Ok ${firstName}, sposto alle ${TimeManager.formatForDisplay(newMod.newTime)}. Confermi?`;
@@ -1766,7 +1823,21 @@ app.post("/twilio", async (req, res) => {
             
             const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
             
-            if (modification.newTime) {
+            // Conta modifiche
+            const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
+            
+            if (modCount >= 2) {
+              // Modifiche multiple
+              let changes = [];
+              if (modification.newTime) changes.push(lang === "en-US" ? `${TimeManager.formatForDisplay(modification.newTime)}` : `alle ${TimeManager.formatForDisplay(modification.newTime)}`);
+              if (modification.newDate) changes.push(lang === "en-US" ? `${DateManager.formatForDisplay(modification.newDate, lang)}` : `${DateManager.formatForDisplay(modification.newDate, lang)}`);
+              if (modification.newPeople) changes.push(lang === "en-US" ? `${modification.newPeople} people` : `${modification.newPeople} persone`);
+              
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, changing to: ${changes.join(", ")}. Confirm?`
+                : `Ok ${firstName}, modifico: ${changes.join(", ")}. Confermi?`;
+            }
+            else if (modification.newTime) {
               replyText = lang === "en-US"
                 ? `Okay ${firstName}, moving to ${TimeManager.formatForDisplay(modification.newTime)}. Confirm?`
                 : `Ok ${firstName}, sposto alle ${TimeManager.formatForDisplay(modification.newTime)}. Confermi?`;
