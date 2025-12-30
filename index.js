@@ -127,10 +127,12 @@ const IntentDetector = {
   
   // Parole chiave per modifica
   MODIFY_KEYWORDS: [
-    'modificare', 'modifica', 'modifico',
+    'modificare', 'modifica', 'modifico', 'modifiche',  // FIX26a: aggiunto plurale
     'spostare', 'sposta', 'sposto',
     'cambiare', 'cambia', 'cambio',
     'anticipare', 'posticipare',
+    'aumentat',  // FIX26a: "siamo aumentati"
+    'aggiunger', // FIX26a: "aggiungere persone"
     'change', 'move', 'reschedule'
   ],
   
@@ -1879,26 +1881,56 @@ IMPORTANTE: Se l'utente conferma, usa action="create_reservation" con questi dat
     }
     
     // FIX25c: Prenotazione esistente trovata
+    // FIX26b: Istruzioni molto più esplicite
     let existingResText = "";
     const existingRes = StateManager.getExistingReservation(callId);
     const initialIntent = StateManager.getInitialIntent(callId);
     if (existingRes && (initialIntent === 'cancel' || initialIntent === 'modify')) {
       existingResText = `
 ═══════════════════════════════════════════════════════════════════════════════
-📋 PRENOTAZIONE ESISTENTE TROVATA (FIX25c)
+🚨🚨🚨 PRENOTAZIONE ESISTENTE - LEGGI ATTENTAMENTE! 🚨🚨🚨
 ═══════════════════════════════════════════════════════════════════════════════
-Il cliente ha già una prenotazione:
-- Nome: ${existingRes.name || "Non specificato"}
-- Data: ${existingRes.date || "Non specificata"}
-- Ora: ${existingRes.time || "Non specificata"}
-- Persone: ${existingRes.people || "Non specificato"}
-- Email: ${existingRes.email || "Non specificata"}
 
-${initialIntent === 'cancel' ? 
-  'Il cliente vuole CANCELLARE questa prenotazione. Usa action="cancel_reservation" con i dati sopra.' : 
-  'Il cliente vuole MODIFICARE questa prenotazione. Aggiorna i dati richiesti e conferma.'}
+HAI GIÀ TUTTI I DATI DEL CLIENTE! Non chiedere informazioni che già hai!
+
+📋 DATI DELLA PRENOTAZIONE ESISTENTE:
+- Nome: ${existingRes.name || "⚠️ Non disponibile - chiedi il nome"}
+- Data: ${existingRes.date || "⚠️ Non disponibile"}
+- Ora: ${existingRes.time || "⚠️ Non disponibile"}
+- Persone: ${existingRes.people || "⚠️ Non disponibile"}
+- Email: ${existingRes.email || "Non fornita"}
+
+${initialIntent === 'cancel' ? `
+⛔ INTENT: CANCELLAZIONE
+═══════════════════════════════════════════════════════════════════════════════
+Il cliente vuole CANCELLARE questa prenotazione.
+
+✅ COSA DEVI FARE:
+- Se hai nome e data → USA SUBITO action="cancel_reservation" con i dati sopra
+- Conferma la cancellazione dicendo "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
+
+❌ COSA NON DEVI FARE:
+- NON chiedere il nome se già lo hai (${existingRes.name ? 'CE L\'HAI: ' + existingRes.name : 'non disponibile'})
+- NON chiedere la data se già la hai (${existingRes.date ? 'CE L\'HAI: ' + existingRes.date : 'non disponibile'})
+- NON chiedere conferme inutili se hai già tutti i dati
+` : `
+🔄 INTENT: MODIFICA
+═══════════════════════════════════════════════════════════════════════════════
+Il cliente vuole MODIFICARE questa prenotazione.
+
+✅ COSA DEVI FARE:
+- USA i dati esistenti come base
+- Chiedi SOLO cosa vuole modificare
+- Modifica SOLO ciò che il cliente chiede esplicitamente
+
+❌ COSA NON DEVI FARE:
+- NON chiedere il nome (${existingRes.name ? 'CE L\'HAI: ' + existingRes.name : 'chiedi solo se manca'})
+- NON chiedere informazioni che già hai
+- NON proporre cambiamenti che il cliente NON ha chiesto
+- NON suggerire orari diversi se il cliente non lo chiede
+- Se il cliente vuole solo cambiare le persone → cambia SOLO le persone, NON l'orario
+`}
 ═══════════════════════════════════════════════════════════════════════════════`;
-    }
 
     return `Sei ${CONFIG.RECEPTIONIST_NAME}, la receptionist telefonica di ${restaurantName}.
 
@@ -1992,7 +2024,7 @@ Se il cliente chiede di MODIFICARE o SPOSTARE qualcosa (orario, data, persone):
 - Esempio: "Possiamo spostare alle 21?" → Aggiorna time a 21:00, action: ask_email o conferma
 
 ═══════════════════════════════════════════════════════════════════════════════
-⚠️ GESTIONE CANCELLAZIONI (FIX25a) - MOLTO IMPORTANTE!
+⚠️ GESTIONE CANCELLAZIONI (FIX25a + FIX26) - MOLTO IMPORTANTE!
 ═══════════════════════════════════════════════════════════════════════════════
 
 Se il cliente vuole CANCELLARE o DISDIRE una prenotazione esistente:
@@ -2005,21 +2037,52 @@ PAROLE CHIAVE DI CANCELLAZIONE (TUTTE VALIDE):
 - "non vengo più", "non veniamo più", "non riusciamo a venire"
 
 PROCEDURA CANCELLAZIONE:
-1. ACCETTA SEMPRE la richiesta di cancellazione (NON rifiutare MAI!)
-2. Chiedi la DATA della prenotazione se non specificata
-3. Chiedi il NOME se non specificato
-4. Usa action="cancel_reservation" con i dati raccolti
-5. Conferma la cancellazione
+1. CONTROLLA SE HAI GIÀ I DATI nella sezione "PRENOTAZIONE ESISTENTE" sopra!
+2. Se hai già nome e data → USA SUBITO action="cancel_reservation"
+3. Se ti manca qualcosa → chiedi SOLO ciò che manca
+4. Conferma la cancellazione
+
+🚨 SE VEDI "PRENOTAZIONE ESISTENTE" SOPRA:
+- HAI GIÀ TUTTI I DATI! Non chiedere nome/data se li hai già!
+- Procedi DIRETTAMENTE con action="cancel_reservation"
 
 ESEMPI CORRETTI:
-- "Vorrei cancellare la prenotazione" → "Posso avere la data e il nome della prenotazione?"
-- "Disdico per giovedì" → "A che nome è la prenotazione?"
-- "Non vengo più domani, sono Rossi" → action=cancel_reservation con i dati
+- Se hai già i dati esistenti → "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
+- Se manca il nome → "A che nome è la prenotazione?"
+- Se manca la data → "Per quale giorno era la prenotazione?"
 
 ⛔ ERRORI DA EVITARE:
+- NON chiedere il nome se lo vedi già in "PRENOTAZIONE ESISTENTE"
+- NON chiedere la data se la vedi già in "PRENOTAZIONE ESISTENTE"
 - NON dire "Non posso cancellare" o "Contatta il ristorante"
-- NON rifiutare la cancellazione per nessun motivo
 - NON trattare una richiesta di cancellazione come nuova prenotazione
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ GESTIONE MODIFICHE (FIX26) - MOLTO IMPORTANTE!
+═══════════════════════════════════════════════════════════════════════════════
+
+Se il cliente vuole MODIFICARE una prenotazione esistente:
+
+PAROLE CHIAVE DI MODIFICA:
+- "modificare", "spostare", "cambiare", "anticipare", "posticipare"
+- "siamo aumentati", "siamo di più/meno", "aggiungere persone"
+
+🚨 SE VEDI "PRENOTAZIONE ESISTENTE" SOPRA:
+- HAI GIÀ TUTTI I DATI! Usali come base!
+- Modifica SOLO ciò che il cliente chiede
+- NON proporre cambiamenti non richiesti!
+
+PROCEDURA MODIFICA:
+1. CONTROLLA SE HAI GIÀ I DATI nella sezione "PRENOTAZIONE ESISTENTE"
+2. Chiedi cosa vuole modificare (se non lo ha già detto)
+3. Aggiorna SOLO il dato richiesto
+4. Conferma la modifica
+
+⛔ ERRORI DA EVITARE:
+- NON chiedere il nome se lo vedi già in "PRENOTAZIONE ESISTENTE"
+- NON chiedere altri dati se li hai già
+- NON proporre di cambiare l'orario se il cliente vuole solo cambiare le persone
+- NON suggerire modifiche che il cliente non ha chiesto
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2057,6 +2120,12 @@ REGOLE ACTION:
 - cancel_reservation: SOLO per cancellare una prenotazione esistente
 - ask_*: per chiedere dati mancanti
 - answer_*: per domande informative (in quel caso reservation tutto null)
+
+🚨 IMPORTANTE - DATI ESISTENTI:
+Se vedi la sezione "PRENOTAZIONE ESISTENTE" sopra, DEVI usare quei dati!
+- Per cancellazione → includi name, date, time dalla prenotazione esistente
+- Per modifica → usa i dati esistenti come base e modifica solo ciò che il cliente chiede
+- NON lasciare null i campi che hai già nella prenotazione esistente!
 
 RISPOSTA FINALE (create_reservation):
 - Conferma la prenotazione
