@@ -1754,7 +1754,7 @@ const ValidationPipeline = {
     // ═══════════════════════════════════════════════════════════════════════
     // STEP 9: Correggi action incoerenti
     // ═══════════════════════════════════════════════════════════════════════
-    response = this.fixIncoherentAction(response, merged, userText, lang);
+    response = this.fixIncoherentAction(response, merged, userText, lang, callId);
     
     console.log("✅ ValidationPipeline: completato");
     return response;
@@ -1763,7 +1763,7 @@ const ValidationPipeline = {
   /**
    * Corregge action incoerenti con i dati
    */
-  fixIncoherentAction(response, reservation, userText, lang) {
+  fixIncoherentAction(response, reservation, userText, lang, callId) {
     const hasDate = reservation.date && reservation.date !== "null";
     const hasTime = reservation.time && reservation.time !== "null";
     const hasPeople = reservation.people && reservation.people > 0;
