@@ -68,6 +68,12 @@ const STATE = {
   // Config ristorante per chiamata (multi-tenant)
   restaurantConfigs: new Map(),
   
+  // FIX25b: Intent iniziale della conversazione (create | cancel | modify)
+  initialIntents: new Map(),
+  
+  // FIX25c: Prenotazioni esistenti trovate per caller ID
+  existingReservations: new Map(),
+  
   // Registry cache
   registryCache: null,
   registryCacheTime: 0,
@@ -103,6 +109,64 @@ function extractEmailFromText(text) {
   const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   return match ? match[0] : null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FIX25: HELPER PER RILEVAMENTO INTENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const IntentDetector = {
+  // Parole chiave per cancellazione
+  CANCEL_KEYWORDS: [
+    'cancellare', 'cancella', 'cancello', 'cancellazione',
+    'disdire', 'disdetta', 'disdico',
+    'annullare', 'annulla', 'annullo', 'annullamento',
+    'eliminare', 'elimina', 'elimino',
+    'non vengo', 'non veniamo', 'non riesco', 'non riusciamo',
+    'cancel', 'delete', 'remove'
+  ],
+  
+  // Parole chiave per modifica
+  MODIFY_KEYWORDS: [
+    'modificare', 'modifica', 'modifico',
+    'spostare', 'sposta', 'sposto',
+    'cambiare', 'cambia', 'cambio',
+    'anticipare', 'posticipare',
+    'change', 'move', 'reschedule'
+  ],
+  
+  // Rileva intent dal testo
+  detectIntent(text) {
+    if (!text) return 'create';
+    const t = text.toLowerCase();
+    
+    // Prima controlla cancellazione (priorità alta)
+    for (const kw of this.CANCEL_KEYWORDS) {
+      if (t.includes(kw)) {
+        return 'cancel';
+      }
+    }
+    
+    // Poi controlla modifica
+    for (const kw of this.MODIFY_KEYWORDS) {
+      if (t.includes(kw)) {
+        return 'modify';
+      }
+    }
+    
+    // Default: nuova prenotazione
+    return 'create';
+  },
+  
+  // Verifica se è un intent di cancellazione
+  isCancelIntent(text) {
+    return this.detectIntent(text) === 'cancel';
+  },
+  
+  // Verifica se è un intent di modifica
+  isModifyIntent(text) {
+    return this.detectIntent(text) === 'modify';
+  }
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SEZIONE 4: STATE MANAGEMENT FUNCTIONS
@@ -186,6 +250,29 @@ const StateManager = {
     STATE.conversations.set(callId, convo);
   },
   
+  // --- FIX25b: Intent iniziale ---
+  getInitialIntent(callId) {
+    return STATE.initialIntents.get(callId) || null;
+  },
+  
+  setInitialIntent(callId, intent) {
+    // Salva solo se non già impostato (primo messaggio)
+    if (!STATE.initialIntents.has(callId)) {
+      STATE.initialIntents.set(callId, intent);
+      console.log(`🎯 FIX25b: Intent iniziale salvato: ${intent}`);
+    }
+  },
+  
+  // --- FIX25c: Prenotazione esistente ---
+  getExistingReservation(callId) {
+    return STATE.existingReservations.get(callId) || null;
+  },
+  
+  setExistingReservation(callId, reservation) {
+    STATE.existingReservations.set(callId, reservation);
+    console.log(`📋 FIX25c: Prenotazione esistente salvata:`, reservation);
+  },
+  
   // --- Cleanup ---
   clearCall(callId) {
     STATE.conversations.delete(callId);
@@ -194,6 +281,8 @@ const StateManager = {
     STATE.contexts.delete(callId);
     STATE.reservations.delete(callId);
     STATE.restaurantConfigs.delete(callId);
+    STATE.initialIntents.delete(callId);
+    STATE.existingReservations.delete(callId);
   },
 };
 
@@ -1044,6 +1133,46 @@ const CalendarService = {
     return result;
   },
   
+  // FIX25c: Cerca prenotazioni esistenti per telefono
+  async findExistingReservation(phone, date, callId = null) {
+    if (!phone) return null;
+    
+    const appsScriptUrl = Registry.getAppsScriptUrl(callId);
+    console.log(`🔍 FIX25c: Ricerca prenotazione per telefono ${phone}${date ? `, data ${date}` : ''}`);
+    
+    try {
+      const response = await fetch(appsScriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "find_reservation",
+          telefono: phone,
+          data: date || null,
+        }),
+      });
+      
+      const text = await response.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        console.log("⚠️ FIX25c: Risposta non JSON:", text);
+        return null;
+      }
+      
+      if (result.found && result.reservation) {
+        console.log(`✅ FIX25c: Prenotazione trovata:`, result.reservation);
+        return result.reservation;
+      } else {
+        console.log(`📋 FIX25c: Nessuna prenotazione trovata per ${phone}`);
+        return null;
+      }
+    } catch (err) {
+      console.error("❌ FIX25c: Errore ricerca prenotazione:", err);
+      return null;
+    }
+  },
+  
   // Check disponibilità slot
   async checkAvailability(date, time, people, callId = null) {
     if (!date || !time || !people) {
@@ -1531,50 +1660,61 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 6: Protezione nome da comandi
+    // STEP 6: Protezione nome da comandi (FIX25b: rispetta intent iniziale)
     // ═══════════════════════════════════════════════════════════════════════
     if (response.action === "cancel_reservation") {
-      // Caso A: Utente sta chiaramente dicendo il nome
-      if (NameManager.isProvidingName(userText)) {
-        const extractedName = NameManager.extractName(userText);
-        
-        if (extractedName) {
-          console.log(`⚠️ STEP 6: GPT ha confuso nome "${extractedName}" con cancellazione!`);
-          
-          reservation.name = extractedName;
-          
-          // Ripristina dati precedenti
-          reservation.date = reservationBefore.date || reservation.date;
-          reservation.time = reservationBefore.time || reservation.time;
-          reservation.people = reservationBefore.people || reservation.people;
-          
-          // Costruisci risposta corretta
-          response.action = "ask_email";
-          response.reply_text = lang === "en-US"
-            ? `Perfect, ${extractedName}. Would you like to leave an email for confirmation?`
-            : `Perfetto, ${extractedName}. Vuoi lasciarmi un'email per la conferma?`;
-          
-          console.log(`✅ STEP 6: Corretto, nome salvato: ${extractedName}`);
-        }
+      // FIX25b: Controlla l'intent iniziale della conversazione
+      const initialIntent = StateManager.getInitialIntent(callId);
+      
+      // Se l'intent iniziale era cancellazione, NON intercettare!
+      if (initialIntent === 'cancel') {
+        console.log(`✅ FIX25b: Intent iniziale era cancellazione, lascio passare cancel_reservation`);
+        // Non fare nulla, lascia passare l'azione di cancellazione
       }
-      // Caso B: Contesto suggerisce che stavamo chiedendo il nome
-      else if (NameManager.isGptConfusingName(response.action, response.reply_text, reservationBefore)) {
-        const bareName = NameManager.extractBareName(userText);
-        
-        if (bareName) {
-          console.log(`⚠️ STEP 6b: GPT ha confuso "${bareName}" con comando (contesto prenotazione)`);
+      // Se l'intent iniziale era creazione, verifica se GPT sta confondendo un nome
+      else {
+        // Caso A: Utente sta chiaramente dicendo il nome
+        if (NameManager.isProvidingName(userText)) {
+          const extractedName = NameManager.extractName(userText);
           
-          reservation.name = bareName;
-          reservation.date = reservationBefore.date;
-          reservation.time = reservationBefore.time;
-          reservation.people = reservationBefore.people;
+          if (extractedName) {
+            console.log(`⚠️ STEP 6: GPT ha confuso nome "${extractedName}" con cancellazione!`);
+            
+            reservation.name = extractedName;
+            
+            // Ripristina dati precedenti
+            reservation.date = reservationBefore.date || reservation.date;
+            reservation.time = reservationBefore.time || reservation.time;
+            reservation.people = reservationBefore.people || reservation.people;
+            
+            // Costruisci risposta corretta
+            response.action = "ask_email";
+            response.reply_text = lang === "en-US"
+              ? `Perfect, ${extractedName}. Would you like to leave an email for confirmation?`
+              : `Perfetto, ${extractedName}. Vuoi lasciarmi un'email per la conferma?`;
+            
+            console.log(`✅ STEP 6: Corretto, nome salvato: ${extractedName}`);
+          }
+        }
+        // Caso B: Contesto suggerisce che stavamo chiedendo il nome
+        else if (NameManager.isGptConfusingName(response.action, response.reply_text, reservationBefore)) {
+          const bareName = NameManager.extractBareName(userText);
           
-          response.action = "ask_email";
-          response.reply_text = lang === "en-US"
-            ? `Perfect, ${bareName}. Would you like to leave an email?`
-            : `Perfetto, ${bareName}. Vuoi lasciarmi un'email?`;
-          
-          console.log(`✅ STEP 6b: Corretto, nome salvato: ${bareName}`);
+          if (bareName) {
+            console.log(`⚠️ STEP 6b: GPT ha confuso "${bareName}" con comando (contesto prenotazione)`);
+            
+            reservation.name = bareName;
+            reservation.date = reservationBefore.date;
+            reservation.time = reservationBefore.time;
+            reservation.people = reservationBefore.people;
+            
+            response.action = "ask_email";
+            response.reply_text = lang === "en-US"
+              ? `Perfect, ${bareName}. Would you like to leave an email?`
+              : `Perfetto, ${bareName}. Vuoi lasciarmi un'email?`;
+            
+            console.log(`✅ STEP 6b: Corretto, nome salvato: ${bareName}`);
+          }
         }
       }
     }
@@ -1733,6 +1873,28 @@ ${reservation.customerEmail ? `- Email: ${reservation.customerEmail}` : ""}
 IMPORTANTE: Se l'utente conferma, usa action="create_reservation" con questi dati!
 ═══════════════════════════════════════════════════════════════════════════════`;
     }
+    
+    // FIX25c: Prenotazione esistente trovata
+    let existingResText = "";
+    const existingRes = StateManager.getExistingReservation(callId);
+    const initialIntent = StateManager.getInitialIntent(callId);
+    if (existingRes && (initialIntent === 'cancel' || initialIntent === 'modify')) {
+      existingResText = `
+═══════════════════════════════════════════════════════════════════════════════
+📋 PRENOTAZIONE ESISTENTE TROVATA (FIX25c)
+═══════════════════════════════════════════════════════════════════════════════
+Il cliente ha già una prenotazione:
+- Nome: ${existingRes.name || "Non specificato"}
+- Data: ${existingRes.date || "Non specificata"}
+- Ora: ${existingRes.time || "Non specificata"}
+- Persone: ${existingRes.people || "Non specificato"}
+- Email: ${existingRes.email || "Non specificata"}
+
+${initialIntent === 'cancel' ? 
+  'Il cliente vuole CANCELLARE questa prenotazione. Usa action="cancel_reservation" con i dati sopra.' : 
+  'Il cliente vuole MODIFICARE questa prenotazione. Aggiorna i dati richiesti e conferma.'}
+═══════════════════════════════════════════════════════════════════════════════`;
+    }
 
     return `Sei ${CONFIG.RECEPTIONIST_NAME}, la receptionist telefonica di ${restaurantName}.
 
@@ -1765,6 +1927,7 @@ QUANDO IL CLIENTE CHIEDE PER UN LUNEDÌ:
 - Accetta SEMPRE prenotazioni per giorni che nel calendario risultano APERTI
 - Le UNICHE chiusure valide sono: lunedì + quelle esplicitamente elencate sopra
 ${stateText}
+${existingResText}
 ═══════════════════════════════════════════════════════════════════════════════
 
 STILE:
@@ -1823,6 +1986,38 @@ Se il cliente chiede di MODIFICARE o SPOSTARE qualcosa (orario, data, persone):
 - NON procedere con create_reservation
 - Chiedi conferma del nuovo dato o il prossimo dato mancante
 - Esempio: "Possiamo spostare alle 21?" → Aggiorna time a 21:00, action: ask_email o conferma
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ GESTIONE CANCELLAZIONI (FIX25a) - MOLTO IMPORTANTE!
+═══════════════════════════════════════════════════════════════════════════════
+
+Se il cliente vuole CANCELLARE o DISDIRE una prenotazione esistente:
+
+PAROLE CHIAVE DI CANCELLAZIONE (TUTTE VALIDE):
+- "cancellare", "cancella", "cancello", "cancellazione"
+- "disdire", "disdetta", "disdico"  
+- "annullare", "annulla", "annullo", "annullamento"
+- "eliminare", "elimina"
+- "non vengo più", "non veniamo più", "non riusciamo a venire"
+
+PROCEDURA CANCELLAZIONE:
+1. ACCETTA SEMPRE la richiesta di cancellazione (NON rifiutare MAI!)
+2. Chiedi la DATA della prenotazione se non specificata
+3. Chiedi il NOME se non specificato
+4. Usa action="cancel_reservation" con i dati raccolti
+5. Conferma la cancellazione
+
+ESEMPI CORRETTI:
+- "Vorrei cancellare la prenotazione" → "Posso avere la data e il nome della prenotazione?"
+- "Disdico per giovedì" → "A che nome è la prenotazione?"
+- "Non vengo più domani, sono Rossi" → action=cancel_reservation con i dati
+
+⛔ ERRORI DA EVITARE:
+- NON dire "Non posso cancellare" o "Contatta il ristorante"
+- NON rifiutare la cancellazione per nessun motivo
+- NON trattare una richiesta di cancellazione come nuova prenotazione
+
+═══════════════════════════════════════════════════════════════════════════════
 
 GESTIONE EMAIL:
 - Chiedi email SOLO DOPO aver ottenuto il nome
@@ -2176,6 +2371,26 @@ app.post("/twilio", async (req, res) => {
     
     // Salva testo utente
     StateManager.appendUserText(callId, userText);
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX25b: Rileva e salva intent iniziale (solo al primo messaggio)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (!StateManager.getInitialIntent(callId)) {
+      const detectedIntent = IntentDetector.detectIntent(userText);
+      StateManager.setInitialIntent(callId, detectedIntent);
+      
+      // FIX25c: Se intent è cancellazione o modifica, cerca prenotazione esistente
+      if ((detectedIntent === 'cancel' || detectedIntent === 'modify') && From) {
+        try {
+          const existing = await CalendarService.findExistingReservation(From, null, callId);
+          if (existing) {
+            StateManager.setExistingReservation(callId, existing);
+          }
+        } catch (err) {
+          console.log(`⚠️ FIX25c: Errore ricerca prenotazione:`, err.message);
+        }
+      }
+    }
     
     // Gestione lingua
     const langSwitch = TwilioHelpers.detectLanguageSwitch(userText);
