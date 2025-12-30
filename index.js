@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v2.0
-// Riscrittura completa con architettura pulita
+// PRENOW - RECEPTIONIST AI GATEWAY v3.0
+// Architettura pulita con RECAP deterministico per cancel/modify
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -14,32 +14,24 @@ const app = express();
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const CONFIG = {
-  // Nomi default
   RECEPTIONIST_NAME: process.env.RECEPTIONIST_NAME || "Giulia",
   DEFAULT_RESTAURANT_NAME: process.env.RESTAURANT_NAME || "Ristorante",
   OWNER_EMAIL_DEFAULT: process.env.OWNER_EMAIL || "prenowai@gmail.com",
   
-  // Multi-tenant Registry
   REGISTRY_SHEET_ID: "1AdXq1EagVhPsX-UT4HENfuQ1mxUN39kWtECiY6he8bg",
   REGISTRY_SHEET_NAME: "Registry",
-  REGISTRY_CACHE_TTL: 5 * 60 * 1000, // 5 minuti
+  REGISTRY_CACHE_TTL: 5 * 60 * 1000,
   
-  // Apps Script default
   APPS_SCRIPT_URL: process.env.APPS_SCRIPT_URL || 
     "https://script.google.com/macros/s/AKfycbx39h60wqJ0TwLy9PzZyZTqCPV_eGid4j0NOF1FsHJyi411mWyOtZZYC_Z68htZSonqlg/exec",
   
-  // Server
   BASE_URL: process.env.BASE_URL || "https://giulia-gateway.onrender.com",
   PORT: process.env.PORT || 10000,
   
-  // Soglie gruppi
   LARGE_GROUP_THRESHOLD: 10,
   EVENT_THRESHOLD: 45,
-  
-  // Giorni chiusura settimanale (0=Domenica, 1=Lunedì, ..., 6=Sabato)
   WEEKLY_CLOSING_DAYS: [1], // Lunedì
   
-  // GPT
   GPT_MODEL: "gpt-4o-mini",
   GPT_MAX_TOKENS: 300,
   GPT_TEMPERATURE: 0.2,
@@ -50,29 +42,17 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const STATE = {
-  // Conversazioni GPT per chiamata
-  conversations: new Map(),
+  conversations: new Map(),       // Conversazioni GPT
+  languages: new Map(),           // Lingua per chiamata
+  userTexts: new Map(),           // Cronologia testi utente
+  contexts: new Map(),            // Contesto ristorante
+  reservations: new Map(),        // Stato prenotazione in costruzione
+  restaurantConfigs: new Map(),   // Config multi-tenant
   
-  // Lingua per chiamata (it-IT | en-US)
-  languages: new Map(),
-  
-  // Cronologia testi utente
-  userTexts: new Map(),
-  
-  // Contesto ristorante per chiamata
-  contexts: new Map(),
-  
-  // Stato prenotazione per chiamata
-  reservations: new Map(),
-  
-  // Config ristorante per chiamata (multi-tenant)
-  restaurantConfigs: new Map(),
-  
-  // FIX25b: Intent iniziale della conversazione (create | cancel | modify)
-  initialIntents: new Map(),
-  
-  // FIX25c: Prenotazioni esistenti trovate per caller ID
-  existingReservations: new Map(),
+  // v3: Flusso cancel/modify
+  initialIntents: new Map(),      // Intent iniziale (create|cancel|modify)
+  existingReservations: new Map(),// Prenotazione esistente trovata
+  conversationPhases: new Map(),  // Fase conversazione (v3)
   
   // Registry cache
   registryCache: null,
@@ -111,11 +91,10 @@ function extractEmailFromText(text) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// FIX25: HELPER PER RILEVAMENTO INTENT
+// SEZIONE 4: INTENT DETECTOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const IntentDetector = {
-  // Parole chiave per cancellazione
   CANCEL_KEYWORDS: [
     'cancellare', 'cancella', 'cancello', 'cancellazione',
     'disdire', 'disdetta', 'disdico',
@@ -125,93 +104,79 @@ const IntentDetector = {
     'cancel', 'delete', 'remove'
   ],
   
-  // Parole chiave per modifica
   MODIFY_KEYWORDS: [
-    'modificare', 'modifica', 'modifico', 'modifiche',  // FIX26a: aggiunto plurale
+    'modificare', 'modifica', 'modifico', 'modifiche',
     'spostare', 'sposta', 'sposto',
     'cambiare', 'cambia', 'cambio',
     'anticipare', 'posticipare',
-    'aumentat',  // FIX26a: "siamo aumentati"
-    'aggiunger', // FIX26a: "aggiungere persone"
+    'aumentat', 'aggiunger',
     'change', 'move', 'reschedule'
   ],
   
-  // Rileva intent dal testo
+  // Keywords che indicano prenotazione esistente (anche senza modify/cancel esplicito)
+  EXISTING_RESERVATION_KEYWORDS: [
+    'ho prenotato', 'avevo prenotato', 'ho una prenotazione',
+    'la mia prenotazione', 'la prenotazione',
+    'i have a reservation', 'my reservation', 'i booked'
+  ],
+  
   detectIntent(text) {
     if (!text) return 'create';
     const t = text.toLowerCase();
     
-    // Prima controlla cancellazione (priorità alta)
+    // Prima: cancellazione (priorità alta)
     for (const kw of this.CANCEL_KEYWORDS) {
-      if (t.includes(kw)) {
-        return 'cancel';
-      }
+      if (t.includes(kw)) return 'cancel';
     }
     
-    // Poi controlla modifica
+    // Poi: modifica
     for (const kw of this.MODIFY_KEYWORDS) {
-      if (t.includes(kw)) {
-        return 'modify';
-      }
+      if (t.includes(kw)) return 'modify';
     }
     
-    // Default: nuova prenotazione
+    // Poi: riferimento a prenotazione esistente (trattalo come modify)
+    for (const kw of this.EXISTING_RESERVATION_KEYWORDS) {
+      if (t.includes(kw)) return 'modify';
+    }
+    
     return 'create';
   },
-  
-  // Verifica se è un intent di cancellazione
-  isCancelIntent(text) {
-    return this.detectIntent(text) === 'cancel';
-  },
-  
-  // Verifica se è un intent di modifica
-  isModifyIntent(text) {
-    return this.detectIntent(text) === 'modify';
-  }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 4: STATE MANAGEMENT FUNCTIONS
+// SEZIONE 5: STATE MANAGER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const StateManager = {
-  // --- Lingua ---
+  // Lingua
   getLanguage(callId) {
     return STATE.languages.get(callId) || "it-IT";
   },
-  
   setLanguage(callId, lang) {
     if (callId) STATE.languages.set(callId, lang);
   },
   
-  // --- Testi utente ---
+  // Testi utente
   appendUserText(callId, text) {
     if (!callId || !text) return;
     const arr = STATE.userTexts.get(callId) || [];
     arr.push(text);
     STATE.userTexts.set(callId, arr);
   },
-  
   getAllUserText(callId) {
     const arr = STATE.userTexts.get(callId);
     return arr ? arr.join(" ") : "";
   },
   
-  // --- Prenotazione ---
+  // Prenotazione in costruzione
   getReservation(callId) {
     return STATE.reservations.get(callId) || {
-      date: null,
-      time: null,
-      people: null,
-      name: null,
-      customerEmail: null,
+      date: null, time: null, people: null, name: null, customerEmail: null,
     };
   },
-  
   setReservation(callId, reservation) {
     STATE.reservations.set(callId, reservation);
   },
-  
   mergeReservation(callId, newData = {}) {
     const prev = this.getReservation(callId);
     const merged = {
@@ -225,57 +190,60 @@ const StateManager = {
     return merged;
   },
   
-  // --- Contesto ristorante ---
+  // Contesto ristorante
   getContext(callId) {
     return STATE.contexts.get(callId) || null;
   },
-  
   setContext(callId, context) {
     STATE.contexts.set(callId, context);
   },
   
-  // --- Config ristorante (multi-tenant) ---
+  // Config ristorante (multi-tenant)
   getRestaurantConfig(callId) {
     return STATE.restaurantConfigs.get(callId) || null;
   },
-  
   setRestaurantConfig(callId, config) {
     STATE.restaurantConfigs.set(callId, config);
   },
   
-  // --- Conversazione GPT ---
+  // Conversazione GPT
   getConversation(callId) {
     return STATE.conversations.get(callId) || null;
   },
-  
   setConversation(callId, convo) {
     STATE.conversations.set(callId, convo);
   },
   
-  // --- FIX25b: Intent iniziale ---
+  // Intent iniziale
   getInitialIntent(callId) {
     return STATE.initialIntents.get(callId) || null;
   },
-  
   setInitialIntent(callId, intent) {
-    // Salva solo se non già impostato (primo messaggio)
     if (!STATE.initialIntents.has(callId)) {
       STATE.initialIntents.set(callId, intent);
-      console.log(`🎯 FIX25b: Intent iniziale salvato: ${intent}`);
+      console.log(`🎯 Intent iniziale: ${intent}`);
     }
   },
   
-  // --- FIX25c: Prenotazione esistente ---
+  // Prenotazione esistente
   getExistingReservation(callId) {
     return STATE.existingReservations.get(callId) || null;
   },
-  
   setExistingReservation(callId, reservation) {
     STATE.existingReservations.set(callId, reservation);
-    console.log(`📋 FIX25c: Prenotazione esistente salvata:`, reservation);
+    console.log(`📋 Prenotazione esistente salvata:`, reservation);
   },
   
-  // --- Cleanup ---
+  // v3: Fase conversazione
+  getPhase(callId) {
+    return STATE.conversationPhases.get(callId) || 'initial';
+  },
+  setPhase(callId, phase) {
+    STATE.conversationPhases.set(callId, phase);
+    console.log(`📍 Fase conversazione: ${phase}`);
+  },
+  
+  // Cleanup
   clearCall(callId) {
     STATE.conversations.delete(callId);
     STATE.languages.delete(callId);
@@ -285,32 +253,31 @@ const StateManager = {
     STATE.restaurantConfigs.delete(callId);
     STATE.initialIntents.delete(callId);
     STATE.existingReservations.delete(callId);
+    STATE.conversationPhases.delete(callId);
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 5: MULTI-TENANT REGISTRY
+// SEZIONE 6: MULTI-TENANT REGISTRY (copiato da v2 - funziona)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const Registry = {
   async fetch() {
     const now = Date.now();
-    
-    // Cache valida?
     if (STATE.registryCache && (now - STATE.registryCacheTime) < CONFIG.REGISTRY_CACHE_TTL) {
       return STATE.registryCache;
     }
     
     try {
       const url = `https://docs.google.com/spreadsheets/d/${CONFIG.REGISTRY_SHEET_ID}/gviz/tq?tqx=out:json&sheet=${CONFIG.REGISTRY_SHEET_NAME}`;
-      console.log("🌐 Registry: fetch da Google Sheets...");
+      console.log("🌐 Registry: fetch...");
       
       const response = await fetch(url);
       const text = await response.text();
       
       const jsonMatch = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?$/);
       if (!jsonMatch) {
-        console.error("❌ Registry: formato risposta non valido");
+        console.error("❌ Registry: formato non valido");
         return STATE.registryCache || [];
       }
       
@@ -319,7 +286,6 @@ const Registry = {
       const cols = data.table.cols || [];
       
       let headers = cols.map(c => c.label || "");
-      
       if (headers.every(h => h === "")) {
         if (rows.length > 0 && rows[0].c) {
           headers = rows[0].c.map(cell => cell ? (cell.v !== null ? String(cell.v) : "") : "");
@@ -331,52 +297,39 @@ const Registry = {
         const obj = {};
         row.c.forEach((cell, idx) => {
           const key = headers[idx];
-          if (key) {
-            obj[key] = cell ? (cell.v !== null ? cell.v : "") : "";
-          }
+          if (key) obj[key] = cell ? (cell.v !== null ? cell.v : "") : "";
         });
         return obj;
       });
       
-      console.log(`✅ Registry: caricati ${registry.length} ristoranti`);
-      
+      console.log(`✅ Registry: ${registry.length} ristoranti`);
       STATE.registryCache = registry;
       STATE.registryCacheTime = now;
-      
       return registry;
     } catch (err) {
-      console.error("❌ Registry: errore fetch:", err);
+      console.error("❌ Registry error:", err);
       return STATE.registryCache || [];
     }
   },
   
   async getByTwilioNumber(twilioNumber) {
     if (!twilioNumber) return null;
-    
     const registry = await this.fetch();
     const normalizedInput = twilioNumber.replace(/\s/g, "").trim();
     
     const match = registry.find(r => {
       if (!r.twilio_number) return false;
-      const normalizedRegistry = String(r.twilio_number).replace(/\s/g, "").trim();
-      return normalizedRegistry === normalizedInput;
+      return String(r.twilio_number).replace(/\s/g, "").trim() === normalizedInput;
     });
     
-    if (match) {
-      console.log(`✅ Registry: trovato "${match.restaurant_name}" per ${twilioNumber}`);
-    } else {
-      console.warn(`⚠️ Registry: nessun ristorante per ${twilioNumber}`);
-    }
-    
+    if (match) console.log(`✅ Registry: "${match.restaurant_name}" per ${twilioNumber}`);
     return match || null;
   },
   
   async getConfigForCall(callId, twilioNumber = null) {
-    // Già in cache?
     const cached = StateManager.getRestaurantConfig(callId);
     if (cached) return cached;
     
-    // Cerca nel registry
     if (twilioNumber) {
       const config = await this.getByTwilioNumber(twilioNumber);
       if (config) {
@@ -384,49 +337,41 @@ const Registry = {
         return config;
       }
     }
-    
     return null;
   },
   
   getAppsScriptUrl(callId) {
     const config = StateManager.getRestaurantConfig(callId);
-    if (config?.apps_script_url?.trim()) {
-      return config.apps_script_url.trim();
-    }
+    if (config?.apps_script_url?.trim()) return config.apps_script_url.trim();
     return CONFIG.APPS_SCRIPT_URL;
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 6: DATE MANAGER (CENTRALIZZATO)
+// SEZIONE 7: DATE MANAGER (copiato da v2 - funziona)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const DateManager = {
-  // Giorni della settimana
   DAYS_IT: ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'],
   DAYS_EN: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
   MONTHS_IT: ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
               'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'],
   
-  // Ottieni data/ora corrente in Rome
   getNow() {
     const nowString = new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" });
     return new Date(nowString);
   },
   
-  // Inizio giornata
   startOfDay(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   },
   
-  // Aggiungi giorni
   addDays(date, days) {
     const d = new Date(date.getTime());
     d.setDate(d.getDate() + days);
     return d;
   },
   
-  // Converti in ISO (YYYY-MM-DD)
   toISO(date) {
     if (!date || isNaN(date.getTime())) return null;
     const y = date.getFullYear();
@@ -435,38 +380,29 @@ const DateManager = {
     return `${y}-${m}-${d}`;
   },
   
-  // Ottieni giorno della settimana da data ISO
   getDayOfWeek(dateISO) {
     if (!dateISO) return null;
     const [y, m, d] = dateISO.split("-").map(Number);
-    const date = new Date(y, m - 1, d);
-    return date.getDay(); // 0=Domenica, 1=Lunedì, ...
+    return new Date(y, m - 1, d).getDay();
   },
   
-  // Ottieni nome giorno in italiano
   getDayName(dateISO, lang = "it-IT") {
-    const dayOfWeek = this.getDayOfWeek(dateISO);
-    if (dayOfWeek === null) return null;
-    return lang === "en-US" ? this.DAYS_EN[dayOfWeek] : this.DAYS_IT[dayOfWeek];
+    const dow = this.getDayOfWeek(dateISO);
+    if (dow === null) return null;
+    return lang === "en-US" ? this.DAYS_EN[dow] : this.DAYS_IT[dow];
   },
   
-  // Formatta data per display
   formatForDisplay(dateISO, lang = "it-IT") {
     if (!dateISO) return "";
     try {
       const [y, m, d] = dateISO.split("-").map(Number);
       const date = new Date(y, m - 1, d);
-      return date.toLocaleDateString(lang, { 
-        weekday: 'long', 
-        day: 'numeric', 
-        month: 'long' 
-      });
+      return date.toLocaleDateString(lang, { weekday: 'long', day: 'numeric', month: 'long' });
     } catch (e) {
       return dateISO;
     }
   },
   
-  // Prossimo giorno della settimana (0=Dom, 1=Lun, ...)
   getNextWeekday(fromDate, targetWeekday) {
     const result = new Date(fromDate.getTime());
     const diff = ((targetWeekday - result.getDay()) + 7) % 7 || 7;
@@ -474,22 +410,6 @@ const DateManager = {
     return result;
   },
   
-  // Questo sabato
-  getThisSaturday(fromDate) {
-    const day = fromDate.getDay();
-    const diff = (6 - day + 7) % 7;
-    const result = new Date(fromDate.getTime());
-    result.setDate(result.getDate() + diff);
-    return result;
-  },
-  
-  // Sabato prossimo
-  getNextSaturday(fromDate) {
-    const thisSat = this.getThisSaturday(fromDate);
-    return this.addDays(thisSat, 7);
-  },
-  
-  // Costruisci calendario prossimi N giorni
   buildCalendar(days = 14) {
     const now = this.getNow();
     const today = this.startOfDay(now);
@@ -506,62 +426,44 @@ const DateManager = {
         date: iso,
         dayOfWeek,
         dayName: this.DAYS_IT[dayOfWeek],
-        dayNameEN: this.DAYS_EN[dayOfWeek],
         isClosed,
         label: i === 0 ? "OGGI" : i === 1 ? "domani" : i === 2 ? "dopodomani" : null,
       });
     }
-    
     return calendar;
   },
   
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PARSING DATE DA TESTO (FUNZIONE PRINCIPALE)
-  // ═══════════════════════════════════════════════════════════════════════════
+  // Parse date da testo (FIX17/18/24 inclusi)
   parseFromText(text, callId = null) {
     if (!text) return null;
-    
     const t = normalizeText(text);
     const now = this.getNow();
     const today = this.startOfDay(now);
     
-    // 1. Pattern espliciti: "10 dicembre", "21 december"
+    // 1. Data esplicita: "10 dicembre"
     const explicitDate = this._parseExplicitDate(t, today);
-    if (explicitDate) {
-      console.log(`📆 Data esplicita estratta: "${text}" -> ${explicitDate}`);
-      return explicitDate;
-    }
+    if (explicitDate) return explicitDate;
     
-    // 2. Pattern relativi: "domani", "dopodomani", "stasera"
+    // 2. Data relativa: "domani", "dopodomani"
     const relativeDate = this._parseRelativeDate(t, today);
-    if (relativeDate) {
-      console.log(`📆 Data relativa estratta: "${text}" -> ${relativeDate}`);
-      return relativeDate;
-    }
+    if (relativeDate) return relativeDate;
     
-    // 3. Giorni della settimana: "martedì", "sabato prossimo"
+    // 3. Giorno settimana: "martedì" (usa ULTIMO menzionato - FIX24a)
     const weekdayDate = this._parseWeekdayDate(t, today);
-    if (weekdayDate) {
-      console.log(`📆 Giorno settimana estratto: "${text}" -> ${weekdayDate}`);
-      return weekdayDate;
-    }
+    if (weekdayDate) return weekdayDate;
     
-    // 4. Se c'è cronologia, cerca anche lì
+    // 4. Cronologia
     if (callId) {
       const allText = StateManager.getAllUserText(callId);
       if (allText && allText !== text) {
         const fromHistory = this.parseFromText(allText, null);
-        if (fromHistory) {
-          console.log(`📆 Data da cronologia: ${fromHistory}`);
-          return fromHistory;
-        }
+        if (fromHistory) return fromHistory;
       }
     }
     
     return null;
   },
   
-  // Parse data esplicita (es. "10 dicembre")
   _parseExplicitDate(text, today) {
     const monthsMap = {
       'gennaio': 0, 'febbraio': 1, 'marzo': 2, 'aprile': 3, 'maggio': 4, 'giugno': 5,
@@ -582,71 +484,29 @@ const DateManager = {
       if (month !== undefined && day >= 1 && day <= 31) {
         let year = today.getFullYear();
         let candidate = new Date(year, month, day);
-        
-        // Se nel passato, usa anno prossimo
         if (candidate < today) {
           year++;
           candidate = new Date(year, month, day);
         }
-        
         return this.toISO(candidate);
       }
     }
-    
     return null;
   },
   
-  // Parse data relativa (domani, dopodomani, stasera)
   _parseRelativeDate(text, today) {
-    // Ordine importante: "dopodomani" prima di "domani"
-    if (/dopodomani|dopo domani|day after tomorrow/.test(text)) {
-      return this.toISO(this.addDays(today, 2));
-    }
+    if (/dopodomani|dopo domani/.test(text)) return this.toISO(this.addDays(today, 2));
+    if (/domani|tomorrow/.test(text)) return this.toISO(this.addDays(today, 1));
+    if (/oggi|today|stasera|questa sera/.test(text)) return this.toISO(today);
     
-    if (/domani|tomorrow/.test(text)) {
-      return this.toISO(this.addDays(today, 1));
-    }
-    
-    if (/oggi|today|stasera|questa sera|tonight|this evening/.test(text)) {
-      return this.toISO(today);
-    }
-    
-    // "tra X giorni"
     const traMatch = text.match(/(?:tra|fra|in)\s*(\d+)\s*giorni/);
-    if (traMatch) {
-      const days = parseInt(traMatch[1]);
-      return this.toISO(this.addDays(today, days));
-    }
-    
-    // "X days from now"
-    const daysFromMatch = text.match(/(\d+)\s*days?\s*(?:from now)?/);
-    if (daysFromMatch) {
-      const days = parseInt(daysFromMatch[1]);
-      return this.toISO(this.addDays(today, days));
-    }
+    if (traMatch) return this.toISO(this.addDays(today, parseInt(traMatch[1])));
     
     return null;
   },
   
-  // Parse giorno della settimana
-  // FIX24a: Usa l'ULTIMO giorno menzionato (per gestire "mercoledì... anzi giovedì")
   _parseWeekdayDate(text, today) {
-    // "sabato prossimo" / "next saturday"
-    if (/sabato prossimo|next saturday/.test(text)) {
-      return this.toISO(this.getNextSaturday(today));
-    }
-    
-    // "questo sabato" / "this saturday"
-    if (/questo sabato|this saturday/.test(text)) {
-      return this.toISO(this.getThisSaturday(today));
-    }
-    
-    // "domenica prossima" / "next sunday"
-    if (/domenica prossima|next sunday/.test(text)) {
-      return this.toISO(this.addDays(this.getNextWeekday(today, 0), 7));
-    }
-    
-    // Giorni generici - FIX24a: trova l'ULTIMO giorno menzionato
+    // FIX24a: Trova l'ULTIMO giorno menzionato
     const weekdays = [
       { patterns: ['domenica', 'sunday'], index: 0 },
       { patterns: ['lunedi', 'monday'], index: 1 },
@@ -657,13 +517,11 @@ const DateManager = {
       { patterns: ['sabato', 'saturday'], index: 6 },
     ];
     
-    // FIX24a: Trova TUTTE le occorrenze e usa l'ultima
     let lastFoundIndex = -1;
     let lastFoundPosition = -1;
     
     for (const wd of weekdays) {
       for (const pattern of wd.patterns) {
-        // Trova l'ultima occorrenza di questo pattern
         const pos = text.lastIndexOf(pattern);
         if (pos !== -1 && pos > lastFoundPosition) {
           lastFoundPosition = pos;
@@ -673,107 +531,33 @@ const DateManager = {
     }
     
     if (lastFoundIndex !== -1) {
-      console.log(`📆 FIX24a: Ultimo giorno trovato a posizione ${lastFoundPosition} -> ${this.DAYS_IT[lastFoundIndex]}`);
+      console.log(`📆 Ultimo giorno: ${this.DAYS_IT[lastFoundIndex]}`);
       return this.toISO(this.getNextWeekday(today, lastFoundIndex));
     }
-    
     return null;
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAZIONE GIORNO SETTIMANA
-  // Verifica che la risposta GPT non abbia sbagliato
-  // FIX24a: Usa l'ULTIMO giorno menzionato per la validazione
-  // ═══════════════════════════════════════════════════════════════════════════
-  validateDayInText(dateISO, textToCheck) {
-    if (!dateISO || !textToCheck) return { valid: true };
-    
-    const actualDayOfWeek = this.getDayOfWeek(dateISO);
-    const actualDayNameIT = this.DAYS_IT[actualDayOfWeek];
-    const actualDayNameEN = this.DAYS_EN[actualDayOfWeek];
-    
-    const textLower = normalizeText(textToCheck);
-    
-    // FIX24a: Trova l'ULTIMO giorno menzionato nel testo
-    let lastFoundDay = -1;
-    let lastFoundPosition = -1;
-    
-    for (let i = 0; i < 7; i++) {
-      const dayIT = normalizeText(this.DAYS_IT[i]);
-      const dayEN = this.DAYS_EN[i];
-      
-      // Cerca l'ultima occorrenza di questo giorno
-      const posIT = textLower.lastIndexOf(dayIT);
-      const posEN = textLower.lastIndexOf(dayEN);
-      const maxPos = Math.max(posIT, posEN);
-      
-      if (maxPos > lastFoundPosition) {
-        lastFoundPosition = maxPos;
-        lastFoundDay = i;
-      }
-    }
-    
-    // Se abbiamo trovato un giorno, verifica che corrisponda
-    if (lastFoundDay !== -1 && lastFoundDay !== actualDayOfWeek) {
-      console.warn(`⚠️ MISMATCH GIORNO: ultimo giorno nel testo è "${this.DAYS_IT[lastFoundDay]}" ma ${dateISO} è ${actualDayNameIT}`);
-      return {
-        valid: false,
-        foundDay: this.DAYS_IT[lastFoundDay],
-        actualDay: actualDayNameIT,
-        actualDayEN: actualDayNameEN,
-      };
-    }
-    
-    return { valid: true };
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 7: TIME MANAGER
+// SEZIONE 8: TIME MANAGER (copiato da v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TimeManager = {
-  // Estrai orario dal testo
   parseFromText(text) {
     if (!text) return null;
-    
     const t = text.toLowerCase().trim();
     
-    // "mezzogiorno"
-    if (/mezzogiorno|noon/.test(t)) {
-      return "12:00:00";
-    }
+    if (/mezzogiorno|noon/.test(t)) return "12:00:00";
+    if (/mezzanotte|midnight/.test(t)) return "00:00:00";
     
-    // "mezzanotte"
-    if (/mezzanotte|midnight/.test(t)) {
-      return "00:00:00";
-    }
-    
-    // "alle 20", "alle 20:30", "ore 20"
+    // "alle 20", "alle 20:30"
     const itMatch = t.match(/(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/i);
     if (itMatch) {
       let hour = parseInt(itMatch[1]);
       const minutes = itMatch[2] ? parseInt(itMatch[2]) : 0;
-      
-      // Assumi sera se ora ambigua (8 -> 20)
       if (hour >= 1 && hour <= 11 && !t.includes("mattina") && !t.includes("pranzo")) {
         hour += 12;
       }
-      
-      return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-    }
-    
-    // "at 8", "at 8:30", "at 8pm"
-    const enMatch = t.match(/at\s*(\d{1,2})(?::(\d{2}))?\s*(pm|am)?/i);
-    if (enMatch) {
-      let hour = parseInt(enMatch[1]);
-      const minutes = enMatch[2] ? parseInt(enMatch[2]) : 0;
-      const ampm = enMatch[3]?.toLowerCase();
-      
-      if (ampm === 'pm' && hour < 12) hour += 12;
-      if (ampm === 'am' && hour === 12) hour = 0;
-      if (!ampm && hour >= 1 && hour <= 11) hour += 12;
-      
       return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
     }
     
@@ -787,60 +571,35 @@ const TimeManager = {
       }
     }
     
-    // "le nove e mezza", "le otto"
-    const wordMatch = t.match(/le\s*([\w]+)(?:\s*e\s*(mezza|mezzo))?/i);
-    if (wordMatch) {
-      const numberWords = {
-        'una': 13, 'due': 14, 'tre': 15, 'quattro': 16, 'cinque': 17,
-        'sei': 18, 'sette': 19, 'otto': 20, 'nove': 21, 'dieci': 22,
-        'undici': 23, 'dodici': 12,
-      };
-      const hourWord = wordMatch[1].toLowerCase();
-      const halfHour = wordMatch[2] ? 30 : 0;
-      
-      if (numberWords[hourWord]) {
-        const hour = numberWords[hourWord];
-        return `${String(hour).padStart(2, '0')}:${String(halfHour).padStart(2, '0')}:00`;
-      }
-    }
-    
     return null;
   },
   
-  // Inferisci orario di default
   inferDefault(text) {
     if (!text) return null;
-    
     const t = normalizeText(text);
-    
     if (/pranzo|lunch/.test(t)) return "13:00:00";
-    if (/sera|serale|cena|dinner|evening/.test(t)) return "20:00:00";
-    if (/tardi|late/.test(t)) return "21:30:00";
-    
+    if (/sera|serale|cena|dinner/.test(t)) return "20:00:00";
     return null;
   },
   
-  // Format per display
   formatForDisplay(timeStr) {
     if (!timeStr) return "";
-    return timeStr.substring(0, 5); // "20:30:00" -> "20:30"
+    return timeStr.substring(0, 5);
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 8: PEOPLE MANAGER
+// SEZIONE 9: PEOPLE MANAGER (copiato da v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const PeopleManager = {
   parseFromText(text) {
     if (!text) return null;
-    
     const t = text.toLowerCase().trim();
     
     const patterns = [
       /(?:per|siamo|saremo|in)\s*(\d+)\s*(?:person[ae]|pax)?/i,
       /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
-      /(?:for|we are|we'll be)\s*(\d+)/i,
       /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
     ];
     
@@ -852,12 +611,9 @@ const PeopleManager = {
       }
     }
     
-    // Numeri in parole
     const wordNumbers = {
       'due': 2, 'tre': 3, 'quattro': 4, 'cinque': 5, 'sei': 6,
       'sette': 7, 'otto': 8, 'nove': 9, 'dieci': 10,
-      'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
-      'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
     };
     
     for (const [word, num] of Object.entries(wordNumbers)) {
@@ -868,216 +624,85 @@ const PeopleManager = {
   },
 };
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 9: CLOSURE CHECKER (CENTRALIZZATO - SEMPRE ATTIVO)
+// SEZIONE 10: CLOSURE CHECKER (copiato da v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ClosureChecker = {
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FUNZIONE PRINCIPALE: Verifica se un giorno è aperto
-  // QUESTA FUNZIONE È CHIAMATA SEMPRE, NON DIPENDE DA COSA DICE GPT
-  // ═══════════════════════════════════════════════════════════════════════════
   async isOpen(dateISO, callId = null) {
-    if (!dateISO) {
-      return { open: true, reason: null };
-    }
+    if (!dateISO) return { open: true, reason: null };
     
-    console.log(`🔍 ClosureChecker: verifico ${dateISO}...`);
+    console.log(`🔍 ClosureChecker: ${dateISO}...`);
     
-    // STEP 1: Check chiusura settimanale (LOCALE - senza API call)
+    // Check chiusura settimanale
     const dayOfWeek = DateManager.getDayOfWeek(dateISO);
-    
     if (CONFIG.WEEKLY_CLOSING_DAYS.includes(dayOfWeek)) {
       const dayName = DateManager.getDayName(dateISO, "it-IT");
-      console.log(`⛔ CHIUSO: ${dateISO} è ${dayName} (chiusura settimanale)`);
+      console.log(`⛔ CHIUSO: ${dayName}`);
       return {
         open: false,
-        reason: `chiusura_settimanale`,
+        reason: "chiusura_settimanale",
         dayName,
         message_it: `Il ristorante è chiuso il ${dayName}.`,
         message_en: `The restaurant is closed on ${DateManager.getDayName(dateISO, "en-US")}s.`,
       };
     }
     
-    // STEP 2: Check chiusure straordinarie (API call ad Apps Script)
+    // Check chiusure straordinarie
     try {
       const appsScriptUrl = Registry.getAppsScriptUrl(callId);
-      
       const response = await fetch(appsScriptUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "check_closure",
-          data: dateISO,
-        }),
+        body: JSON.stringify({ action: "check_closure", data: dateISO }),
       });
       
       const text = await response.text();
       let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        console.error("❌ ClosureChecker: risposta non JSON:", text);
-        return { open: true, reason: null };
-      }
+      try { data = JSON.parse(text); } catch (e) { return { open: true, reason: null }; }
       
       if (data.isClosed === true) {
-        console.log(`⛔ CHIUSO: ${dateISO} - ${data.reason}`);
+        console.log(`⛔ CHIUSO: ${data.reason}`);
         return {
           open: false,
           reason: "chiusura_straordinaria",
-          message_it: data.reason || "Giorno di chiusura straordinaria",
+          message_it: data.reason || "Chiusura straordinaria",
           message_en: "Exceptional closing day",
         };
       }
       
       console.log(`✅ APERTO: ${dateISO}`);
       return { open: true, reason: null };
-      
     } catch (err) {
-      console.error("❌ ClosureChecker: errore API:", err);
-      // In caso di errore, non blocchiamo (fail-safe)
+      console.error("❌ ClosureChecker error:", err);
       return { open: true, reason: null };
     }
   },
   
-  // Costruisce messaggio per giorno chiuso
   buildClosedMessage(dateISO, closureResult, lang = "it-IT") {
     const dateDisplay = DateManager.formatForDisplay(dateISO, lang);
     
     if (closureResult.reason === "chiusura_settimanale") {
-      if (lang === "en-US") {
-        return `I'm sorry, but the restaurant is closed on ${closureResult.dayName}s. Would you like to book for another day?`;
-      } else {
-        return `Mi dispiace, ma il ristorante è chiuso il ${closureResult.dayName}. Vuoi prenotare per un altro giorno?`;
-      }
+      return lang === "en-US"
+        ? `I'm sorry, the restaurant is closed on ${closureResult.dayName}s. Would you like another day?`
+        : `Mi dispiace, il ristorante è chiuso il ${closureResult.dayName}. Vuoi prenotare per un altro giorno?`;
     }
     
-    if (lang === "en-US") {
-      return `I'm sorry, but the restaurant will be closed on ${dateDisplay}. Would you like to book for another day?`;
-    } else {
-      return `Mi dispiace, ma il ristorante sarà chiuso ${dateDisplay}. Vuoi prenotare per un altro giorno?`;
-    }
+    return lang === "en-US"
+      ? `I'm sorry, we're closed on ${dateDisplay}. Would you like another day?`
+      : `Mi dispiace, siamo chiusi ${dateDisplay}. Vuoi prenotare per un altro giorno?`;
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 10: NAME MANAGER (Protezione nome da comandi)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const NameManager = {
-  // Parole che potrebbero essere confuse con comandi
-  COMMAND_WORDS: [
-    'cancella', 'cancello', 'cancellare', 'cancellazione',
-    'disdetta', 'disdire', 'disdico',
-    'annulla', 'annullare', 'annullo', 'annullamento',
-    'elimina', 'eliminare', 'modifica', 'modificare',
-    'cancel', 'delete', 'remove',
-  ],
-  
-  // Pattern che indicano "sto dicendo il mio nome"
-  NAME_PATTERNS: [
-    /\b(?:mi chiamo|sono|a nome|nome è|il nome è)\s+(.+)/i,
-    /\b(?:my name is|i'm|i am|the name is|under|call me)\s+(.+)/i,
-  ],
-  
-  // Verifica se l'utente sta fornendo il nome
-  isProvidingName(text) {
-    if (!text) return false;
-    const t = text.toLowerCase();
-    return this.NAME_PATTERNS.some(p => p.test(t));
-  },
-  
-  // Estrai nome dal testo
-  extractName(text) {
-    if (!text) return null;
-    
-    for (const pattern of this.NAME_PATTERNS) {
-      const match = text.match(pattern);
-      if (match && match[1]) {
-        let name = match[1].trim().replace(/[.,!?]+$/, '').trim();
-        if (name.length > 1) {
-          // Capitalizza ogni parola
-          return name.split(/\s+/)
-            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-            .join(' ');
-        }
-      }
-    }
-    
-    return null;
-  },
-  
-  // Estrai nome "bare" (senza pattern espliciti)
-  extractBareName(text) {
-    if (!text) return null;
-    
-    let cleaned = text.trim().replace(/[.,!?]+$/, '').trim();
-    
-    // Troppo lungo? Probabilmente non è un nome
-    const words = cleaned.split(/\s+/);
-    if (words.length > 4) return null;
-    
-    // Contiene numeri o simboli? Non è un nome
-    if (/\d|@|#|\$|%/.test(cleaned)) return null;
-    
-    // Troppo corto?
-    if (cleaned.length < 2) return null;
-    
-    // Capitalizza
-    return words
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-      .join(' ');
-  },
-  
-  // Verifica se il nome contiene parole "pericolose"
-  containsCommandWord(name) {
-    if (!name) return false;
-    const t = name.toLowerCase();
-    return this.COMMAND_WORDS.some(w => t.includes(w));
-  },
-  
-  // Verifica se GPT sta confondendo un nome con un comando
-  isGptConfusingName(action, replyText, reservationState) {
-    if (action !== "cancel_reservation") return false;
-    if (!replyText) return false;
-    
-    const reply = replyText.toLowerCase();
-    
-    // GPT menziona cancellazione?
-    const mentionsCancellation = (
-      reply.includes("cancell") ||
-      reply.includes("disdett") ||
-      reply.includes("annull") ||
-      reply.includes("quale giorno vuoi cancellare")
-    );
-    
-    if (!mentionsCancellation) return false;
-    
-    // Stavamo raccogliendo dati per una prenotazione?
-    const hasDate = reservationState?.date;
-    const hasTime = reservationState?.time;
-    const hasPeople = reservationState?.people > 0;
-    const hasName = reservationState?.name;
-    
-    // Se abbiamo già dati ma NON il nome -> probabilmente stavamo chiedendo il nome
-    if ((hasDate || hasTime || hasPeople) && !hasName) {
-      return true;
-    }
-    
-    return false;
-  },
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 11: CALENDAR SERVICE
+// SEZIONE 11: CALENDAR SERVICE (copiato da v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const CalendarService = {
-  // Invia prenotazione a Calendar
   async createReservation(data, callId = null) {
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
-    console.log("📅 Calendar: creazione prenotazione", data);
+    console.log("📅 Calendar: creazione", data);
     
     const response = await fetch(appsScriptUrl, {
       method: "POST",
@@ -1095,17 +720,11 @@ const CalendarService = {
     
     const text = await response.text();
     let result;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      result = { rawResponse: text };
-    }
-    
+    try { result = JSON.parse(text); } catch (e) { result = { rawResponse: text }; }
     console.log("📅 Calendar: risposta", result);
     return result;
   },
   
-  // Cancella prenotazione
   async cancelReservation(data, callId = null) {
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
     console.log("🗑️ Calendar: cancellazione", data);
@@ -1125,22 +744,16 @@ const CalendarService = {
     
     const text = await response.text();
     let result;
-    try {
-      result = JSON.parse(text);
-    } catch (e) {
-      result = { rawResponse: text };
-    }
-    
+    try { result = JSON.parse(text); } catch (e) { result = { rawResponse: text }; }
     console.log("🗑️ Calendar: risposta", result);
     return result;
   },
   
-  // FIX25c: Cerca prenotazioni esistenti per telefono
   async findExistingReservation(phone, date, callId = null) {
     if (!phone) return null;
     
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
-    console.log(`🔍 FIX25c: Ricerca prenotazione per telefono ${phone}${date ? `, data ${date}` : ''}`);
+    console.log(`🔍 Ricerca prenotazione: ${phone}`);
     
     try {
       const response = await fetch(appsScriptUrl, {
@@ -1155,34 +768,25 @@ const CalendarService = {
       
       const text = await response.text();
       let result;
-      try {
-        result = JSON.parse(text);
-      } catch (e) {
-        console.log("⚠️ FIX25c: Risposta non JSON:", text);
-        return null;
-      }
+      try { result = JSON.parse(text); } catch (e) { return null; }
       
       if (result.found && result.reservation) {
-        console.log(`✅ FIX25c: Prenotazione trovata:`, result.reservation);
+        console.log(`✅ Prenotazione trovata:`, result.reservation);
         return result.reservation;
-      } else {
-        console.log(`📋 FIX25c: Nessuna prenotazione trovata per ${phone}`);
-        return null;
       }
+      console.log(`📋 Nessuna prenotazione per ${phone}`);
+      return null;
     } catch (err) {
-      console.error("❌ FIX25c: Errore ricerca prenotazione:", err);
+      console.error("❌ Errore ricerca:", err);
       return null;
     }
   },
   
-  // Check disponibilità slot
   async checkAvailability(date, time, people, callId = null) {
-    if (!date || !time || !people) {
-      return { available: true };
-    }
+    if (!date || !time || !people) return { available: true };
     
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
-    console.log(`🔍 Calendar: check slot ${date} ${time} per ${people} pax`);
+    console.log(`🔍 Check slot ${date} ${time} per ${people} pax`);
     
     try {
       const response = await fetch(appsScriptUrl, {
@@ -1198,28 +802,20 @@ const CalendarService = {
       
       const text = await response.text();
       let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        return { available: true };
-      }
+      try { data = JSON.parse(text); } catch (e) { return { available: true }; }
       
       if (data.reason === "day_closed") {
         return { available: false, reason: "day_closed", closureReason: data.closureReason };
       }
-      
       if (data.reason === "slot_full") {
         return { available: false, reason: "slot_full" };
       }
-      
       return { available: true };
     } catch (err) {
-      console.error("❌ Calendar: errore check availability:", err);
       return { available: true };
     }
   },
   
-  // Trova slot alternativi
   async findAlternatives(date, time, people, callId = null) {
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
     
@@ -1237,11 +833,7 @@ const CalendarService = {
       
       const text = await response.text();
       let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        return { success: false, sameDay: [], nextDays: [] };
-      }
+      try { data = JSON.parse(text); } catch (e) { return { success: false, sameDay: [], nextDays: [] }; }
       
       if (data.success && data.availableSlots) {
         return {
@@ -1250,79 +842,43 @@ const CalendarService = {
           nextDays: data.availableSlots.nextDays || [],
         };
       }
-      
       return { success: false, sameDay: [], nextDays: [] };
     } catch (err) {
       return { success: false, sameDay: [], nextDays: [] };
     }
   },
   
-  // Costruisce messaggio con alternative
   buildAlternativesMessage(alternatives, lang = "it-IT") {
     const { sameDay, nextDays } = alternatives;
     
     if (sameDay?.length > 0) {
       const times = sameDay.map(s => s.time).slice(0, 3);
-      
       if (lang === "en-US") {
-        if (times.length === 1) {
-          return `I'm sorry, we're fully booked at that time. I have availability at ${times[0]}. Would that work?`;
-        }
-        const last = times.pop();
-        return `I'm sorry, we're fully booked. I have availability at ${times.join(", ")} or ${last}. Which would you prefer?`;
-      } else {
-        if (times.length === 1) {
-          return `Mi dispiace, a quell'ora siamo al completo. Ho disponibilità alle ${times[0]}. Può andare bene?`;
-        }
-        const last = times.pop();
-        return `Mi dispiace, siamo al completo. Ho disponibilità alle ${times.join(", ")} oppure alle ${last}. Quale preferisci?`;
+        return times.length === 1
+          ? `I'm sorry, we're full. I have ${times[0]}. Would that work?`
+          : `I'm sorry, we're full. I have ${times.slice(0,-1).join(", ")} or ${times.slice(-1)}. Which do you prefer?`;
       }
+      return times.length === 1
+        ? `Mi dispiace, siamo al completo. Ho le ${times[0]}. Può andare?`
+        : `Mi dispiace, siamo al completo. Ho le ${times.slice(0,-1).join(", ")} o le ${times.slice(-1)}. Quale preferisci?`;
     }
     
     if (nextDays?.length > 0) {
       const firstDay = nextDays[0];
       const times = firstDay.slots?.map(s => s.time).slice(0, 2) || [];
-      
-      if (lang === "en-US") {
-        return `I'm sorry, we're fully booked today. Next availability is ${firstDay.dayName} at ${times.join(" or ")}. Would you like to book?`;
-      } else {
-        return `Mi dispiace, per oggi siamo al completo. Prima disponibilità ${firstDay.dayName} alle ${times.join(" o ")}. Vuoi prenotare?`;
-      }
+      return lang === "en-US"
+        ? `I'm sorry, we're full today. Next availability is ${firstDay.dayName} at ${times.join(" or ")}. Would you like to book?`
+        : `Mi dispiace, oggi siamo al completo. Prima disponibilità ${firstDay.dayName} alle ${times.join(" o ")}. Vuoi prenotare?`;
     }
     
-    return lang === "en-US" 
-      ? "I'm sorry, we're fully booked. Would you like to try a different day?"
-      : "Mi dispiace, siamo al completo. Vuoi provare con un altro giorno?";
-  },
-  
-  // Notifica evento grande al proprietario
-  async notifyLargeEvent(data, callId = null) {
-    const appsScriptUrl = Registry.getAppsScriptUrl(callId);
-    
-    try {
-      await fetch(appsScriptUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "notify_big_event",
-          nome: data.name,
-          persone: data.people,
-          data: data.date,
-          ora: data.time,
-          telefono: data.phone || "",
-          email: data.customerEmail || "",
-        }),
-      });
-      console.log("📧 Notifica evento grande inviata");
-    } catch (err) {
-      console.error("❌ Errore notifica evento grande:", err);
-    }
+    return lang === "en-US"
+      ? "I'm sorry, we're fully booked. Would you like a different day?"
+      : "Mi dispiace, siamo al completo. Vuoi provare un altro giorno?";
   },
 };
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 12: CONTEXT SERVICE (Caricamento contesto ristorante)
+// SEZIONE 12: CONTEXT SERVICE (copiato da v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ContextService = {
@@ -1336,21 +892,14 @@ const ContextService = {
       const text = await response.text();
       
       let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        console.error("❌ Context: risposta non JSON");
-        return this.getDefault();
-      }
+      try { data = JSON.parse(text); } catch (e) { return this.getDefault(); }
       
-      if (!response.ok || !data || data.success === false) {
-        return this.getDefault();
-      }
+      if (!response.ok || !data || data.success === false) return this.getDefault();
       
       console.log("✅ Context: caricato");
       return data;
     } catch (err) {
-      console.error("❌ Context: errore:", err);
+      console.error("❌ Context error:", err);
       return this.getDefault();
     }
   },
@@ -1361,24 +910,11 @@ const ContextService = {
       restaurant: {
         name: CONFIG.DEFAULT_RESTAURANT_NAME,
         email: CONFIG.OWNER_EMAIL_DEFAULT,
-        address: "",
-        phone: "",
-        timezone: "Europe/Rome",
-        openingHoursText: "",
-        closingRulesText: "",
+        address: "", phone: "", timezone: "Europe/Rome",
+        openingHoursText: "", closingRulesText: "",
       },
-      menu: {
-        summaryText: "",
-        vegetarianText: "",
-        glutenFreeText: "",
-        priceRangeText: "",
-      },
-      rules: {
-        largeGroupThreshold: CONFIG.LARGE_GROUP_THRESHOLD,
-        eventThreshold: CONFIG.EVENT_THRESHOLD,
-        outdoorSeatingText: "",
-        bookingPolicyText: "",
-      },
+      menu: { summaryText: "", vegetarianText: "", glutenFreeText: "", priceRangeText: "" },
+      rules: { largeGroupThreshold: CONFIG.LARGE_GROUP_THRESHOLD, eventThreshold: CONFIG.EVENT_THRESHOLD },
     };
   },
   
@@ -1394,11 +930,8 @@ const ContextService = {
   getRestaurantName(callId) {
     const config = StateManager.getRestaurantConfig(callId);
     if (config?.restaurant_name) return config.restaurant_name;
-    
     const ctx = StateManager.getContext(callId);
-    if (ctx?.restaurant?.name) return ctx.restaurant.name;
-    
-    return CONFIG.DEFAULT_RESTAURANT_NAME;
+    return ctx?.restaurant?.name || CONFIG.DEFAULT_RESTAURANT_NAME;
   },
   
   getRestaurantEmail(callId) {
@@ -1415,431 +948,213 @@ const ContextService = {
   },
 };
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 13: VALIDATION PIPELINE (UNIFICATA)
+// SEZIONE 13: RECAP MANAGER (NUOVO v3!)
+// Gestisce messaggi deterministici per cancel/modify - NO GPT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const RecapManager = {
+  // Costruisce messaggio RECAP della prenotazione esistente
+  buildRecapMessage(existingRes, intent, lang = "it-IT") {
+    const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
+    const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
+    
+    // Messaggio trasparente: spiega COME sa chi è
+    if (lang === "en-US") {
+      return `I found a reservation under the name ${existingRes.name}, ` +
+             `for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. ` +
+             `Is this the reservation you're referring to?`;
+    }
+    return `Ho trovato una prenotazione a nome ${existingRes.name}, ` +
+           `per ${existingRes.people} persone, ${dateDisplay} alle ${timeDisplay}. ` +
+           `È questa la prenotazione?`;
+  },
+  
+  // Messaggio per chiedere conferma AZIONE (dopo recap confermato)
+  buildActionConfirmMessage(existingRes, intent, lang = "it-IT") {
+    const name = existingRes.name?.split(' ')[0] || existingRes.name;
+    
+    if (intent === 'cancel') {
+      return lang === "en-US"
+        ? `Alright ${name}, do you confirm you want to cancel this reservation?`
+        : `Perfetto ${name}, confermi di voler cancellare questa prenotazione?`;
+    }
+    // modify
+    return lang === "en-US"
+      ? `Sure ${name}, what would you like to change?`
+      : `Certo ${name}, cosa vorresti modificare?`;
+  },
+  
+  // Messaggio cancellazione completata
+  buildCancellationDoneMessage(existingRes, lang = "it-IT") {
+    return lang === "en-US"
+      ? `Done! The reservation has been cancelled. We hope to see you another time. Goodbye!`
+      : `Fatto! La prenotazione è stata cancellata. Speriamo di rivederti presto. Buona giornata!`;
+  },
+  
+  // Messaggio modifica completata
+  buildModificationDoneMessage(reservation, lang = "it-IT") {
+    const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+    const timeDisplay = TimeManager.formatForDisplay(reservation.time);
+    const firstName = reservation.name?.split(' ')[0] || reservation.name;
+    
+    return lang === "en-US"
+      ? `Perfect ${firstName}! Your reservation has been updated: ${reservation.people} people on ${dateDisplay} at ${timeDisplay}. See you soon!`
+      : `Perfetto ${firstName}! La prenotazione è stata aggiornata: ${reservation.people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`;
+  },
+  
+  // Messaggio se prenotazione non trovata
+  buildNotFoundMessage(lang = "it-IT") {
+    return lang === "en-US"
+      ? `I couldn't find a reservation with your phone number. Would you like to make a new one?`
+      : `Non ho trovato prenotazioni associate a questo numero. Vuoi fare una nuova prenotazione?`;
+  },
+  
+  // Verifica se utente sta confermando
+  isConfirming(text) {
+    const t = normalizeText(text || "");
+    // Pattern positivi
+    if (/^(si|yes|esatto|corretto|giusto|confermo|certo|ok|va bene|proprio|quella)/.test(t)) return true;
+    if (/\b(conferm|esatt|corrett|giust|proprio quella)\b/.test(t)) return true;
+    return false;
+  },
+  
+  // Verifica se utente sta negando
+  isDenying(text) {
+    const t = normalizeText(text || "");
+    if (/^(no|non|sbagliato|errato|altra|diversa)/.test(t)) return true;
+    if (/\b(sbagliat|errat|non e)\b/.test(t)) return true;
+    return false;
+  },
+  
+  // Estrae cosa vuole modificare dal testo
+  parseModifyRequest(text) {
+    const t = normalizeText(text || "");
+    
+    // Orario
+    if (/orar|ora|alle|time|hour/.test(t)) {
+      const newTime = TimeManager.parseFromText(text);
+      return { field: 'time', value: newTime };
+    }
+    
+    // Data/Giorno
+    if (/data|giorn|spost|day|date/.test(t)) {
+      const newDate = DateManager.parseFromText(text);
+      return { field: 'date', value: newDate };
+    }
+    
+    // Persone
+    if (/person|gente|quant|number|people|aumentat|diminuit|aggiung/.test(t)) {
+      const newPeople = PeopleManager.parseFromText(text);
+      return { field: 'people', value: newPeople };
+    }
+    
+    // Prova a estrarre direttamente
+    const time = TimeManager.parseFromText(text);
+    if (time) return { field: 'time', value: time };
+    
+    const date = DateManager.parseFromText(text);
+    if (date) return { field: 'date', value: date };
+    
+    const people = PeopleManager.parseFromText(text);
+    if (people) return { field: 'people', value: people };
+    
+    return { field: null, value: null };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEZIONE 14: VALIDATION PIPELINE (SEMPLIFICATO v3)
+// Solo per nuove prenotazioni - cancel/modify gestiti da RecapManager
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ValidationPipeline = {
-  /**
-   * PIPELINE PRINCIPALE DI VALIDAZIONE
-   * Applica tutti i controlli in ordine
-   */
   async validate(gptResponse, userText, callId) {
-    console.log("🔄 ValidationPipeline: inizio validazione...");
+    console.log("🔄 ValidationPipeline...");
     
     const lang = StateManager.getLanguage(callId);
-    const reservationBefore = StateManager.getReservation(callId);
     let response = { ...gptResponse };
     let reservation = response.reservation || {};
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 1: Estrai/completa data dal testo utente - PRIORITÀ INPUT UTENTE
-    // ═══════════════════════════════════════════════════════════════════════
-    let gptOriginalDate = reservation.date; // Salva data originale GPT per correzione testo
+    // STEP 1: Estrai data dal testo utente (priorità utente)
     const parsedDate = DateManager.parseFromText(userText, callId);
     if (parsedDate) {
-      // Se l'utente ha menzionato una data/giorno, quella ha SEMPRE priorità
       if (reservation.date && reservation.date !== parsedDate) {
-        console.log(`📆 Data relativa estratta: "${userText}" -> ${parsedDate}`);
-        console.log(`⚠️ STEP 1: GPT aveva ${reservation.date}, utente ha detto ${parsedDate}. Correggo!`);
-        
-        // FIX18/FIX19: Correggi data numerica nel reply_text (es. "30 dicembre 2025" -> "1 gennaio 2026")
-        if (response.reply_text) {
-          const oldDate = new Date(reservation.date + 'T12:00:00');
-          const newDate = new Date(parsedDate + 'T12:00:00');
-          const oldDay = oldDate.getDate();
-          const newDay = newDate.getDate();
-          const oldMonth = oldDate.getMonth();
-          const newMonth = newDate.getMonth();
-          const oldYear = oldDate.getFullYear();
-          const newYear = newDate.getFullYear();
-          
-          const months = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
-                         'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
-          
-          const oldMonthName = months[oldMonth];
-          const newMonthName = months[newMonth];
-          
-          // Caso 1: Correggi formato completo con anno (es. "30 dicembre 2025" -> "1 gennaio 2026")
-          const patternWithYear = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\s+\\d{4}\\b`, 'gi');
-          response.reply_text = response.reply_text.replace(patternWithYear, `${newDay} ${newMonthName} ${newYear}`);
-          
-          // Caso 2: Correggi formato senza anno (es. "30 dicembre" -> "1 gennaio")
-          if (oldDay !== newDay || oldMonth !== newMonth) {
-            const pattern = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\b`, 'gi');
-            response.reply_text = response.reply_text.replace(pattern, `${newDay} ${newMonthName}`);
-          }
-          
-          // FIX19: Caso 3 - Anno sbagliato isolato (es. "2025" dovrebbe essere "2026")
-          if (oldYear !== newYear) {
-            // Sostituisci l'anno SOLO se preceduto da mese o giorno (evita falsi positivi)
-            const yearPattern = new RegExp(`(${newMonthName}|${newDay})\\s+${oldYear}\\b`, 'gi');
-            response.reply_text = response.reply_text.replace(yearPattern, `$1 ${newYear}`);
-          }
-          
-          if (oldDay !== newDay || oldMonth !== newMonth || oldYear !== newYear) {
-            console.log(`✅ STEP 1: Corretto testo "${oldDay} ${oldMonthName} ${oldYear}" -> "${newDay} ${newMonthName} ${newYear}" nel reply`);
-          }
-        }
+        console.log(`📆 Correggo data: ${reservation.date} -> ${parsedDate}`);
       }
       reservation.date = parsedDate;
-      console.log(`✅ STEP 1: Data estratta: ${parsedDate}`);
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 2: CHECK CHIUSURA (SEMPRE - questo è il fix principale!)
-    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 2: Check chiusura
     if (reservation.date) {
       const closureCheck = await ClosureChecker.isOpen(reservation.date, callId);
-      
       if (!closureCheck.open) {
-        console.log(`⛔ STEP 2: Giorno chiuso! Correggo risposta.`);
-        
+        console.log(`⛔ Giorno chiuso`);
         response.reply_text = ClosureChecker.buildClosedMessage(reservation.date, closureCheck, lang);
         response.action = "ask_date";
         reservation.date = null;
-        
-        // Aggiorna stato
         StateManager.mergeReservation(callId, { date: null });
         response.reservation = reservation;
-        
         return response;
       }
-      
-      // ═══════════════════════════════════════════════════════════════════════
-      // STEP 2b: FIX18/FIX19 - Correggi hallucination chiusure festive
-      // Se GPT dice "chiuso" ma il giorno è effettivamente APERTO -> correggi!
-      // ═══════════════════════════════════════════════════════════════════════
-      if (closureCheck.open && response.reply_text && /chius|closed/i.test(response.reply_text)) {
-        console.log(`⚠️ STEP 2b: GPT ha detto "chiuso" ma ${reservation.date} è APERTO! Correggo hallucination.`);
-        
-        // FIX19: Prima estrai persone dal testo utente o dalla cronologia se non presenti
-        let peopleCount = reservation.people;
-        if (!peopleCount || peopleCount <= 0) {
-          // Prova a estrarre dal testo corrente
-          const allText = StateManager.getAllUserText(callId) + " " + userText;
-          const peopleMatch = allText.match(/(\d+)\s*person[ae]|per\s*(\d+)|in\s*(\d+)|siamo\s*(?:in\s*)?(\d+)|gruppo\s*(?:di\s*)?(\d+)|(\d+)\s*(?:di noi|ospiti|invitati)/i);
-          if (peopleMatch) {
-            peopleCount = parseInt(peopleMatch[1] || peopleMatch[2] || peopleMatch[3] || peopleMatch[4] || peopleMatch[5] || peopleMatch[6]);
-            if (peopleCount > 0) {
-              reservation.people = peopleCount;
-              console.log(`✅ STEP 2b: Persone estratte dalla cronologia: ${peopleCount}`);
-            }
-          }
-        }
-        
-        // Costruisci messaggio corretto
-        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
-        
-        // Se abbiamo già persone E orario, chiedi nome
-        if (peopleCount && peopleCount > 0 && reservation.time) {
-          response.reply_text = lang === "en-US"
-            ? `Perfect, for ${peopleCount} people on ${dateDisplay} at ${reservation.time.substring(0,5)}. What's your name?`
-            : `Perfetto, per ${peopleCount} persone ${dateDisplay} alle ${reservation.time.substring(0,5)}. Qual è il tuo nome?`;
-          response.action = "ask_name";
-        }
-        // Se abbiamo persone ma non orario, chiedi orario
-        else if (peopleCount && peopleCount > 0) {
-          response.reply_text = lang === "en-US"
-            ? `Perfect, for ${peopleCount} people on ${dateDisplay}. What time would you like?`
-            : `Perfetto, per ${peopleCount} persone ${dateDisplay}. A che ora vorresti prenotare?`;
-          response.action = "ask_time";
-        } else {
-          // Altrimenti chiedi persone
-          response.reply_text = lang === "en-US"
-            ? `Perfect, for ${dateDisplay}. How many people will you be?`
-            : `Perfetto, per ${dateDisplay}. Quante persone sarete?`;
-          response.action = "ask_people";
-        }
-        
-        console.log(`✅ STEP 2b: Corretto messaggio, giorno ${reservation.date} è APERTO`);
-      }
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 3: Valida giorno settimana - PRIORITÀ ALL'INPUT UTENTE
-    // ═══════════════════════════════════════════════════════════════════════
-    if (reservation.date) {
-      // Prima: controlla se l'UTENTE ha menzionato un giorno specifico
-      const userDayValidation = DateManager.validateDayInText(reservation.date, userText);
-      
-      if (!userDayValidation.valid) {
-        // L'utente ha detto un giorno diverso dalla data GPT!
-        // CORREGGERE LA DATA per corrispondere al giorno dell'utente
-        console.log(`⚠️ STEP 3: Utente ha detto "${userDayValidation.foundDay}" ma GPT ha generato data per ${userDayValidation.actualDay}`);
-        
-        // Trova l'indice del giorno menzionato dall'utente
-        const userDayIndex = DateManager.DAYS_IT.findIndex(d => 
-          normalizeText(d) === normalizeText(userDayValidation.foundDay)
-        );
-        
-        if (userDayIndex !== -1) {
-          // Ricalcola la data corretta per il giorno menzionato dall'utente
-          const today = DateManager.getNow();
-          const correctDate = DateManager.getNextWeekday(today, userDayIndex);
-          const correctDateISO = DateManager.toISO(correctDate);
-          
-          console.log(`✅ STEP 3: Corretto DATA ${reservation.date} -> ${correctDateISO} (${userDayValidation.foundDay})`);
-          
-          reservation.date = correctDateISO;
-          
-          // Aggiorna anche il testo di risposta se menziona il giorno sbagliato
-          if (response.reply_text) {
-            const wrongDayInReply = userDayValidation.actualDay;
-            const correctDayForReply = userDayValidation.foundDay;
-            const regex = new RegExp(wrongDayInReply, 'gi');
-            response.reply_text = response.reply_text.replace(regex, correctDayForReply);
-          }
-        }
-      } else if (response.reply_text) {
-        // L'utente non ha menzionato un giorno, ma controlliamo il reply_text di GPT
-        const replyValidation = DateManager.validateDayInText(reservation.date, response.reply_text);
-        
-        if (!replyValidation.valid) {
-          // GPT ha scritto un giorno sbagliato nel testo, correggiamo solo il testo
-          console.log(`⚠️ STEP 3: GPT ha scritto giorno sbagliato nel reply, correggo testo.`);
-          const wrongDay = replyValidation.foundDay;
-          const correctDay = replyValidation.actualDay;
-          const regex = new RegExp(wrongDay, 'gi');
-          response.reply_text = response.reply_text.replace(regex, correctDay);
-          console.log(`✅ STEP 3: Corretto testo "${wrongDay}" -> "${correctDay}"`);
-        }
-      }
-    }
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 4: Estrai/completa orario
-    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3: Estrai orario
     if (!reservation.time) {
       const parsedTime = TimeManager.parseFromText(userText);
       if (parsedTime) {
         reservation.time = parsedTime;
-        console.log(`✅ STEP 4: Orario estratto: ${parsedTime}`);
       } else {
-        // Prova inferenza default
         const defaultTime = TimeManager.inferDefault(StateManager.getAllUserText(callId));
-        if (defaultTime) {
-          reservation.time = defaultTime;
-          console.log(`✅ STEP 4: Orario inferito: ${defaultTime}`);
-        }
+        if (defaultTime) reservation.time = defaultTime;
       }
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 5: Estrai/completa persone
-    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 4: Estrai persone
     if (!reservation.people || reservation.people <= 0) {
       const parsedPeople = PeopleManager.parseFromText(userText);
-      if (parsedPeople) {
-        reservation.people = parsedPeople;
-        console.log(`✅ STEP 5: Persone estratte: ${parsedPeople}`);
-      }
+      if (parsedPeople) reservation.people = parsedPeople;
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 5b: FIX20/FIX21d - Intercetta eventi grandi (≥45 persone) -> redirige a email
-    // ═══════════════════════════════════════════════════════════════════════
-    if (reservation.people && reservation.people > 0) {
-      const thresholds = ContextService.getThresholds(callId);
-      
-      if (reservation.people >= thresholds.event) {
-        console.log(`🎪 STEP 5b: Evento grande rilevato (${reservation.people} persone >= ${thresholds.event})`);
-        
-        const restaurantEmail = ContextService.getRestaurantEmail(callId);
-        
-        response.action = "none";
-        // FIX21d: Messaggio più umano e naturale, non a "macchinetta"
-        response.reply_text = lang === "en-US"
-          ? `For an event of ${reservation.people} people, I'll note your interest and inform the restaurant owner who will contact you directly. You can also email us at ${restaurantEmail} with your details. We'll be happy to help organize your event!`
-          : `Per un evento di ${reservation.people} persone, prendo nota della tua richiesta e la farò presente al ristoratore che ti contatterà direttamente. Puoi anche scriverci a ${restaurantEmail} con i dettagli. Saremo felici di organizzare il tuo evento!`;
-        
-        // Non procedere con la prenotazione
-        response.reservation = reservation;
-        
-        console.log(`✅ STEP 5b: Rediretto a email per evento grande`);
-        return response;
-      }
+    // STEP 5: Gestione eventi grandi (≥45)
+    if (reservation.people >= CONFIG.EVENT_THRESHOLD) {
+      const email = ContextService.getRestaurantEmail(callId);
+      response.action = "none";
+      response.reply_text = lang === "en-US"
+        ? `For events of ${reservation.people} people, please email us at ${email}. We'll be happy to help!`
+        : `Per eventi di ${reservation.people} persone, ti chiedo di scriverci a ${email}. Saremo felici di organizzare!`;
+      response.reservation = reservation;
+      return response;
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 6: Protezione nome da comandi (FIX25b: rispetta intent iniziale)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (response.action === "cancel_reservation") {
-      // FIX25b: Controlla l'intent iniziale della conversazione
-      const initialIntent = StateManager.getInitialIntent(callId);
-      
-      // Se l'intent iniziale era cancellazione, NON intercettare!
-      if (initialIntent === 'cancel') {
-        console.log(`✅ FIX25b: Intent iniziale era cancellazione, lascio passare cancel_reservation`);
-        // Non fare nulla, lascia passare l'azione di cancellazione
-      }
-      // Se l'intent iniziale era creazione, verifica se GPT sta confondendo un nome
-      else {
-        // Caso A: Utente sta chiaramente dicendo il nome
-        if (NameManager.isProvidingName(userText)) {
-          const extractedName = NameManager.extractName(userText);
-          
-          if (extractedName) {
-            console.log(`⚠️ STEP 6: GPT ha confuso nome "${extractedName}" con cancellazione!`);
-            
-            reservation.name = extractedName;
-            
-            // Ripristina dati precedenti
-            reservation.date = reservationBefore.date || reservation.date;
-            reservation.time = reservationBefore.time || reservation.time;
-            reservation.people = reservationBefore.people || reservation.people;
-            
-            // Costruisci risposta corretta
-            response.action = "ask_email";
-            response.reply_text = lang === "en-US"
-              ? `Perfect, ${extractedName}. Would you like to leave an email for confirmation?`
-              : `Perfetto, ${extractedName}. Vuoi lasciarmi un'email per la conferma?`;
-            
-            console.log(`✅ STEP 6: Corretto, nome salvato: ${extractedName}`);
-          }
-        }
-        // Caso B: Contesto suggerisce che stavamo chiedendo il nome
-        else if (NameManager.isGptConfusingName(response.action, response.reply_text, reservationBefore)) {
-          const bareName = NameManager.extractBareName(userText);
-          
-          if (bareName) {
-            console.log(`⚠️ STEP 6b: GPT ha confuso "${bareName}" con comando (contesto prenotazione)`);
-            
-            reservation.name = bareName;
-            reservation.date = reservationBefore.date;
-            reservation.time = reservationBefore.time;
-            reservation.people = reservationBefore.people;
-            
-            response.action = "ask_email";
-            response.reply_text = lang === "en-US"
-              ? `Perfect, ${bareName}. Would you like to leave an email?`
-              : `Perfetto, ${bareName}. Vuoi lasciarmi un'email?`;
-            
-            console.log(`✅ STEP 6b: Corretto, nome salvato: ${bareName}`);
-          }
-        }
-      }
-    }
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 7: Estrai email se presente - FIX19: Proteggi da corruzione GPT
-    // ═══════════════════════════════════════════════════════════════════════
-    
-    // FIX19: Se GPT ha restituito un'email senza @, è corrotta - ignorala
-    if (reservation.customerEmail && !reservation.customerEmail.includes('@')) {
-      console.log(`⚠️ STEP 7: Email GPT corrotta (manca @): "${reservation.customerEmail}" - la ignoro`);
-      reservation.customerEmail = null;
-    }
-    
-    // Estrai email dal testo utente se non presente o corrotta
+    // STEP 6: Estrai email
     if (!reservation.customerEmail) {
-      // Prima prova dal testo corrente
-      let email = extractEmailFromText(userText);
-      
-      // Se non trovata, prova dal reply_text di GPT (potrebbe essere lì corretta)
-      if (!email && response.reply_text) {
-        email = extractEmailFromText(response.reply_text);
-      }
-      
-      if (email) {
-        reservation.customerEmail = sanitizeEmail(email);
-        console.log(`✅ STEP 7: Email estratta: ${reservation.customerEmail}`);
-      }
+      const email = extractEmailFromText(userText);
+      if (email) reservation.customerEmail = sanitizeEmail(email);
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 8: Merge con stato esistente
-    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 7: Merge e fix action
     const merged = StateManager.mergeReservation(callId, reservation);
     response.reservation = merged;
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 9: Correggi action incoerenti
-    // ═══════════════════════════════════════════════════════════════════════
-    response = this.fixIncoherentAction(response, merged, userText, lang, callId);
-    
-    console.log("✅ ValidationPipeline: completato");
-    return response;
-  },
-  
-  /**
-   * Corregge action incoerenti con i dati
-   */
-  fixIncoherentAction(response, reservation, userText, lang, callId) {
-    const hasDate = reservation.date && reservation.date !== "null";
-    const hasTime = reservation.time && reservation.time !== "null";
-    const hasPeople = reservation.people && reservation.people > 0;
-    const hasName = reservation.name && reservation.name.trim() !== "";
-    const hasEmail = reservation.customerEmail && reservation.customerEmail.trim() !== "";
-    
-    // SAFETY NET 1: ask_name ma nome già presente -> ask_email
-    if (response.action === "ask_name" && hasName) {
-      console.log("⚠️ SAFETY NET 1: ask_name con nome presente -> ask_email");
-      response.action = "ask_email";
-    }
-    
-    // SAFETY NET 2: create_reservation senza dati minimi
+    // Safety net: create_reservation senza dati minimi
     if (response.action === "create_reservation") {
-      if (!hasDate || !hasTime || !hasName) {
-        console.warn("⚠️ SAFETY NET 2: create_reservation senza dati minimi");
-        
-        if (!hasDate) response.action = "ask_date";
-        else if (!hasTime) response.action = "ask_time";
-        else if (!hasPeople) response.action = "ask_people";
-        else if (!hasName) response.action = "ask_name";
-      }
+      if (!merged.date) response.action = "ask_date";
+      else if (!merged.time) response.action = "ask_time";
+      else if (!merged.people) response.action = "ask_people";
+      else if (!merged.name) response.action = "ask_name";
     }
     
-    // SAFETY NET 3: Utente conferma + tutti i dati -> forza create_reservation
-    // FIX19: NON generare messaggi di conferma qui - sarà la route a farlo dopo verificare Calendar
-    // FIX25d: NON forzare create se l'intent iniziale era cancellazione
-    const initialIntent = StateManager.getInitialIntent(callId);
-    if (this.isUserConfirming(userText) && hasDate && hasTime && hasPeople && hasName) {
-      if (response.action !== "create_reservation" && 
-          response.action !== "cancel_reservation" &&
-          response.action !== "answer_menu" &&
-          response.action !== "answer_generic" &&
-          initialIntent !== "cancel" &&  // FIX25d: Escludi cancellazioni
-          initialIntent !== "modify") {  // FIX25d: Escludi modifiche
-        
-        console.log("🔧 SAFETY NET 3: Tutti i dati + conferma -> create_reservation");
-        response.action = "create_reservation";
-        
-        // FIX19: Messaggio neutro che verrà sovrascritto dalla route dopo verifica Calendar
-        const firstName = hasName ? reservation.name.split(' ')[0] : "";
-        response.reply_text = `Perfetto${firstName ? ' ' + firstName : ''}! Sto verificando la disponibilità...`;
-      }
-    }
-    
-    // SAFETY NET 4: answer_menu/answer_generic -> azzera reservation
-    if (response.action === "answer_menu" || response.action === "answer_generic") {
-      // Non azzerare lo stato persistente, solo la risposta
-    }
-    
-    // FIX: action=none ma GPT menziona chiusura -> ask_date
-    if (response.action === "none" && /chius|closed/i.test(response.reply_text)) {
-      console.log("🔧 FIX: action none con menzione chiusura -> ask_date");
-      response.action = "ask_date";
-    }
-    
+    console.log("✅ ValidationPipeline completato");
     return response;
-  },
-  
-  isUserConfirming(text) {
-    const t = (text || "").toLowerCase().trim();
-    return /^(sì|si|yes|ok|va bene|perfetto|esatto|corretto|confermo|conferma|d'accordo|giusto)/.test(t) ||
-           /conferm/.test(t);
-  },
-  
-  isUserChanging(text) {
-    const t = (text || "").toLowerCase().trim();
-    return /cambia|modifica|sposta|altro|diverso|change|different|move|anzi|invece/.test(t);
   },
 };
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 14: GPT SERVICE
+// SEZIONE 15: GPT SERVICE (SEMPLIFICATO v3)
+// System prompt snello - cancel/modify gestiti altrove
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const GPTService = {
@@ -1847,12 +1162,9 @@ const GPTService = {
     const restaurantName = context?.restaurant?.name || CONFIG.DEFAULT_RESTAURANT_NAME;
     const restaurantEmail = context?.restaurant?.email || CONFIG.OWNER_EMAIL_DEFAULT;
     const openingHours = context?.restaurant?.openingHoursText || "";
-    const closingRules = context?.restaurant?.closingRulesText || "";
     const menuSummary = context?.menu?.summaryText || "";
     const largeGroupThreshold = context?.rules?.largeGroupThreshold || CONFIG.LARGE_GROUP_THRESHOLD;
-    const eventThreshold = context?.rules?.eventThreshold || CONFIG.EVENT_THRESHOLD;
     
-    // Calendario prossimi giorni
     const calendar = DateManager.buildCalendar(10);
     const calendarText = calendar.map(d => {
       let label = d.label ? ` (${d.label})` : "";
@@ -1863,249 +1175,59 @@ const GPTService = {
     const now = DateManager.getNow();
     const todayISO = DateManager.toISO(now);
     
-    // Stato prenotazione corrente
+    // Stato prenotazione
     let stateText = "";
     if (reservation && (reservation.date || reservation.time || reservation.people || reservation.name)) {
       stateText = `
-═══════════════════════════════════════════════════════════════════════════════
-⚠️ DATI GIÀ RACCOLTI - NON PERDERE QUESTI DATI!
-═══════════════════════════════════════════════════════════════════════════════
+DATI GIÀ RACCOLTI:
 ${reservation.date ? `- Data: ${reservation.date}` : ""}
 ${reservation.time ? `- Ora: ${reservation.time}` : ""}
 ${reservation.people ? `- Persone: ${reservation.people}` : ""}
 ${reservation.name ? `- Nome: ${reservation.name}` : ""}
 ${reservation.customerEmail ? `- Email: ${reservation.customerEmail}` : ""}
 
-IMPORTANTE: Se l'utente conferma, usa action="create_reservation" con questi dati!
-═══════════════════════════════════════════════════════════════════════════════`;
+Se l'utente conferma, usa action="create_reservation" con questi dati!`;
     }
-    
-    // FIX25c: Prenotazione esistente trovata
-    // FIX26b: Istruzioni molto più esplicite
-    let existingResText = "";
-    const existingRes = StateManager.getExistingReservation(callId);
-    const initialIntent = StateManager.getInitialIntent(callId);
-    if (existingRes && (initialIntent === 'cancel' || initialIntent === 'modify')) {
-      existingResText = `
-═══════════════════════════════════════════════════════════════════════════════
-🚨🚨🚨 PRENOTAZIONE ESISTENTE - LEGGI ATTENTAMENTE! 🚨🚨🚨
-═══════════════════════════════════════════════════════════════════════════════
 
-HAI GIÀ TUTTI I DATI DEL CLIENTE! Non chiedere informazioni che già hai!
+    return `Sei ${CONFIG.RECEPTIONIST_NAME}, receptionist di ${restaurantName}.
 
-📋 DATI DELLA PRENOTAZIONE ESISTENTE:
-- Nome: ${existingRes.name || "⚠️ Non disponibile - chiedi il nome"}
-- Data: ${existingRes.date || "⚠️ Non disponibile"}
-- Ora: ${existingRes.time || "⚠️ Non disponibile"}
-- Persone: ${existingRes.people || "⚠️ Non disponibile"}
-- Email: ${existingRes.email || "Non fornita"}
+OGGI: ${DateManager.DAYS_IT[now.getDay()]} ${now.getDate()} ${DateManager.MONTHS_IT[now.getMonth()]} ${now.getFullYear()} (${todayISO})
 
-${initialIntent === 'cancel' ? `
-⛔ INTENT: CANCELLAZIONE
-═══════════════════════════════════════════════════════════════════════════════
-Il cliente vuole CANCELLARE questa prenotazione.
-
-✅ COSA DEVI FARE:
-- Se hai nome e data -> USA SUBITO action="cancel_reservation" con i dati sopra
-- Conferma la cancellazione dicendo "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
-
-❌ COSA NON DEVI FARE:
-- NON chiedere il nome se già lo hai (${existingRes.name ? 'CE L\'HAI: ' + existingRes.name : 'non disponibile'})
-- NON chiedere la data se già la hai (${existingRes.date ? 'CE L\'HAI: ' + existingRes.date : 'non disponibile'})
-- NON chiedere conferme inutili se hai già tutti i dati
-` : `
-🔄 INTENT: MODIFICA
-═══════════════════════════════════════════════════════════════════════════════
-Il cliente vuole MODIFICARE questa prenotazione.
-
-✅ COSA DEVI FARE:
-- USA i dati esistenti come base
-- Chiedi SOLO cosa vuole modificare
-- Modifica SOLO ciò che il cliente chiede esplicitamente
-
-❌ COSA NON DEVI FARE:
-- NON chiedere il nome (${existingRes.name ? 'CE L\'HAI: ' + existingRes.name : 'chiedi solo se manca'})
-- NON chiedere informazioni che già hai
-- NON proporre cambiamenti che il cliente NON ha chiesto
-- NON suggerire orari diversi se il cliente non lo chiede
-- Se il cliente vuole solo cambiare le persone -> cambia SOLO le persone, NON l'orario
-`}
-═══════════════════════════════════════════════════════════════════════════════`;
- }
-    return `Sei ${CONFIG.RECEPTIONIST_NAME}, la receptionist telefonica di ${restaurantName}.
-
-═══════════════════════════════════════════════════════════════════════════════
-📅 OGGI: ${DateManager.DAYS_IT[now.getDay()]} ${now.getDate()} ${DateManager.MONTHS_IT[now.getMonth()]} ${now.getFullYear()}
-Data ISO: ${todayISO}
-
-CALENDARIO PROSSIMI GIORNI:
+CALENDARIO:
 ${calendarText}
 
-REGOLE DATE:
-- "domani" = ${calendar[1]?.date}
-- "dopodomani" = ${calendar[2]?.date}
-- Converti SEMPRE i giorni della settimana in data YYYY-MM-DD
-═══════════════════════════════════════════════════════════════════════════════
+CHIUSURE:
+- LUNEDÌ sempre chiuso
+- NON inventare altre chiusure (festività, ecc.)
 
-⛔ CHIUSURE:
-- Il ristorante è CHIUSO il LUNEDÌ (tutti i lunedì)
-- ${closingRules || "Nessuna chiusura straordinaria"}
-
-QUANDO IL CLIENTE CHIEDE PER UN LUNEDÌ:
--> Rifiuta IMMEDIATAMENTE
--> Proponi un altro giorno (es. martedì)
--> NON chiedere orario/persone per un giorno chiuso!
-
-⚠️ REGOLA CRITICA - NON INVENTARE CHIUSURE:
-- Se un giorno NON ha "⛔ CHIUSO" nel calendario sopra -> il ristorante è APERTO
-- NON assumere MAI chiusure per festività (Capodanno, Natale, Pasqua, Ferragosto, ecc.)
-- NON rifiutare MAI prenotazioni basandoti su festività generali
-- Accetta SEMPRE prenotazioni per giorni che nel calendario risultano APERTI
-- Le UNICHE chiusure valide sono: lunedì + quelle esplicitamente elencate sopra
 ${stateText}
-${existingResText}
-═══════════════════════════════════════════════════════════════════════════════
 
 STILE:
-- Frasi brevi (5-7 secondi di audio)
-- Rispondi nella lingua del cliente (italiano o inglese)
-- Mai mescolare le lingue
+- Frasi brevi (5-7 secondi)
+- Rispondi nella lingua del cliente
 - Professionale ma amichevole
+- Una domanda alla volta
 
-═══════════════════════════════════════════════════════════════════════════════
-⚠️ REGOLE UX CRITICHE - FIX22
-═══════════════════════════════════════════════════════════════════════════════
+OBIETTIVO: Raccogliere giorno, orario, persone, nome (email opzionale)
 
-1. DATA MANCANTE - NON ASSUMERE "OGGI":
-   Se il cliente NON specifica un giorno (es. "Vorrei prenotare per 12 persone"):
-   -> Chiedi SEMPRE "Per quale giorno vorresti prenotare?"
-   -> NON assumere che sia per oggi
-   -> NON dire "Il lunedì siamo chiusi" se non ha chiesto per lunedì
-   
-2. NON DARE INFORMAZIONI NON RICHIESTE:
-   -> NON dire "Il venerdì siamo aperti!" se nessuno lo ha chiesto
-   -> NON anticipare informazioni sulle chiusure se il giorno richiesto è aperto
-   -> Se il cliente dice "per venerdì" e venerdì è aperto -> chiedi solo orario, non commentare
-   
-3. NON RIPETERE INFORMAZIONI GIÀ NOTE:
-   -> Se il cliente ha già detto il giorno, non ripeterlo nelle domande successive
-   -> Evita frasi robotiche come "Posso prenotare per giovedì per 6 persone"
-   -> Vai dritto al punto: "Perfetto! A che ora?" oppure "Quanti siete?"
-   
-4. CONVERSAZIONE NATURALE:
-   -> Rispondi come farebbe una receptionist vera
-   -> Una domanda alla volta
-   -> Non riassumere tutti i dati ad ogni turno
-   -> Esempio SBAGLIATO: "Posso prenotare per giovedì per 6 persone. Vuoi lasciarmi un'email?"
-   -> Esempio CORRETTO: "Perfetto, giovedì per 6. A che ora preferite?"
+ORDINE DOMANDE:
+1. Giorno (se non specificato) - NON assumere "oggi"
+2. Orario
+3. Persone
+4. Nome
+5. Email (opzionale, DOPO il nome)
 
-═══════════════════════════════════════════════════════════════════════════════
+Per gruppi >${largeGroupThreshold}: "prenotazione soggetta a conferma"
 
-OBIETTIVO:
-- Raccogliere: giorno, orario, numero persone, nome
-- Email: consigliata ma non obbligatoria
-- Per gruppi >${largeGroupThreshold} persone: prenotazione soggetta a conferma
-
-⚠️ ORDINE OBBLIGATORIO DELLE DOMANDE:
-1. Giorno (se non specificato)
-2. Orario (se non specificato)
-3. Numero persone (se non specificato)
-4. Nome (SEMPRE prima dell'email!)
-5. Email (opzionale, SOLO DOPO aver chiesto il nome)
-
-NON chiedere MAI l'email prima del nome!
-
-⚠️ GESTIONE MODIFICHE DURANTE LA CONVERSAZIONE (FIX24b):
-Se il cliente chiede di MODIFICARE o SPOSTARE qualcosa (orario, data, persone):
-- Parole chiave: "anzi", "invece", "meglio", "spostare", "cambiare", "possiamo fare", "un'ora dopo", "un'ora prima"
-- AGGIORNA immediatamente i dati nella reservation
-- NON procedere con create_reservation
-- Chiedi conferma del nuovo dato o il prossimo dato mancante
-- Esempio: "Possiamo spostare alle 21?" -> Aggiorna time a 21:00, action: ask_email o conferma
-
-═══════════════════════════════════════════════════════════════════════════════
-⚠️ GESTIONE CANCELLAZIONI (FIX25a + FIX26) - MOLTO IMPORTANTE!
-═══════════════════════════════════════════════════════════════════════════════
-
-Se il cliente vuole CANCELLARE o DISDIRE una prenotazione esistente:
-
-PAROLE CHIAVE DI CANCELLAZIONE (TUTTE VALIDE):
-- "cancellare", "cancella", "cancello", "cancellazione"
-- "disdire", "disdetta", "disdico"  
-- "annullare", "annulla", "annullo", "annullamento"
-- "eliminare", "elimina"
-- "non vengo più", "non veniamo più", "non riusciamo a venire"
-
-PROCEDURA CANCELLAZIONE:
-1. CONTROLLA SE HAI GIÀ I DATI nella sezione "PRENOTAZIONE ESISTENTE" sopra!
-2. Se hai già nome e data -> USA SUBITO action="cancel_reservation"
-3. Se ti manca qualcosa -> chiedi SOLO ciò che manca
-4. Conferma la cancellazione
-
-🚨 SE VEDI "PRENOTAZIONE ESISTENTE" SOPRA:
-- HAI GIÀ TUTTI I DATI! Non chiedere nome/data se li hai già!
-- Procedi DIRETTAMENTE con action="cancel_reservation"
-
-ESEMPI CORRETTI:
-- Se hai già i dati esistenti -> "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
-- Se manca il nome -> "A che nome è la prenotazione?"
-- Se manca la data -> "Per quale giorno era la prenotazione?"
-
-⛔ ERRORI DA EVITARE:
-- NON chiedere il nome se lo vedi già in "PRENOTAZIONE ESISTENTE"
-- NON chiedere la data se la vedi già in "PRENOTAZIONE ESISTENTE"
-- NON dire "Non posso cancellare" o "Contatta il ristorante"
-- NON trattare una richiesta di cancellazione come nuova prenotazione
-
-═══════════════════════════════════════════════════════════════════════════════
-⚠️ GESTIONE MODIFICHE (FIX26) - MOLTO IMPORTANTE!
-═══════════════════════════════════════════════════════════════════════════════
-
-Se il cliente vuole MODIFICARE una prenotazione esistente:
-
-PAROLE CHIAVE DI MODIFICA:
-- "modificare", "spostare", "cambiare", "anticipare", "posticipare"
-- "siamo aumentati", "siamo di più/meno", "aggiungere persone"
-
-🚨 SE VEDI "PRENOTAZIONE ESISTENTE" SOPRA:
-- HAI GIÀ TUTTI I DATI! Usali come base!
-- Modifica SOLO ciò che il cliente chiede
-- NON proporre cambiamenti non richiesti!
-
-PROCEDURA MODIFICA:
-1. CONTROLLA SE HAI GIÀ I DATI nella sezione "PRENOTAZIONE ESISTENTE"
-2. Chiedi cosa vuole modificare (se non lo ha già detto)
-3. Aggiorna SOLO il dato richiesto
-4. Conferma la modifica
-
-⛔ ERRORI DA EVITARE:
-- NON chiedere il nome se lo vedi già in "PRENOTAZIONE ESISTENTE"
-- NON chiedere altri dati se li hai già
-- NON proporre di cambiare l'orario se il cliente vuole solo cambiare le persone
-- NON suggerire modifiche che il cliente non ha chiesto
-
-═══════════════════════════════════════════════════════════════════════════════
-
-GESTIONE EMAIL:
-- Chiedi email SOLO DOPO aver ottenuto il nome
-- Usa: "Vuoi lasciarmi un'email per la conferma?"
-- Se dice no, procedi comunque
-- Quando ti detta l'email, fai spelling e chiedi conferma
-
+ORARI: "alle 8" senza specificare = 20:00 (sera)
+ORARI APERTURA: ${openingHours || "pranzo e cena"}
+MENU: ${menuSummary || "Cucina italiana"}
 EMAIL RISTORANTE: ${restaurantEmail}
-(da dare SOLO se chiede "la vostra email" o "email del ristorante")
-
-ORARI:
-- Se dice "alle 8" senza specificare -> interpreta come 20:00 (sera)
-- Orari apertura: ${openingHours || "pranzo e cena"}
-
-MENU:
-${menuSummary || "Cucina tradizionale italiana"}
 
 FORMATO RISPOSTA (SOLO JSON):
 {
-  "reply_text": "frase da dire al cliente",
-  "action": "none|ask_date|ask_time|ask_people|ask_name|ask_email|answer_menu|answer_generic|create_reservation|cancel_reservation",
+  "reply_text": "frase da dire",
+  "action": "none|ask_date|ask_time|ask_people|ask_name|ask_email|answer_menu|answer_generic|create_reservation",
   "reservation": {
     "date": "YYYY-MM-DD o null",
     "time": "HH:MM:SS o null",
@@ -2116,33 +1238,21 @@ FORMATO RISPOSTA (SOLO JSON):
 }
 
 REGOLE ACTION:
-- create_reservation: SOLO quando hai date + time + name (almeno)
-- cancel_reservation: SOLO per cancellare una prenotazione esistente
-- ask_*: per chiedere dati mancanti
-- answer_*: per domande informative (in quel caso reservation tutto null)
+- create_reservation: SOLO con date + time + name
+- ask_*: per dati mancanti
+- answer_*: domande informative (reservation tutto null)
 
-🚨 IMPORTANTE - DATI ESISTENTI:
-Se vedi la sezione "PRENOTAZIONE ESISTENTE" sopra, DEVI usare quei dati!
-- Per cancellazione -> includi name, date, time dalla prenotazione esistente
-- Per modifica -> usa i dati esistenti come base e modifica solo ciò che il cliente chiede
-- NON lasciare null i campi che hai già nella prenotazione esistente!
-
-RISPOSTA FINALE (create_reservation):
-- Conferma la prenotazione
-- NON fare altre domande
-- Chiudi con "Ti aspettiamo, buona serata."`;
+RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
   },
 
   async ask(callId, userText) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY non impostata");
     
-    // Assicura contesto caricato
     await ContextService.ensureForCall(callId);
     const context = StateManager.getContext(callId);
     const reservation = StateManager.getReservation(callId);
     
-    // Costruisci/aggiorna conversazione
     let convo = StateManager.getConversation(callId);
     const systemPrompt = this.buildSystemPrompt(context, reservation, callId);
     
@@ -2152,17 +1262,14 @@ RISPOSTA FINALE (create_reservation):
       convo.messages[0] = { role: "system", content: systemPrompt };
     }
     
-    // Aggiungi messaggio utente
     convo.messages.push({ role: "user", content: userText });
     
-    // Limita cronologia
     if (convo.messages.length > 12) {
       const systemMsg = convo.messages[0];
       const recent = convo.messages.slice(-10);
       convo.messages = [systemMsg, ...recent];
     }
     
-    // Chiama GPT
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -2186,19 +1293,14 @@ RISPOSTA FINALE (create_reservation):
     
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
+    console.log("🧠 GPT:", content.substring(0, 150));
     
-    console.log("🧠 GPT raw:", content.substring(0, 200));
-    
-    // Parse JSON
     let parsed = this.parseResponse(content);
     
-    // Salva in conversazione
     convo.messages.push({ role: "assistant", content });
     StateManager.setConversation(callId, convo);
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // APPLICA VALIDATION PIPELINE
-    // ═══════════════════════════════════════════════════════════════════════
+    // Validation Pipeline
     parsed = await ValidationPipeline.validate(parsed, userText, callId);
     
     return parsed;
@@ -2206,7 +1308,7 @@ RISPOSTA FINALE (create_reservation):
   
   parseResponse(raw) {
     const fallback = {
-      reply_text: "Scusa, c'è stato un problema. Puoi ripetere?",
+      reply_text: "Scusa, puoi ripetere?",
       action: "none",
       reservation: { date: null, time: null, people: null, name: null, customerEmail: null },
     };
@@ -2214,25 +1316,18 @@ RISPOSTA FINALE (create_reservation):
     if (!raw) return fallback;
     
     try {
-      // Estrai JSON dal testo
       const jsonMatch = raw.match(/{[\s\S]*}/);
       const jsonStr = jsonMatch ? jsonMatch[0] : raw;
       const parsed = JSON.parse(jsonStr);
       
-      // Validazione base
       if (!parsed || typeof parsed !== "object") return fallback;
-      if (!parsed.reply_text || typeof parsed.reply_text !== "string") {
-        parsed.reply_text = fallback.reply_text;
-      }
+      if (!parsed.reply_text) parsed.reply_text = fallback.reply_text;
       if (!parsed.action) parsed.action = "none";
       if (!parsed.reservation) parsed.reservation = fallback.reservation;
       
-      // Normalizza customerEmail
       if (parsed.reservation.customer_email && !parsed.reservation.customerEmail) {
         parsed.reservation.customerEmail = parsed.reservation.customer_email;
       }
-      
-      // Sanifica email
       if (parsed.reservation.customerEmail) {
         parsed.reservation.customerEmail = sanitizeEmail(parsed.reservation.customerEmail);
       }
@@ -2246,100 +1341,58 @@ RISPOSTA FINALE (create_reservation):
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 15: TWILIO HELPERS
+// SEZIONE 16: TWILIO HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TwilioHelpers = {
-  // Gestione lingua
   detectLanguageSwitch(text) {
     const t = (text || "").toLowerCase();
-    
-    if (t.includes("speak english") || t.includes("in english") || t.includes("parli inglese")) {
-      return "en-US";
-    }
-    if (t.includes("parla italiano") || t.includes("in italiano")) {
-      return "it-IT";
-    }
-    
+    if (t.includes("speak english") || t.includes("in english")) return "en-US";
+    if (t.includes("parla italiano") || t.includes("in italiano")) return "it-IT";
     return null;
   },
   
-  // Verifica se chiede email ristorante
   isAskingRestaurantEmail(text) {
     const t = (text || "").toLowerCase();
-    
-    // Non è la mail del ristorante se dice "mia mail"
     if (t.includes("mia mail") || t.includes("my email")) return false;
-    
     return (
-      t.includes("mail del ristorante") ||
-      t.includes("email del ristorante") ||
-      t.includes("vostra mail") ||
-      t.includes("vostra email") ||
-      t.includes("restaurant email") ||
-      t.includes("your email")
+      t.includes("mail del ristorante") || t.includes("email del ristorante") ||
+      t.includes("vostra mail") || t.includes("vostra email") ||
+      t.includes("restaurant email") || t.includes("your email")
     );
   },
   
-  // Spelling email per TTS
   spellEmail(email, lang = "it-IT") {
     if (!email) return "";
-    
     const [local, domain] = email.split("@");
     if (!local || !domain) return email;
     
     const [domainName, ...tld] = domain.split(".");
+    const commonDomains = ["gmail", "outlook", "hotmail", "yahoo", "icloud"];
     
-    // Spelling locale
     const localSpelled = lang === "en-US"
       ? local.split("").join(" ")
       : local.split("").map(c => c === "w" ? "doppia vù" : c).join(" ");
     
-    // Domini comuni non vanno spelled
-    const commonDomains = ["gmail", "outlook", "hotmail", "yahoo", "icloud"];
     const domainSpoken = commonDomains.includes(domainName.toLowerCase())
-      ? domainName
-      : domainName.split("").join(" ");
+      ? domainName : domainName.split("").join(" ");
     
     const tldSpoken = tld.join(".");
     
-    if (lang === "en-US") {
-      return `${localSpelled} at ${domainSpoken} dot ${tldSpoken}`;
-    }
-    return `${localSpelled} chiocciola ${domainSpoken} punto ${tldSpoken}`;
-  },
-  
-  // Aggiungi saluto finale
-  addClosingSalute(text, lang = "it-IT") {
-    const t = (text || "").toLowerCase();
-    
-    const hasSalute = (
-      t.includes("buona serata") ||
-      t.includes("a presto") ||
-      t.includes("have a nice") ||
-      t.includes("see you")
-    );
-    
-    if (hasSalute) return text;
-    
     return lang === "en-US"
-      ? text + " We look forward to seeing you, have a nice evening."
-      : text + " Ti aspettiamo, buona serata.";
+      ? `${localSpelled} at ${domainSpoken} dot ${tldSpoken}`
+      : `${localSpelled} chiocciola ${domainSpoken} punto ${tldSpoken}`;
   },
   
-  // Verifica se è solo "grazie"
   isThanksOnly(text) {
     const t = (text || "").toLowerCase();
-    return (
-      /grazie|thank you|thanks/.test(t) &&
-      !/cambia|change|sposta|modifica/.test(t)
-    );
+    return /grazie|thank you|thanks/.test(t) && !/cambia|change|sposta|modifica/.test(t);
   },
 };
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 16: EXPRESS MIDDLEWARE
+// SEZIONE 17: EXPRESS MIDDLEWARE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.use(cors());
@@ -2347,29 +1400,25 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 17: ROUTES
+// SEZIONE 18: ROUTES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Health check
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v2.0 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.0 attivo!");
 });
 
-// Calendar proxy
 app.post("/calendar", async (req, res) => {
   try {
     console.log("📩 /calendar:", req.body);
     const result = await CalendarService.createReservation(req.body);
     res.status(200).json({ success: true, fromAppsScript: result });
   } catch (err) {
-    console.error("❌ /calendar error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROUTE PRINCIPALE: /twilio
-// Gestisce sia DEBUG (text) che VOCE (SpeechResult)
+// ROUTE PRINCIPALE: /twilio (v3 con State Machine)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post("/twilio", async (req, res) => {
@@ -2382,20 +1431,14 @@ app.post("/twilio", async (req, res) => {
   
   console.log(`\n📞 /twilio [${isDebug ? 'DEBUG' : 'VOICE'}] callId=${callId}`);
   console.log(`   From: ${From}, To: ${To}`);
-  console.log(`   Text: "${userText.substring(0, 100)}"`);
+  console.log(`   Text: "${userText.substring(0, 80)}"`);
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // PRIMO INGRESSO (nessun testo) -> Messaggio di benvenuto
+  // BENVENUTO (nessun testo)
   // ═══════════════════════════════════════════════════════════════════════════
   if (!userText && !isDebug) {
     StateManager.setLanguage(callId, "it-IT");
-    
-    // Multi-tenant: identifica ristorante
-    if (To) {
-      await Registry.getConfigForCall(callId, To);
-    }
-    
-    // Carica contesto
+    if (To) await Registry.getConfigForCall(callId, To);
     await ContextService.ensureForCall(callId);
     const restaurantName = ContextService.getRestaurantName(callId);
     
@@ -2406,29 +1449,25 @@ app.post("/twilio", async (req, res) => {
         <Gather input="speech" language="it-IT" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
           <Say language="it-IT" bargeIn="true">${escapeXml(welcomeText)}</Say>
         </Gather>
-        <Say language="it-IT">Non ho ricevuto risposta. Richiamaci pure. Grazie, buona serata.</Say>
+        <Say language="it-IT">Non ho ricevuto risposta. Richiamaci. Grazie.</Say>
       </Response>
     `.trim();
-    
     return res.status(200).type("text/xml").send(twiml);
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // POST-FINAL: Dopo prenotazione completata
+  // POST-FINAL
   // ═══════════════════════════════════════════════════════════════════════════
   if (postFinal === "1" && !isDebug) {
     const lang = StateManager.getLanguage(callId);
-    
     if (TwilioHelpers.isThanksOnly(userText)) {
       StateManager.clearCall(callId);
-      
       const twiml = `
         <Response>
-          <Say language="${lang}">${escapeXml(lang === "en-US" ? "Thank you, have a nice evening." : "Grazie a te, buona serata.")}</Say>
+          <Say language="${lang}">${escapeXml(lang === "en-US" ? "Thank you, goodbye." : "Grazie, buona giornata.")}</Say>
           <Hangup/>
         </Response>
       `.trim();
-      
       return res.status(200).type("text/xml").send(twiml);
     }
   }
@@ -2437,44 +1476,43 @@ app.post("/twilio", async (req, res) => {
   // FLUSSO PRINCIPALE
   // ═══════════════════════════════════════════════════════════════════════════
   try {
-    // Multi-tenant (primo turno debug)
-    if (isDebug && To) {
-      await Registry.getConfigForCall(callId, To);
-    }
+    // Multi-tenant
+    if (isDebug && To) await Registry.getConfigForCall(callId, To);
     
-    // Salva testo utente
+    // Salva testo e gestisci lingua
     StateManager.appendUserText(callId, userText);
+    const langSwitch = TwilioHelpers.detectLanguageSwitch(userText);
+    if (langSwitch) StateManager.setLanguage(callId, langSwitch);
+    if (Language?.startsWith("en")) StateManager.setLanguage(callId, "en-US");
+    if (Language?.startsWith("it")) StateManager.setLanguage(callId, "it-IT");
+    const lang = StateManager.getLanguage(callId);
+    
+    await ContextService.ensureForCall(callId);
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX25b: Rileva e salva intent iniziale (solo al primo messaggio)
+    // RILEVA INTENT E CERCA PRENOTAZIONE (solo primo messaggio)
     // ═══════════════════════════════════════════════════════════════════════
     if (!StateManager.getInitialIntent(callId)) {
       const detectedIntent = IntentDetector.detectIntent(userText);
       StateManager.setInitialIntent(callId, detectedIntent);
       
-      // FIX25c: Se intent è cancellazione o modifica, cerca prenotazione esistente
+      // Se cancel/modify, cerca prenotazione esistente
       if ((detectedIntent === 'cancel' || detectedIntent === 'modify') && From) {
         try {
           const existing = await CalendarService.findExistingReservation(From, null, callId);
           if (existing) {
             StateManager.setExistingReservation(callId, existing);
+            StateManager.setPhase(callId, 'recap');
           }
         } catch (err) {
-          console.log(`⚠️ FIX25c: Errore ricerca prenotazione:`, err.message);
+          console.log(`⚠️ Errore ricerca:`, err.message);
         }
       }
     }
     
-    // Gestione lingua
-    const langSwitch = TwilioHelpers.detectLanguageSwitch(userText);
-    if (langSwitch) StateManager.setLanguage(callId, langSwitch);
-    if (Language?.startsWith("en")) StateManager.setLanguage(callId, "en-US");
-    if (Language?.startsWith("it")) StateManager.setLanguage(callId, "it-IT");
-    
-    const lang = StateManager.getLanguage(callId);
-    
-    // Carica contesto
-    await ContextService.ensureForCall(callId);
+    const initialIntent = StateManager.getInitialIntent(callId);
+    const existingRes = StateManager.getExistingReservation(callId);
+    const phase = StateManager.getPhase(callId);
     
     // ═══════════════════════════════════════════════════════════════════════
     // SHORTCUT: Email ristorante
@@ -2482,33 +1520,235 @@ app.post("/twilio", async (req, res) => {
     if (TwilioHelpers.isAskingRestaurantEmail(userText)) {
       const email = ContextService.getRestaurantEmail(callId);
       const spelled = TwilioHelpers.spellEmail(email, lang);
-      
       const reply = lang === "en-US"
-        ? `The restaurant email is ${email}. I'll spell it: ${spelled}.`
+        ? `The restaurant email is ${email}. Spelled: ${spelled}.`
         : `L'email del ristorante è ${email}. Te la detto: ${spelled}.`;
       
       if (isDebug) {
-        return res.status(200).json({
-          reply_text: reply,
-          action: "answer_generic",
-          reservation: StateManager.getReservation(callId),
-        });
+        return res.status(200).json({ reply_text: reply, action: "answer_generic", reservation: null });
       }
-      
       const twiml = `
         <Response>
           <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
             <Say language="${lang}" bargeIn="true">${escapeXml(reply)}</Say>
           </Gather>
-          <Say language="${lang}">Se hai bisogno di altro, richiamaci. Grazie.</Say>
         </Response>
       `.trim();
-      
       return res.status(200).type("text/xml").send(twiml);
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // CHIAMA GPT (con validation pipeline)
+    // v3: FLUSSO DETERMINISTICO per CANCEL/MODIFY
+    // ═══════════════════════════════════════════════════════════════════════
+    if (existingRes && (initialIntent === 'cancel' || initialIntent === 'modify')) {
+      let replyText = "";
+      let action = "none";
+      let shouldHangup = false;
+      
+      // ─────────────────────────────────────────────────────────────────────
+      // FASE: RECAP - Mostra prenotazione, chiedi conferma dati
+      // ─────────────────────────────────────────────────────────────────────
+      if (phase === 'recap') {
+        replyText = RecapManager.buildRecapMessage(existingRes, initialIntent, lang);
+        StateManager.setPhase(callId, 'awaiting_data_confirm');
+        console.log(`📍 Mostro RECAP, attendo conferma dati`);
+      }
+      
+      // ─────────────────────────────────────────────────────────────────────
+      // FASE: AWAITING_DATA_CONFIRM - Utente conferma/nega i dati
+      // ─────────────────────────────────────────────────────────────────────
+      else if (phase === 'awaiting_data_confirm') {
+        if (RecapManager.isConfirming(userText)) {
+          // Dati confermati! Ora chiedi conferma azione
+          replyText = RecapManager.buildActionConfirmMessage(existingRes, initialIntent, lang);
+          StateManager.setPhase(callId, 'awaiting_action_confirm');
+          console.log(`📍 Dati confermati, chiedo conferma azione`);
+        } 
+        else if (RecapManager.isDenying(userText)) {
+          // Dati sbagliati
+          replyText = lang === "en-US"
+            ? "I'm sorry, I may have the wrong reservation. Can you tell me more details?"
+            : "Mi scuso, potrei aver sbagliato prenotazione. Puoi darmi più dettagli?";
+          StateManager.setPhase(callId, 'initial');
+          StateManager.setExistingReservation(callId, null);
+        }
+        else {
+          // Non ha capito, richiedi conferma
+          replyText = lang === "en-US"
+            ? "Sorry, is this the correct reservation? Please say yes or no."
+            : "Scusa, è questa la prenotazione giusta? Dimmi sì o no.";
+        }
+      }
+      
+      // ─────────────────────────────────────────────────────────────────────
+      // FASE: AWAITING_ACTION_CONFIRM - Esegui azione
+      // ─────────────────────────────────────────────────────────────────────
+      else if (phase === 'awaiting_action_confirm') {
+        
+        // ═══ CANCELLAZIONE ═══
+        if (initialIntent === 'cancel') {
+          if (RecapManager.isConfirming(userText)) {
+            // Esegui cancellazione!
+            console.log(`🗑️ Eseguo cancellazione...`);
+            const result = await CalendarService.cancelReservation({
+              source: isDebug ? "debug" : "twilio",
+              name: existingRes.name,
+              date: existingRes.date,
+              time: existingRes.time,
+              phone: From,
+            }, callId);
+            
+            if (result?.success) {
+              replyText = RecapManager.buildCancellationDoneMessage(existingRes, lang);
+              action = "cancel_reservation";
+              shouldHangup = true;
+              StateManager.setPhase(callId, 'completed');
+            } else {
+              replyText = lang === "en-US"
+                ? "I'm sorry, there was a problem. Please contact the restaurant directly."
+                : "Mi dispiace, c'è stato un problema. Contatta direttamente il ristorante.";
+            }
+            
+            if (isDebug) {
+              return res.status(200).json({ 
+                reply_text: replyText, action, reservation: existingRes, 
+                calendarResult: result, phase: StateManager.getPhase(callId) 
+              });
+            }
+          }
+          else if (RecapManager.isDenying(userText)) {
+            replyText = lang === "en-US"
+              ? "No problem, the reservation stays as it is. Anything else I can help with?"
+              : "Nessun problema, la prenotazione resta confermata. Posso aiutarti con altro?";
+            StateManager.setPhase(callId, 'completed');
+          }
+          else {
+            replyText = lang === "en-US"
+              ? "Do you confirm the cancellation? Please say yes or no."
+              : "Confermi la cancellazione? Dimmi sì o no.";
+          }
+        }
+        
+        // ═══ MODIFICA ═══
+        else if (initialIntent === 'modify') {
+          // Qui abbiamo chiesto "cosa vuoi modificare?"
+          // L'utente dovrebbe dirci cosa cambiare
+          const modifyRequest = RecapManager.parseModifyRequest(userText);
+          
+          if (modifyRequest.field && modifyRequest.value) {
+            // Abbiamo capito cosa modificare!
+            const updatedRes = { ...existingRes };
+            updatedRes[modifyRequest.field] = modifyRequest.value;
+            
+            // Verifica chiusura se cambia data
+            if (modifyRequest.field === 'date') {
+              const closureCheck = await ClosureChecker.isOpen(modifyRequest.value, callId);
+              if (!closureCheck.open) {
+                replyText = ClosureChecker.buildClosedMessage(modifyRequest.value, closureCheck, lang);
+                // Non cambiamo fase, richiediamo altro giorno
+                if (isDebug) {
+                  return res.status(200).json({ reply_text: replyText, action: "ask_date", phase });
+                }
+                const twiml = `
+                  <Response>
+                    <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                      <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+                    </Gather>
+                  </Response>
+                `.trim();
+                return res.status(200).type("text/xml").send(twiml);
+              }
+            }
+            
+            // Esegui modifica (crea con stesso nome = update)
+            console.log(`📝 Eseguo modifica: ${modifyRequest.field} = ${modifyRequest.value}`);
+            const result = await CalendarService.createReservation({
+              source: isDebug ? "debug" : "twilio",
+              name: updatedRes.name,
+              people: updatedRes.people,
+              date: updatedRes.date,
+              time: updatedRes.time,
+              phone: From,
+              customerEmail: updatedRes.email || "",
+            }, callId);
+            
+            if (result?.success) {
+              replyText = RecapManager.buildModificationDoneMessage(updatedRes, lang);
+              action = "create_reservation";
+              shouldHangup = true;
+              StateManager.setPhase(callId, 'completed');
+            } else if (result?.reason === "slot_full") {
+              const alternatives = await CalendarService.findAlternatives(
+                updatedRes.date, updatedRes.time, updatedRes.people, callId
+              );
+              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            } else {
+              replyText = lang === "en-US"
+                ? "I'm sorry, there was a problem. Please try again."
+                : "Mi dispiace, c'è stato un problema. Riprova.";
+            }
+            
+            if (isDebug) {
+              return res.status(200).json({ 
+                reply_text: replyText, action, reservation: updatedRes, 
+                calendarResult: result, phase: StateManager.getPhase(callId) 
+              });
+            }
+          }
+          else {
+            // Non ho capito cosa vuole modificare
+            replyText = lang === "en-US"
+              ? "What would you like to change? The time, date, or number of people?"
+              : "Cosa vorresti modificare? L'orario, il giorno, o il numero di persone?";
+          }
+        }
+      }
+      
+      // ─────────────────────────────────────────────────────────────────────
+      // FASE: COMPLETED - Già fatto
+      // ─────────────────────────────────────────────────────────────────────
+      else if (phase === 'completed') {
+        // Utente continua a parlare dopo azione completata
+        // Passa a GPT per gestire altre richieste
+        console.log(`📍 Fase completed, passo a GPT per altre richieste`);
+        // Fall through to GPT
+      }
+      
+      // Se abbiamo una risposta dal flusso deterministico, ritornala
+      if (replyText && phase !== 'completed') {
+        if (isDebug) {
+          return res.status(200).json({ 
+            reply_text: replyText, action, reservation: existingRes, phase: StateManager.getPhase(callId) 
+          });
+        }
+        
+        let twiml;
+        if (shouldHangup) {
+          twiml = `
+            <Response>
+              <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio?postFinal=1" method="POST" timeout="5" speechTimeout="auto">
+                <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+              </Gather>
+              <Say language="${lang}">${escapeXml(lang === "en-US" ? "Thank you, goodbye." : "Grazie, a presto.")}</Say>
+              <Hangup/>
+            </Response>
+          `.trim();
+        } else {
+          twiml = `
+            <Response>
+              <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+              </Gather>
+              <Say language="${lang}">${escapeXml(lang === "en-US" ? "I didn't hear. Please call back." : "Non ho sentito. Richiamaci.")}</Say>
+            </Response>
+          `.trim();
+        }
+        return res.status(200).type("text/xml").send(twiml);
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FLUSSO GPT NORMALE (nuove prenotazioni o dopo fase completed)
     // ═══════════════════════════════════════════════════════════════════════
     const gptResponse = await GPTService.ask(callId, userText);
     
@@ -2516,284 +1756,129 @@ app.post("/twilio", async (req, res) => {
     let action = gptResponse.action;
     const reservation = gptResponse.reservation;
     
-    console.log(`📤 Response: action=${action}, reply="${replyText.substring(0, 80)}..."`);
+    console.log(`📤 GPT: action=${action}, reply="${replyText.substring(0, 60)}..."`);
     
     // ═══════════════════════════════════════════════════════════════════════
-    // GESTIONE CREATE_RESERVATION - FIX19/FIX21b/FIX21c
+    // GESTIONE CREATE_RESERVATION
     // ═══════════════════════════════════════════════════════════════════════
     if (action === "create_reservation" && reservation?.date && reservation?.time && reservation?.name) {
-      
       const thresholds = ContextService.getThresholds(callId);
       const people = reservation.people || 2;
-      const isLargeGroup = people > thresholds.largeGroup; // >10 persone
+      const isLargeGroup = people > thresholds.largeGroup;
       
-      // EVENTO GIGANTE (≥45) - già gestito da STEP 5b, ma double-check
+      // Evento gigante
       if (people >= thresholds.event) {
-        console.log("🎪 Evento gigante, invio notifica");
-        await CalendarService.notifyLargeEvent({
-          name: reservation.name,
-          people,
-          date: reservation.date,
-          time: reservation.time,
-          phone: From,
-          customerEmail: reservation.customerEmail,
-        }, callId);
-        
         const email = ContextService.getRestaurantEmail(callId);
-        const spelled = TwilioHelpers.spellEmail(email, lang);
-        
         replyText = lang === "en-US"
-          ? `For groups over ${thresholds.event} people, please email us at ${email}. I'll spell it: ${spelled}.`
-          : `Per gruppi oltre ${thresholds.event} persone, ti chiedo di scrivere a ${email}. Te la detto: ${spelled}.`;
+          ? `For groups over ${thresholds.event}, please email ${email}.`
+          : `Per gruppi oltre ${thresholds.event} persone, scrivi a ${email}.`;
         action = "none";
-        
-      } 
-      // ═══════════════════════════════════════════════════════════════════════
-      // FIX21b: GRUPPI GRANDI (>10 ma <45) - Check availability, se ok crea PENDING
-      // FIX21c: Messaggio SEMPRE "richiesta registrata, ristoratore confermerà"
-      // FIX21a (code.gs): check_availability conta solo CONFIRMED, non PENDING
-      // ═══════════════════════════════════════════════════════════════════════
+      }
+      // Gruppo grande (>10 <45)
       else if (isLargeGroup) {
-        console.log(`👥 FIX21b: Gruppo grande (${people} > ${thresholds.largeGroup}), verifico disponibilità...`);
-        
-        const firstName = reservation.name.split(' ')[0];
-        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
-        const timeDisplay = reservation.time.substring(0, 5);
-        
-        // CHECK DISPONIBILITÀ (code.gs conta solo CONFIRMED, non PENDING)
         const availability = await CalendarService.checkAvailability(
           reservation.date, reservation.time, people, callId
         );
         
         if (!availability.available) {
           if (availability.reason === "day_closed") {
-            // Giorno chiuso
-            console.log("📅 Gruppo: giorno chiuso");
             replyText = lang === "en-US"
-              ? "I'm sorry, we're closed that day. Would you like another day?"
-              : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
+              ? "We're closed that day. Would you like another day?"
+              : "Quel giorno siamo chiusi. Vuoi provare un altro giorno?";
             action = "ask_date";
-            
           } else {
-            // Slot pieno - cerca alternative (ma messaggio per gruppi)
-            console.log("📅 Gruppo: slot pieno, cerco alternative...");
-            const alternatives = await CalendarService.findAlternatives(
-              reservation.date, reservation.time, people, callId
-            );
-            
-            // Messaggio alternativo specifico per gruppi
-            if (alternatives?.sameDay?.length > 0) {
-              const slots = alternatives.sameDay.slice(0, 3).map(s => s.time).join(", ");
-              replyText = lang === "en-US"
-                ? `I'm sorry, that time slot is full. I have availability at ${slots}. For groups, the booking is subject to confirmation by the restaurant. Which time would you prefer?`
-                : `Mi dispiace, quell'orario è al completo. Ho disponibilità alle ${slots}. Per i gruppi la prenotazione è soggetta a conferma del ristoratore. Quale orario preferisci?`;
-            } else {
-              replyText = lang === "en-US"
-                ? "I'm sorry, we're fully booked for that time. Would you like to try a different day?"
-                : "Mi dispiace, siamo al completo per quell'orario. Vuoi provare un altro giorno?";
-            }
-            action = "ask_time";
-          }
-          
-        } else {
-          // SLOT DISPONIBILE - CREA PENDING
-          console.log("✅ Gruppo: slot disponibile, creo PENDING...");
-          
-          try {
-            const calResult = await CalendarService.createReservation({
-              source: isDebug ? "debug" : "twilio",
-              name: reservation.name,
-              people,
-              date: reservation.date,
-              time: reservation.time,
-              phone: From || "unknown",
-              customerEmail: reservation.customerEmail,
-            }, callId);
-            
-            if (calResult?.success) {
-              console.log("✅ Richiesta gruppo registrata come PENDING");
-              
-              // FIX21c: Messaggio corretto - NON "confermata" ma "registrata"
-              replyText = lang === "en-US"
-                ? `Thank you ${firstName}! I've registered your request for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant owner will review it and confirm shortly. Have a nice day!`
-                : `Grazie ${firstName}! Ho registrato la tua richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore la esaminerà e ti confermerà a breve. Buona giornata!`;
-            } else if (calResult?.reason === "slot_full") {
-              // Race condition: slot riempito nel frattempo
-              console.log("⚠️ Gruppo: slot_full dopo check (race condition)");
-              const alternatives = await CalendarService.findAlternatives(
-                reservation.date, reservation.time, people, callId
-              );
-              if (alternatives?.sameDay?.length > 0) {
-                const slots = alternatives.sameDay.slice(0, 3).map(s => s.time).join(", ");
-                replyText = lang === "en-US"
-                  ? `I'm sorry, that slot just filled up. I have availability at ${slots}. Which time would you prefer?`
-                  : `Mi dispiace, quell'orario si è appena riempito. Ho disponibilità alle ${slots}. Quale preferisci?`;
-              } else {
-                replyText = lang === "en-US"
-                  ? "I'm sorry, we're fully booked. Would you like to try a different day?"
-                  : "Mi dispiace, siamo al completo. Vuoi provare un altro giorno?";
-              }
-              action = "ask_time";
-            } else {
-              // Errore generico (es: quota Google)
-              console.error("❌ Errore creazione richiesta gruppo:", calResult);
-              replyText = lang === "en-US"
-                ? "I'm sorry, there was a technical issue. Please try again or contact the restaurant directly."
-                : "Mi dispiace, c'è stato un problema tecnico. Riprova o contatta direttamente il ristorante.";
-              action = "none";
-            }
-            
-            if (isDebug) {
-              gptResponse.calendarResult = calResult;
-            }
-            
-          } catch (err) {
-            console.error("❌ Exception creazione richiesta gruppo:", err);
-            replyText = lang === "en-US"
-              ? "I'm sorry, technical problem. Please try again."
-              : "Mi dispiace, problema tecnico. Riprova per favore.";
-            action = "none";
-          }
-        }
-      } 
-      // ═══════════════════════════════════════════════════════════════════════
-      // PRENOTAZIONI NORMALI (≤10 persone) - check availability come prima
-      // ═══════════════════════════════════════════════════════════════════════
-      else {
-        // CHECK DISPONIBILITÀ
-        const availability = await CalendarService.checkAvailability(
-          reservation.date, reservation.time, people, callId
-        );
-        
-        if (!availability.available) {
-          if (availability.reason === "day_closed") {
-            // Giorno chiuso (già gestito da pipeline, ma double-check)
-            replyText = lang === "en-US"
-              ? "I'm sorry, we're closed that day. Would you like another day?"
-              : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
-            action = "ask_date";
-            
-          } else {
-            // Slot pieno - cerca alternative
             const alternatives = await CalendarService.findAlternatives(
               reservation.date, reservation.time, people, callId
             );
             replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
             action = "ask_time";
           }
-          
         } else {
-          // SLOT DISPONIBILE - CREA PRENOTAZIONE
-          try {
-            const calResult = await CalendarService.createReservation({
-              source: isDebug ? "debug" : "twilio",
-              name: reservation.name,
-              people,
-              date: reservation.date,
-              time: reservation.time,
-              phone: From || "unknown",
-              customerEmail: reservation.customerEmail,
-            }, callId);
-            
-            if (calResult?.success) {
-              console.log("✅ Prenotazione creata!");
-              
-              // FIX19: SEMPRE generare il messaggio corretto
-              const firstName = reservation.name.split(' ')[0];
-              const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
-              const timeDisplay = reservation.time.substring(0, 5);
-              
-              // Prenotazione normale -> confermata
-              replyText = lang === "en-US"
-                ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. We look forward to seeing you, have a nice evening!`
-                : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo, buona serata!`;
-              
-              // Aggiungi risultato calendar alla risposta debug
-              if (isDebug) {
-                gptResponse.calendarResult = calResult;
-              }
-              
-            } else if (calResult?.reason === "slot_full") {
-              // Double-check slot pieno
-              console.log("⚠️ Calendar: slot_full dopo check disponibilità");
-              const alternatives = await CalendarService.findAlternatives(
-                reservation.date, reservation.time, people, callId
-              );
-              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
-              action = "ask_time";
-              
-            } else {
-              // FIX19: Errore generico - MAI dire "confermata"!
-              console.error("❌ Calendar error:", calResult);
-              
-              // Controlla se è errore email
-              // FIX19b: Check SOLO per "Invalid email", NON per "email" generico (quota errors contengono "email")
-              if (calResult?.error?.includes('Invalid email')) {
-                replyText = lang === "en-US"
-                  ? "The email seems invalid. Could you repeat it or skip it?"
-                  : "L'email non sembra valida. Puoi ripeterla o saltare questo passaggio?";
-                action = "ask_email";
-              } else {
-                replyText = lang === "en-US"
-                  ? "I'm sorry, there was a problem. Could you try a different time?"
-                  : "Mi dispiace, c'è stato un problema. Puoi provare con un altro orario?";
-                action = "ask_time";
-              }
-            }
-            
-          } catch (err) {
-            console.error("❌ Calendar exception:", err);
+          const calResult = await CalendarService.createReservation({
+            source: isDebug ? "debug" : "twilio",
+            name: reservation.name,
+            people,
+            date: reservation.date,
+            time: reservation.time,
+            phone: From || "unknown",
+            customerEmail: reservation.customerEmail,
+          }, callId);
+          
+          if (calResult?.success) {
+            const firstName = reservation.name.split(' ')[0];
+            const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+            const timeDisplay = reservation.time.substring(0, 5);
             replyText = lang === "en-US"
-              ? "I'm sorry, technical problem. Please try again."
-              : "Mi dispiace, problema tecnico. Riprova per favore.";
+              ? `Thank you ${firstName}! Request registered for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant will confirm shortly.`
+              : `Grazie ${firstName}! Richiesta registrata per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore confermerà a breve.`;
+            
+            if (isDebug) gptResponse.calendarResult = calResult;
+          } else {
+            replyText = lang === "en-US"
+              ? "Sorry, technical problem. Please try again."
+              : "Mi dispiace, problema tecnico. Riprova.";
             action = "none";
+          }
+        }
+      }
+      // Prenotazione normale
+      else {
+        const availability = await CalendarService.checkAvailability(
+          reservation.date, reservation.time, people, callId
+        );
+        
+        if (!availability.available) {
+          if (availability.reason === "day_closed") {
+            replyText = lang === "en-US"
+              ? "We're closed that day. Another day?"
+              : "Quel giorno siamo chiusi. Un altro giorno?";
+            action = "ask_date";
+          } else {
+            const alternatives = await CalendarService.findAlternatives(
+              reservation.date, reservation.time, people, callId
+            );
+            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            action = "ask_time";
+          }
+        } else {
+          const calResult = await CalendarService.createReservation({
+            source: isDebug ? "debug" : "twilio",
+            name: reservation.name,
+            people,
+            date: reservation.date,
+            time: reservation.time,
+            phone: From || "unknown",
+            customerEmail: reservation.customerEmail,
+          }, callId);
+          
+          if (calResult?.success) {
+            const firstName = reservation.name.split(' ')[0];
+            const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+            const timeDisplay = reservation.time.substring(0, 5);
+            replyText = lang === "en-US"
+              ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. See you soon!`
+              : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo!`;
+            
+            if (isDebug) gptResponse.calendarResult = calResult;
+          } else if (calResult?.reason === "slot_full") {
+            const alternatives = await CalendarService.findAlternatives(
+              reservation.date, reservation.time, people, callId
+            );
+            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            action = "ask_time";
+          } else {
+            replyText = lang === "en-US"
+              ? "Sorry, problem occurred. Try another time?"
+              : "Mi dispiace, c'è stato un problema. Prova un altro orario?";
+            action = "ask_time";
           }
         }
       }
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // GESTIONE CANCEL_RESERVATION
-    // ═══════════════════════════════════════════════════════════════════════
-    if (action === "cancel_reservation" && reservation?.date) {
-      try {
-        const calResult = await CalendarService.cancelReservation({
-          source: isDebug ? "debug" : "twilio",
-          name: reservation.name,
-          date: reservation.date,
-          time: reservation.time,
-          phone: From,
-        }, callId);
-        
-        if (calResult?.success) {
-          replyText = lang === "en-US"
-            ? "Your reservation has been cancelled. Hope to see you another time. Goodbye!"
-            : "Ho cancellato la prenotazione. Speriamo di vederti un'altra volta. Buona serata!";
-        } else if (calResult?.reason === "reservation_not_found") {
-          replyText = lang === "en-US"
-            ? "I couldn't find that booking. Please contact the restaurant directly."
-            : "Non ho trovato quella prenotazione. Ti chiedo di contattare direttamente il ristorante.";
-          action = "none";
-        }
-        
-        if (isDebug) {
-          gptResponse.calendarResult = calResult;
-        }
-        
-      } catch (err) {
-        console.error("❌ Cancel error:", err);
-        replyText = lang === "en-US"
-          ? "I'm sorry, there was a problem cancelling. Please contact the restaurant."
-          : "Mi dispiace, problema durante la cancellazione. Contatta il ristorante.";
-        action = "none";
-      }
-    }
-    
-    // ═══════════════════════════════════════════════════════════════════════
     // RISPOSTA
     // ═══════════════════════════════════════════════════════════════════════
-    
-    // DEBUG: ritorna JSON
     if (isDebug) {
       return res.status(200).json({
         reply_text: replyText,
@@ -2803,10 +1888,8 @@ app.post("/twilio", async (req, res) => {
       });
     }
     
-    // TWILIO: ritorna TwiML
     const shouldHangup = (
-      (action === "create_reservation" || action === "cancel_reservation") &&
-      !replyText.includes("?") // Non è una domanda
+      action === "create_reservation" && !replyText.includes("?")
     );
     
     let twiml;
@@ -2826,7 +1909,7 @@ app.post("/twilio", async (req, res) => {
           <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
             <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
           </Gather>
-          <Say language="${lang}">${escapeXml(lang === "en-US" ? "I didn't hear anything. Please call back. Thank you." : "Non ho sentito. Richiamaci pure. Grazie.")}</Say>
+          <Say language="${lang}">${escapeXml(lang === "en-US" ? "I didn't hear. Call back." : "Non ho sentito. Richiamaci.")}</Say>
         </Response>
       `.trim();
     }
@@ -2842,17 +1925,17 @@ app.post("/twilio", async (req, res) => {
     
     const errorTwiml = `
       <Response>
-        <Say language="it-IT">Si è verificato un errore. Richiama più tardi. Grazie.</Say>
+        <Say language="it-IT">Errore tecnico. Richiama più tardi.</Say>
         <Hangup/>
       </Response>
     `.trim();
-    
     return res.status(500).type("text/xml").send(errorTwiml);
   }
 });
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROUTES: Conferma/Annulla grandi gruppi (link da email)
+// SEZIONE 19: ROUTES GRANDI GRUPPI
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/owner/large-group/confirm", async (req, res) => {
@@ -2873,21 +1956,21 @@ app.get("/owner/large-group/confirm", async (req, res) => {
     if (data?.success && data?.status === "CONFIRMED") {
       res.send(`
         <html><body style="font-family:system-ui;padding:24px;">
-          <h2>Prenotazione confermata ✅</h2>
-          <p>Confermata per <strong>${payload.people} persone</strong> a nome <strong>${payload.name}</strong>.</p>
+          <h2>✅ Prenotazione confermata</h2>
+          <p>${payload.people} persone a nome <strong>${payload.name}</strong>.</p>
         </body></html>
       `);
     } else if (data?.reason === "slot_full") {
       res.send(`
         <html><body style="font-family:system-ui;padding:24px;">
-          <h2>Impossibile confermare ❌</h2>
-          <p>Slot pieno per quella data/ora.</p>
+          <h2>❌ Slot pieno</h2>
+          <p>Impossibile confermare, slot al completo.</p>
         </body></html>
       `);
     } else {
       res.send(`
         <html><body style="font-family:system-ui;padding:24px;">
-          <h2>Errore ⚠️</h2>
+          <h2>⚠️ Errore</h2>
           <p>Verifica manualmente il calendario.</p>
         </body></html>
       `);
@@ -2913,8 +1996,8 @@ app.get("/owner/large-group/cancel", async (req, res) => {
     
     res.send(`
       <html><body style="font-family:system-ui;padding:24px;">
-        <h2>Prenotazione annullata ❌</h2>
-        <p>Annullata per <strong>${payload.people} persone</strong> a nome <strong>${payload.name}</strong>.</p>
+        <h2>❌ Prenotazione annullata</h2>
+        <p>Annullata per <strong>${payload.name}</strong> (${payload.people} persone).</p>
       </body></html>
     `);
   } catch (err) {
@@ -2924,15 +2007,16 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 18: AVVIO SERVER
+// SEZIONE 20: AVVIO SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v2.0 AVVIATO                               ║
+║  🚀 PRENOW GATEWAY v3.0 AVVIATO                               ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
+║  ✨ RECAP deterministico per cancel/modify                    ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
