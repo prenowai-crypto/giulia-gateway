@@ -528,21 +528,21 @@ const DateManager = {
     // 1. Pattern espliciti: "10 dicembre", "21 december"
     const explicitDate = this._parseExplicitDate(t, today);
     if (explicitDate) {
-      console.log(`📆 Data esplicita estratta: "${text}" → ${explicitDate}`);
+      console.log(`📆 Data esplicita estratta: "${text}" -> ${explicitDate}`);
       return explicitDate;
     }
     
     // 2. Pattern relativi: "domani", "dopodomani", "stasera"
     const relativeDate = this._parseRelativeDate(t, today);
     if (relativeDate) {
-      console.log(`📆 Data relativa estratta: "${text}" → ${relativeDate}`);
+      console.log(`📆 Data relativa estratta: "${text}" -> ${relativeDate}`);
       return relativeDate;
     }
     
     // 3. Giorni della settimana: "martedì", "sabato prossimo"
     const weekdayDate = this._parseWeekdayDate(t, today);
     if (weekdayDate) {
-      console.log(`📆 Giorno settimana estratto: "${text}" → ${weekdayDate}`);
+      console.log(`📆 Giorno settimana estratto: "${text}" -> ${weekdayDate}`);
       return weekdayDate;
     }
     
@@ -673,7 +673,7 @@ const DateManager = {
     }
     
     if (lastFoundIndex !== -1) {
-      console.log(`📆 FIX24a: Ultimo giorno trovato a posizione ${lastFoundPosition} → ${this.DAYS_IT[lastFoundIndex]}`);
+      console.log(`📆 FIX24a: Ultimo giorno trovato a posizione ${lastFoundPosition} -> ${this.DAYS_IT[lastFoundIndex]}`);
       return this.toISO(this.getNextWeekday(today, lastFoundIndex));
     }
     
@@ -755,7 +755,7 @@ const TimeManager = {
       let hour = parseInt(itMatch[1]);
       const minutes = itMatch[2] ? parseInt(itMatch[2]) : 0;
       
-      // Assumi sera se ora ambigua (8 → 20)
+      // Assumi sera se ora ambigua (8 -> 20)
       if (hour >= 1 && hour <= 11 && !t.includes("mattina") && !t.includes("pranzo")) {
         hour += 12;
       }
@@ -823,7 +823,7 @@ const TimeManager = {
   // Format per display
   formatForDisplay(timeStr) {
     if (!timeStr) return "";
-    return timeStr.substring(0, 5); // "20:30:00" → "20:30"
+    return timeStr.substring(0, 5); // "20:30:00" -> "20:30"
   },
 };
 
@@ -1060,7 +1060,7 @@ const NameManager = {
     const hasPeople = reservationState?.people > 0;
     const hasName = reservationState?.name;
     
-    // Se abbiamo già dati ma NON il nome → probabilmente stavamo chiedendo il nome
+    // Se abbiamo già dati ma NON il nome -> probabilmente stavamo chiedendo il nome
     if ((hasDate || hasTime || hasPeople) && !hasName) {
       return true;
     }
@@ -1440,10 +1440,10 @@ const ValidationPipeline = {
     if (parsedDate) {
       // Se l'utente ha menzionato una data/giorno, quella ha SEMPRE priorità
       if (reservation.date && reservation.date !== parsedDate) {
-        console.log(`📆 Data relativa estratta: "${userText}" → ${parsedDate}`);
+        console.log(`📆 Data relativa estratta: "${userText}" -> ${parsedDate}`);
         console.log(`⚠️ STEP 1: GPT aveva ${reservation.date}, utente ha detto ${parsedDate}. Correggo!`);
         
-        // FIX18/FIX19: Correggi data numerica nel reply_text (es. "30 dicembre 2025" → "1 gennaio 2026")
+        // FIX18/FIX19: Correggi data numerica nel reply_text (es. "30 dicembre 2025" -> "1 gennaio 2026")
         if (response.reply_text) {
           const oldDate = new Date(reservation.date + 'T12:00:00');
           const newDate = new Date(parsedDate + 'T12:00:00');
@@ -1460,11 +1460,11 @@ const ValidationPipeline = {
           const oldMonthName = months[oldMonth];
           const newMonthName = months[newMonth];
           
-          // Caso 1: Correggi formato completo con anno (es. "30 dicembre 2025" → "1 gennaio 2026")
+          // Caso 1: Correggi formato completo con anno (es. "30 dicembre 2025" -> "1 gennaio 2026")
           const patternWithYear = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\s+\\d{4}\\b`, 'gi');
           response.reply_text = response.reply_text.replace(patternWithYear, `${newDay} ${newMonthName} ${newYear}`);
           
-          // Caso 2: Correggi formato senza anno (es. "30 dicembre" → "1 gennaio")
+          // Caso 2: Correggi formato senza anno (es. "30 dicembre" -> "1 gennaio")
           if (oldDay !== newDay || oldMonth !== newMonth) {
             const pattern = new RegExp(`\\b${oldDay}\\s+(?:di\\s+)?${oldMonthName}\\b`, 'gi');
             response.reply_text = response.reply_text.replace(pattern, `${newDay} ${newMonthName}`);
@@ -1478,7 +1478,7 @@ const ValidationPipeline = {
           }
           
           if (oldDay !== newDay || oldMonth !== newMonth || oldYear !== newYear) {
-            console.log(`✅ STEP 1: Corretto testo "${oldDay} ${oldMonthName} ${oldYear}" → "${newDay} ${newMonthName} ${newYear}" nel reply`);
+            console.log(`✅ STEP 1: Corretto testo "${oldDay} ${oldMonthName} ${oldYear}" -> "${newDay} ${newMonthName} ${newYear}" nel reply`);
           }
         }
       }
@@ -1508,7 +1508,7 @@ const ValidationPipeline = {
       
       // ═══════════════════════════════════════════════════════════════════════
       // STEP 2b: FIX18/FIX19 - Correggi hallucination chiusure festive
-      // Se GPT dice "chiuso" ma il giorno è effettivamente APERTO → correggi!
+      // Se GPT dice "chiuso" ma il giorno è effettivamente APERTO -> correggi!
       // ═══════════════════════════════════════════════════════════════════════
       if (closureCheck.open && response.reply_text && /chius|closed/i.test(response.reply_text)) {
         console.log(`⚠️ STEP 2b: GPT ha detto "chiuso" ma ${reservation.date} è APERTO! Correggo hallucination.`);
@@ -1579,7 +1579,7 @@ const ValidationPipeline = {
           const correctDate = DateManager.getNextWeekday(today, userDayIndex);
           const correctDateISO = DateManager.toISO(correctDate);
           
-          console.log(`✅ STEP 3: Corretto DATA ${reservation.date} → ${correctDateISO} (${userDayValidation.foundDay})`);
+          console.log(`✅ STEP 3: Corretto DATA ${reservation.date} -> ${correctDateISO} (${userDayValidation.foundDay})`);
           
           reservation.date = correctDateISO;
           
@@ -1602,7 +1602,7 @@ const ValidationPipeline = {
           const correctDay = replyValidation.actualDay;
           const regex = new RegExp(wrongDay, 'gi');
           response.reply_text = response.reply_text.replace(regex, correctDay);
-          console.log(`✅ STEP 3: Corretto testo "${wrongDay}" → "${correctDay}"`);
+          console.log(`✅ STEP 3: Corretto testo "${wrongDay}" -> "${correctDay}"`);
         }
       }
     }
@@ -1637,7 +1637,7 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 5b: FIX20/FIX21d - Intercetta eventi grandi (≥45 persone) → redirige a email
+    // STEP 5b: FIX20/FIX21d - Intercetta eventi grandi (≥45 persone) -> redirige a email
     // ═══════════════════════════════════════════════════════════════════════
     if (reservation.people && reservation.people > 0) {
       const thresholds = ContextService.getThresholds(callId);
@@ -1772,9 +1772,9 @@ const ValidationPipeline = {
     const hasName = reservation.name && reservation.name.trim() !== "";
     const hasEmail = reservation.customerEmail && reservation.customerEmail.trim() !== "";
     
-    // SAFETY NET 1: ask_name ma nome già presente → ask_email
+    // SAFETY NET 1: ask_name ma nome già presente -> ask_email
     if (response.action === "ask_name" && hasName) {
-      console.log("⚠️ SAFETY NET 1: ask_name con nome presente → ask_email");
+      console.log("⚠️ SAFETY NET 1: ask_name con nome presente -> ask_email");
       response.action = "ask_email";
     }
     
@@ -1790,7 +1790,7 @@ const ValidationPipeline = {
       }
     }
     
-    // SAFETY NET 3: Utente conferma + tutti i dati → forza create_reservation
+    // SAFETY NET 3: Utente conferma + tutti i dati -> forza create_reservation
     // FIX19: NON generare messaggi di conferma qui - sarà la route a farlo dopo verificare Calendar
     // FIX25d: NON forzare create se l'intent iniziale era cancellazione
     const initialIntent = StateManager.getInitialIntent(callId);
@@ -1802,7 +1802,7 @@ const ValidationPipeline = {
           initialIntent !== "cancel" &&  // FIX25d: Escludi cancellazioni
           initialIntent !== "modify") {  // FIX25d: Escludi modifiche
         
-        console.log("🔧 SAFETY NET 3: Tutti i dati + conferma → create_reservation");
+        console.log("🔧 SAFETY NET 3: Tutti i dati + conferma -> create_reservation");
         response.action = "create_reservation";
         
         // FIX19: Messaggio neutro che verrà sovrascritto dalla route dopo verifica Calendar
@@ -1811,14 +1811,14 @@ const ValidationPipeline = {
       }
     }
     
-    // SAFETY NET 4: answer_menu/answer_generic → azzera reservation
+    // SAFETY NET 4: answer_menu/answer_generic -> azzera reservation
     if (response.action === "answer_menu" || response.action === "answer_generic") {
       // Non azzerare lo stato persistente, solo la risposta
     }
     
-    // FIX: action=none ma GPT menziona chiusura → ask_date
+    // FIX: action=none ma GPT menziona chiusura -> ask_date
     if (response.action === "none" && /chius|closed/i.test(response.reply_text)) {
-      console.log("🔧 FIX: action none con menzione chiusura → ask_date");
+      console.log("🔧 FIX: action none con menzione chiusura -> ask_date");
       response.action = "ask_date";
     }
     
@@ -1906,7 +1906,7 @@ ${initialIntent === 'cancel' ? `
 Il cliente vuole CANCELLARE questa prenotazione.
 
 ✅ COSA DEVI FARE:
-- Se hai nome e data → USA SUBITO action="cancel_reservation" con i dati sopra
+- Se hai nome e data -> USA SUBITO action="cancel_reservation" con i dati sopra
 - Conferma la cancellazione dicendo "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
 
 ❌ COSA NON DEVI FARE:
@@ -1928,7 +1928,7 @@ Il cliente vuole MODIFICARE questa prenotazione.
 - NON chiedere informazioni che già hai
 - NON proporre cambiamenti che il cliente NON ha chiesto
 - NON suggerire orari diversi se il cliente non lo chiede
-- Se il cliente vuole solo cambiare le persone → cambia SOLO le persone, NON l'orario
+- Se il cliente vuole solo cambiare le persone -> cambia SOLO le persone, NON l'orario
 `}
 ═══════════════════════════════════════════════════════════════════════════════`;
 
@@ -1952,12 +1952,12 @@ REGOLE DATE:
 - ${closingRules || "Nessuna chiusura straordinaria"}
 
 QUANDO IL CLIENTE CHIEDE PER UN LUNEDÌ:
-→ Rifiuta IMMEDIATAMENTE
-→ Proponi un altro giorno (es. martedì)
-→ NON chiedere orario/persone per un giorno chiuso!
+-> Rifiuta IMMEDIATAMENTE
+-> Proponi un altro giorno (es. martedì)
+-> NON chiedere orario/persone per un giorno chiuso!
 
 ⚠️ REGOLA CRITICA - NON INVENTARE CHIUSURE:
-- Se un giorno NON ha "⛔ CHIUSO" nel calendario sopra → il ristorante è APERTO
+- Se un giorno NON ha "⛔ CHIUSO" nel calendario sopra -> il ristorante è APERTO
 - NON assumere MAI chiusure per festività (Capodanno, Natale, Pasqua, Ferragosto, ecc.)
 - NON rifiutare MAI prenotazioni basandoti su festività generali
 - Accetta SEMPRE prenotazioni per giorni che nel calendario risultano APERTI
@@ -1978,26 +1978,26 @@ STILE:
 
 1. DATA MANCANTE - NON ASSUMERE "OGGI":
    Se il cliente NON specifica un giorno (es. "Vorrei prenotare per 12 persone"):
-   → Chiedi SEMPRE "Per quale giorno vorresti prenotare?"
-   → NON assumere che sia per oggi
-   → NON dire "Il lunedì siamo chiusi" se non ha chiesto per lunedì
+   -> Chiedi SEMPRE "Per quale giorno vorresti prenotare?"
+   -> NON assumere che sia per oggi
+   -> NON dire "Il lunedì siamo chiusi" se non ha chiesto per lunedì
    
 2. NON DARE INFORMAZIONI NON RICHIESTE:
-   → NON dire "Il venerdì siamo aperti!" se nessuno lo ha chiesto
-   → NON anticipare informazioni sulle chiusure se il giorno richiesto è aperto
-   → Se il cliente dice "per venerdì" e venerdì è aperto → chiedi solo orario, non commentare
+   -> NON dire "Il venerdì siamo aperti!" se nessuno lo ha chiesto
+   -> NON anticipare informazioni sulle chiusure se il giorno richiesto è aperto
+   -> Se il cliente dice "per venerdì" e venerdì è aperto -> chiedi solo orario, non commentare
    
 3. NON RIPETERE INFORMAZIONI GIÀ NOTE:
-   → Se il cliente ha già detto il giorno, non ripeterlo nelle domande successive
-   → Evita frasi robotiche come "Posso prenotare per giovedì per 6 persone"
-   → Vai dritto al punto: "Perfetto! A che ora?" oppure "Quanti siete?"
+   -> Se il cliente ha già detto il giorno, non ripeterlo nelle domande successive
+   -> Evita frasi robotiche come "Posso prenotare per giovedì per 6 persone"
+   -> Vai dritto al punto: "Perfetto! A che ora?" oppure "Quanti siete?"
    
 4. CONVERSAZIONE NATURALE:
-   → Rispondi come farebbe una receptionist vera
-   → Una domanda alla volta
-   → Non riassumere tutti i dati ad ogni turno
-   → Esempio SBAGLIATO: "Posso prenotare per giovedì per 6 persone. Vuoi lasciarmi un'email?"
-   → Esempio CORRETTO: "Perfetto, giovedì per 6. A che ora preferite?"
+   -> Rispondi come farebbe una receptionist vera
+   -> Una domanda alla volta
+   -> Non riassumere tutti i dati ad ogni turno
+   -> Esempio SBAGLIATO: "Posso prenotare per giovedì per 6 persone. Vuoi lasciarmi un'email?"
+   -> Esempio CORRETTO: "Perfetto, giovedì per 6. A che ora preferite?"
 
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2021,7 +2021,7 @@ Se il cliente chiede di MODIFICARE o SPOSTARE qualcosa (orario, data, persone):
 - AGGIORNA immediatamente i dati nella reservation
 - NON procedere con create_reservation
 - Chiedi conferma del nuovo dato o il prossimo dato mancante
-- Esempio: "Possiamo spostare alle 21?" → Aggiorna time a 21:00, action: ask_email o conferma
+- Esempio: "Possiamo spostare alle 21?" -> Aggiorna time a 21:00, action: ask_email o conferma
 
 ═══════════════════════════════════════════════════════════════════════════════
 ⚠️ GESTIONE CANCELLAZIONI (FIX25a + FIX26) - MOLTO IMPORTANTE!
@@ -2038,8 +2038,8 @@ PAROLE CHIAVE DI CANCELLAZIONE (TUTTE VALIDE):
 
 PROCEDURA CANCELLAZIONE:
 1. CONTROLLA SE HAI GIÀ I DATI nella sezione "PRENOTAZIONE ESISTENTE" sopra!
-2. Se hai già nome e data → USA SUBITO action="cancel_reservation"
-3. Se ti manca qualcosa → chiedi SOLO ciò che manca
+2. Se hai già nome e data -> USA SUBITO action="cancel_reservation"
+3. Se ti manca qualcosa -> chiedi SOLO ciò che manca
 4. Conferma la cancellazione
 
 🚨 SE VEDI "PRENOTAZIONE ESISTENTE" SOPRA:
@@ -2047,9 +2047,9 @@ PROCEDURA CANCELLAZIONE:
 - Procedi DIRETTAMENTE con action="cancel_reservation"
 
 ESEMPI CORRETTI:
-- Se hai già i dati esistenti → "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
-- Se manca il nome → "A che nome è la prenotazione?"
-- Se manca la data → "Per quale giorno era la prenotazione?"
+- Se hai già i dati esistenti -> "Procedo con la cancellazione della prenotazione di [NOME] per [DATA]"
+- Se manca il nome -> "A che nome è la prenotazione?"
+- Se manca la data -> "Per quale giorno era la prenotazione?"
 
 ⛔ ERRORI DA EVITARE:
 - NON chiedere il nome se lo vedi già in "PRENOTAZIONE ESISTENTE"
@@ -2096,7 +2096,7 @@ EMAIL RISTORANTE: ${restaurantEmail}
 (da dare SOLO se chiede "la vostra email" o "email del ristorante")
 
 ORARI:
-- Se dice "alle 8" senza specificare → interpreta come 20:00 (sera)
+- Se dice "alle 8" senza specificare -> interpreta come 20:00 (sera)
 - Orari apertura: ${openingHours || "pranzo e cena"}
 
 MENU:
@@ -2123,8 +2123,8 @@ REGOLE ACTION:
 
 🚨 IMPORTANTE - DATI ESISTENTI:
 Se vedi la sezione "PRENOTAZIONE ESISTENTE" sopra, DEVI usare quei dati!
-- Per cancellazione → includi name, date, time dalla prenotazione esistente
-- Per modifica → usa i dati esistenti come base e modifica solo ciò che il cliente chiede
+- Per cancellazione -> includi name, date, time dalla prenotazione esistente
+- Per modifica -> usa i dati esistenti come base e modifica solo ciò che il cliente chiede
 - NON lasciare null i campi che hai già nella prenotazione esistente!
 
 RISPOSTA FINALE (create_reservation):
@@ -2385,7 +2385,7 @@ app.post("/twilio", async (req, res) => {
   console.log(`   Text: "${userText.substring(0, 100)}"`);
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // PRIMO INGRESSO (nessun testo) → Messaggio di benvenuto
+  // PRIMO INGRESSO (nessun testo) -> Messaggio di benvenuto
   // ═══════════════════════════════════════════════════════════════════════════
   if (!userText && !isDebug) {
     StateManager.setLanguage(callId, "it-IT");
@@ -2703,7 +2703,7 @@ app.post("/twilio", async (req, res) => {
               const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
               const timeDisplay = reservation.time.substring(0, 5);
               
-              // Prenotazione normale → confermata
+              // Prenotazione normale -> confermata
               replyText = lang === "en-US"
                 ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. We look forward to seeing you, have a nice evening!`
                 : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo, buona serata!`;
