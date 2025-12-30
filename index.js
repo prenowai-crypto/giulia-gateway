@@ -1931,7 +1931,7 @@ Il cliente vuole MODIFICARE questa prenotazione.
 - Se il cliente vuole solo cambiare le persone -> cambia SOLO le persone, NON l'orario
 `}
 ═══════════════════════════════════════════════════════════════════════════════`;
-
+ }
     return `Sei ${CONFIG.RECEPTIONIST_NAME}, la receptionist telefonica di ${restaurantName}.
 
 ═══════════════════════════════════════════════════════════════════════════════
