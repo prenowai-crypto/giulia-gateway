@@ -1102,6 +1102,73 @@ const RecapManager = {
       : `Non ho trovato prenotazioni associate a questo numero. Vuoi fare una nuova prenotazione?`;
   },
   
+  // Messaggio per chiedere il nome (NUOVO!)
+  buildAskNameMessage(lang = "it-IT") {
+    return lang === "en-US"
+      ? `Of course! What name is the reservation under?`
+      : `Certo! A che nome è la prenotazione?`;
+  },
+  
+  // Messaggio se nome non corrisponde (NUOVO!)
+  buildNameMismatchMessage(saidName, lang = "it-IT") {
+    return lang === "en-US"
+      ? `I'm sorry, I don't find a reservation under the name "${saidName}" with this phone number. Can you check the name or call from the number used to book?`
+      : `Mi dispiace, non trovo prenotazioni a nome "${saidName}" con questo numero. Può verificare il nome o chiamare dal numero usato per prenotare?`;
+  },
+  
+  // Estrae il nome dal testo dell'utente (NUOVO!)
+  extractName(text) {
+    if (!text) return null;
+    const t = text.trim();
+    
+    // Rimuovi prefissi comuni
+    const cleaned = t
+      .replace(/^(a nome|nome|sotto il nome|prenotazione|prenotato a nome|è|sono)\s*/i, '')
+      .replace(/^(under|name|it's|i'm)\s*/i, '')
+      .trim();
+    
+    // Se resta solo una o due parole, probabilmente è il nome
+    const words = cleaned.split(/\s+/).filter(w => w.length > 1);
+    if (words.length >= 1 && words.length <= 4) {
+      // Capitalizza ogni parola
+      return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    }
+    
+    return null;
+  },
+  
+  // Confronta nome detto con nome in prenotazione (NUOVO!)
+  // Fuzzy match: "Rossi" deve matchare "Mario Rossi"
+  nameMatches(saidName, reservationName) {
+    if (!saidName || !reservationName) return false;
+    
+    const said = saidName.toLowerCase().trim();
+    const reserved = reservationName.toLowerCase().trim();
+    
+    // Match esatto
+    if (said === reserved) return true;
+    
+    // Match parziale: "rossi" in "mario rossi"
+    if (reserved.includes(said)) return true;
+    
+    // Match per parola: "mario" o "rossi" matchano "mario rossi"
+    const reservedWords = reserved.split(/\s+/);
+    const saidWords = said.split(/\s+/);
+    
+    // Almeno una parola deve matchare
+    for (const saidWord of saidWords) {
+      if (saidWord.length < 2) continue; // Ignora parole troppo corte
+      for (const resWord of reservedWords) {
+        if (resWord === saidWord) return true;
+        // Match parziale per cognomi lunghi (es. "cancel" in "cancelleri" - NO!)
+        // Ma "cancelleri" in "cancelleri" - SI
+        if (resWord.startsWith(saidWord) && saidWord.length >= 4) return true;
+      }
+    }
+    
+    return false;
+  },
+  
   // Verifica se utente sta confermando
   isConfirming(text) {
     const t = normalizeText(text || "");
@@ -1566,7 +1633,7 @@ app.post("/twilio", async (req, res) => {
           const existing = await CalendarService.findExistingReservation(From, null, callId);
           if (existing) {
             StateManager.setExistingReservation(callId, existing);
-            StateManager.setPhase(callId, 'recap');
+            StateManager.setPhase(callId, 'awaiting_name'); // NUOVO: prima chiedi nome!
           }
         } catch (err) {
           console.log(`⚠️ Errore ricerca:`, err.message);
@@ -1602,8 +1669,8 @@ app.post("/twilio", async (req, res) => {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // v3.1: FLUSSO SEMPLIFICATO per CANCEL/MODIFY
-    // RECAP = trasparenza, poi conversazione normale
+    // v3.2: FLUSSO CON VERIFICA NOME per CANCEL/MODIFY
+    // 1. Chiedi nome → 2. Verifica match → 3. RECAP → 4. Esegui
     // ═══════════════════════════════════════════════════════════════════════
     if (existingRes && (initialIntent === 'cancel' || initialIntent === 'modify')) {
       let replyText = "";
@@ -1611,89 +1678,137 @@ app.post("/twilio", async (req, res) => {
       let shouldHangup = false;
       
       // ═══════════════════════════════════════════════════════════════════
-      // CANCELLAZIONE: RECAP + conferma esplicita (azione irreversibile)
+      // FASE COMUNE: AWAITING_NAME - Chiedi nome per double-check
       // ═══════════════════════════════════════════════════════════════════
-      if (initialIntent === 'cancel') {
+      if (phase === 'awaiting_name') {
+        // Primo messaggio: chiedi nome
+        replyText = RecapManager.buildAskNameMessage(lang);
+        StateManager.setPhase(callId, 'verifying_name');
+        console.log(`📍 Chiedo nome per verifica`);
+      }
+      else if (phase === 'verifying_name') {
+        // Utente ha detto il nome, verifichiamo
+        const saidName = RecapManager.extractName(userText);
+        console.log(`📍 Nome detto: "${saidName}", Nome prenotazione: "${existingRes.name}"`);
         
-        if (phase === 'recap') {
-          // Primo messaggio: mostra RECAP e chiedi conferma
-          replyText = RecapManager.buildCancelRecapMessage(existingRes, lang);
-          StateManager.setPhase(callId, 'awaiting_cancel_confirm');
-          console.log(`📍 CANCEL: mostro RECAP, attendo conferma`);
-        }
-        else if (phase === 'awaiting_cancel_confirm') {
-          if (RecapManager.isConfirming(userText)) {
-            // Conferma ricevuta → esegui cancellazione
-            console.log(`🗑️ Eseguo cancellazione...`);
-            const result = await CalendarService.cancelReservation({
-              source: isDebug ? "debug" : "twilio",
-              name: existingRes.name,
-              date: existingRes.date,
-              time: existingRes.time,
-              phone: From,
-            }, callId);
-            
-            if (result?.success) {
-              replyText = RecapManager.buildCancellationDoneMessage(existingRes, lang);
-              action = "cancel_reservation";
-              shouldHangup = true;
-              StateManager.setPhase(callId, 'completed');
-            } else {
-              replyText = lang === "en-US"
-                ? "I'm sorry, there was a problem. Please contact the restaurant directly."
-                : "Mi dispiace, c'è stato un problema. Contatta direttamente il ristorante.";
-            }
-            
-            if (isDebug) {
-              return res.status(200).json({ 
-                reply_text: replyText, action, reservation: existingRes, 
-                calendarResult: result, phase: StateManager.getPhase(callId) 
-              });
-            }
+        if (saidName && RecapManager.nameMatches(saidName, existingRes.name)) {
+          // MATCH! Procedi con RECAP
+          console.log(`✅ Nome verificato! Match confermato.`);
+          
+          if (initialIntent === 'cancel') {
+            replyText = RecapManager.buildCancelRecapMessage(existingRes, lang);
+            StateManager.setPhase(callId, 'awaiting_cancel_confirm');
+          } else {
+            // Modify: mostra RECAP e chiedi cosa vuole modificare
+            replyText = RecapManager.buildModifyRecapMessage(existingRes, "", lang);
+            StateManager.setPhase(callId, 'awaiting_modify_details');
           }
-          else if (RecapManager.isDenying(userText)) {
-            // Non vuole più cancellare
-            replyText = lang === "en-US"
-              ? "No problem, the reservation stays confirmed. Anything else I can help with?"
-              : "Nessun problema, la prenotazione resta confermata. Posso aiutarti con altro?";
-            StateManager.setPhase(callId, 'completed');
-          }
-          else {
-            // Non ho capito, richiedi conferma
-            replyText = lang === "en-US"
-              ? "Do you confirm the cancellation? Say yes or no."
-              : "Confermi la cancellazione? Dimmi sì o no.";
-          }
-        }
-        else if (phase === 'completed') {
-          // Fall through to GPT
-          console.log(`📍 CANCEL completed, passo a GPT`);
+        } else {
+          // NO MATCH!
+          console.log(`❌ Nome non corrisponde!`);
+          replyText = RecapManager.buildNameMismatchMessage(saidName || userText, lang);
+          StateManager.setPhase(callId, 'completed'); // Termina flusso
         }
       }
       
       // ═══════════════════════════════════════════════════════════════════
-      // MODIFICA: RECAP integrato + conversazione normale
+      // CANCELLAZIONE: Conferma esplicita (azione irreversibile)
+      // ═══════════════════════════════════════════════════════════════════
+      else if (initialIntent === 'cancel' && phase === 'awaiting_cancel_confirm') {
+        if (RecapManager.isConfirming(userText)) {
+          // Conferma ricevuta → esegui cancellazione
+          console.log(`🗑️ Eseguo cancellazione...`);
+          const result = await CalendarService.cancelReservation({
+            source: isDebug ? "debug" : "twilio",
+            name: existingRes.name,
+            date: existingRes.date,
+            time: existingRes.time,
+            phone: From,
+          }, callId);
+          
+          if (result?.success) {
+            replyText = RecapManager.buildCancellationDoneMessage(existingRes, lang);
+            action = "cancel_reservation";
+            shouldHangup = true;
+            StateManager.setPhase(callId, 'completed');
+          } else {
+            replyText = lang === "en-US"
+              ? "I'm sorry, there was a problem. Please contact the restaurant directly."
+              : "Mi dispiace, c'è stato un problema. Contatta direttamente il ristorante.";
+          }
+          
+          if (isDebug) {
+            return res.status(200).json({ 
+              reply_text: replyText, action, reservation: existingRes, 
+              calendarResult: result, phase: StateManager.getPhase(callId) 
+            });
+          }
+        }
+        else if (RecapManager.isDenying(userText)) {
+          // Non vuole più cancellare
+          replyText = lang === "en-US"
+            ? "No problem, the reservation stays confirmed. Anything else I can help with?"
+            : "Nessun problema, la prenotazione resta confermata. Posso aiutarti con altro?";
+          StateManager.setPhase(callId, 'completed');
+        }
+        else {
+          // Non ho capito, richiedi conferma
+          replyText = lang === "en-US"
+            ? "Do you confirm the cancellation? Say yes or no."
+            : "Confermi la cancellazione? Dimmi sì o no.";
+        }
+      }
+      
+      // ═══════════════════════════════════════════════════════════════════
+      // MODIFICA: Raccolta dettagli e conferma
       // ═══════════════════════════════════════════════════════════════════
       else if (initialIntent === 'modify') {
         
-        if (phase === 'recap') {
-          // Primo messaggio: RECAP integrato
-          // Se ha già detto cosa vuole → chiedi conferma
-          // Se non ha detto → chiedi cosa vuole modificare
-          replyText = RecapManager.buildModifyRecapMessage(existingRes, userText, lang);
-          
-          // Estrai se ha già specificato una modifica
+        if (phase === 'awaiting_modify_details') {
+          // Attendiamo che ci dica cosa vuole modificare
           const modification = RecapManager.extractModification(userText, existingRes);
+          
           if (modification.newTime || modification.newDate || modification.newPeople) {
-            // Ha già detto cosa vuole → salva e attendi conferma
+            // Ha detto cosa vuole → salva e chiedi conferma
             STATE.pendingModifications = STATE.pendingModifications || new Map();
             STATE.pendingModifications.set(callId, modification);
+            
+            const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
+            
+            // Conta modifiche
+            const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
+            
+            if (modCount >= 2) {
+              // Modifiche multiple
+              let changes = [];
+              if (modification.newTime) changes.push(lang === "en-US" ? `${TimeManager.formatForDisplay(modification.newTime)}` : `alle ${TimeManager.formatForDisplay(modification.newTime)}`);
+              if (modification.newDate) changes.push(lang === "en-US" ? `${DateManager.formatForDisplay(modification.newDate, lang)}` : `${DateManager.formatForDisplay(modification.newDate, lang)}`);
+              if (modification.newPeople) changes.push(lang === "en-US" ? `${modification.newPeople} people` : `${modification.newPeople} persone`);
+              
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, changing to: ${changes.join(", ")}. Confirm?`
+                : `Ok ${firstName}, modifico: ${changes.join(", ")}. Confermi?`;
+            }
+            else if (modification.newTime) {
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, moving to ${TimeManager.formatForDisplay(modification.newTime)}. Confirm?`
+                : `Ok ${firstName}, sposto alle ${TimeManager.formatForDisplay(modification.newTime)}. Confermi?`;
+            } else if (modification.newDate) {
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, moving to ${DateManager.formatForDisplay(modification.newDate, lang)}. Confirm?`
+                : `Ok ${firstName}, sposto a ${DateManager.formatForDisplay(modification.newDate, lang)}. Confermi?`;
+            } else if (modification.newPeople) {
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, changing to ${modification.newPeople} people. Confirm?`
+                : `Ok ${firstName}, cambio a ${modification.newPeople} persone. Confermi?`;
+            }
+            
             StateManager.setPhase(callId, 'awaiting_modify_confirm');
-            console.log(`📍 MODIFY: RECAP con modifica proposta, attendo conferma`);
-          } else {
-            // Non ha specificato → attendi che dica cosa vuole
-            StateManager.setPhase(callId, 'awaiting_modify_details');
-            console.log(`📍 MODIFY: RECAP, attendo dettagli modifica`);
+            console.log(`📍 MODIFY: dettagli ricevuti, attendo conferma`);
+          }
+          else {
+            // Non ha specificato → chiedi di nuovo
+            replyText = RecapManager.buildAskWhatToModify(existingRes, lang);
           }
         }
         else if (phase === 'awaiting_modify_confirm') {
@@ -1812,57 +1927,15 @@ app.post("/twilio", async (req, res) => {
             }
           }
         }
-        else if (phase === 'awaiting_modify_details') {
-          // Attendiamo che ci dica cosa vuole modificare
-          const modification = RecapManager.extractModification(userText, existingRes);
-          
-          if (modification.newTime || modification.newDate || modification.newPeople) {
-            // Ha detto cosa vuole → salva e chiedi conferma
-            STATE.pendingModifications = STATE.pendingModifications || new Map();
-            STATE.pendingModifications.set(callId, modification);
-            
-            const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
-            
-            // Conta modifiche
-            const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
-            
-            if (modCount >= 2) {
-              // Modifiche multiple
-              let changes = [];
-              if (modification.newTime) changes.push(lang === "en-US" ? `${TimeManager.formatForDisplay(modification.newTime)}` : `alle ${TimeManager.formatForDisplay(modification.newTime)}`);
-              if (modification.newDate) changes.push(lang === "en-US" ? `${DateManager.formatForDisplay(modification.newDate, lang)}` : `${DateManager.formatForDisplay(modification.newDate, lang)}`);
-              if (modification.newPeople) changes.push(lang === "en-US" ? `${modification.newPeople} people` : `${modification.newPeople} persone`);
-              
-              replyText = lang === "en-US"
-                ? `Okay ${firstName}, changing to: ${changes.join(", ")}. Confirm?`
-                : `Ok ${firstName}, modifico: ${changes.join(", ")}. Confermi?`;
-            }
-            else if (modification.newTime) {
-              replyText = lang === "en-US"
-                ? `Okay ${firstName}, moving to ${TimeManager.formatForDisplay(modification.newTime)}. Confirm?`
-                : `Ok ${firstName}, sposto alle ${TimeManager.formatForDisplay(modification.newTime)}. Confermi?`;
-            } else if (modification.newDate) {
-              replyText = lang === "en-US"
-                ? `Okay ${firstName}, moving to ${DateManager.formatForDisplay(modification.newDate, lang)}. Confirm?`
-                : `Ok ${firstName}, sposto a ${DateManager.formatForDisplay(modification.newDate, lang)}. Confermi?`;
-            } else if (modification.newPeople) {
-              replyText = lang === "en-US"
-                ? `Okay ${firstName}, changing to ${modification.newPeople} people. Confirm?`
-                : `Ok ${firstName}, cambio a ${modification.newPeople} persone. Confermi?`;
-            }
-            
-            StateManager.setPhase(callId, 'awaiting_modify_confirm');
-            console.log(`📍 MODIFY: dettagli ricevuti, attendo conferma`);
-          }
-          else {
-            // Non ha specificato → chiedi di nuovo
-            replyText = RecapManager.buildAskWhatToModify(existingRes, lang);
-          }
-        }
         else if (phase === 'completed') {
           // Fall through to GPT
           console.log(`📍 MODIFY completed, passo a GPT`);
         }
+      }
+      
+      // Se phase === 'completed' per cancel, passa a GPT
+      if (initialIntent === 'cancel' && phase === 'completed') {
+        console.log(`📍 CANCEL completed, passo a GPT`);
       }
       
       // Se abbiamo una risposta dal flusso deterministico, ritornala
