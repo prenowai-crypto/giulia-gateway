@@ -1258,20 +1258,28 @@ const ValidationPipeline = {
       if (this.isValidTime(reservation.time)) {
         console.log(`⚠️ FIX ANTI-ALLUCINAZIONE: GPT rifiutava ${reservation.time} ma è valido!`);
         // L'orario è valido, non permettere a GPT di rifiutarlo
-        // Cambiamo action solo se abbiamo altri dati mancanti
+        // Cambiamo action in base ai dati mancanti
         const merged = StateManager.getReservation(callId) || {};
-        if (!merged.people && !reservation.people) {
+        const hasPeople = merged.people || reservation.people;
+        const hasName = merged.name || reservation.name;
+        const hasDate = merged.date || reservation.date;
+        
+        if (!hasPeople) {
           response.action = "ask_people";
           response.reply_text = lang === "en-US" 
             ? "For how many people?" 
             : "Per quante persone?";
-        } else if (!merged.name && !reservation.name) {
+        } else if (!hasName) {
           response.action = "ask_name";
           response.reply_text = lang === "en-US"
             ? "What name for the reservation?"
             : "A che nome la prenotazione?";
+        } else if (hasDate && hasPeople && hasName) {
+          // ABBIAMO TUTTO! Forza create_reservation
+          console.log(`✅ FIX: Tutti i dati presenti, forzo create_reservation`);
+          response.action = "create_reservation";
+          // reply_text verrà gestito dopo nel flusso normale
         }
-        // Se abbiamo tutto, lasciamo che proceda
       }
     }
     
