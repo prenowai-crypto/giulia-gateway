@@ -649,225 +649,6 @@ const PeopleManager = {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 9B: FLOW CONTROLLER v4 (NUOVO - Logica Deterministica)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const FlowController = {
-  // Campi necessari per completare una prenotazione
-  REQUIRED_FIELDS: ['date', 'time', 'people', 'name'],
-  
-  // Orari validi (19:00 - 23:00)
-  MIN_HOUR: 19,
-  MAX_HOUR: 23,
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAZIONE ORARIO (deterministica - mai più allucinazioni!)
-  // ═══════════════════════════════════════════════════════════════════════════
-  isValidTime(time) {
-    if (!time) return { valid: false, reason: "missing" };
-    
-    const hour = parseInt(time.split(':')[0]);
-    const minutes = parseInt(time.split(':')[1]) || 0;
-    
-    if (isNaN(hour)) return { valid: false, reason: "invalid_format" };
-    
-    // 19:00 - 23:00 sono TUTTI validi
-    if (hour >= this.MIN_HOUR && hour <= this.MAX_HOUR) {
-      return { valid: true };
-    }
-    
-    // Prima delle 19:00
-    if (hour < this.MIN_HOUR && hour >= 12) {
-      return { valid: false, reason: "too_early", message: `Apriamo alle ${this.MIN_HOUR}:00` };
-    }
-    
-    // Dopo le 23:00
-    if (hour > this.MAX_HOUR || hour < 12) {
-      return { valid: false, reason: "too_late", message: `L'ultima prenotazione è alle ${this.MAX_HOUR}:00` };
-    }
-    
-    return { valid: true };
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAZIONE DATA (lunedì chiuso)
-  // ═══════════════════════════════════════════════════════════════════════════
-  isValidDate(dateISO) {
-    if (!dateISO) return { valid: false, reason: "missing" };
-    
-    const date = new Date(dateISO + "T12:00:00");
-    const dayOfWeek = date.getDay();
-    
-    // 1 = lunedì = chiuso
-    if (dayOfWeek === 1) {
-      return { valid: false, reason: "closed_monday", message: "Siamo chiusi il lunedì" };
-    }
-    
-    // Data nel passato
-    const today = DateManager.getNow();
-    today.setHours(0, 0, 0, 0);
-    if (date < today) {
-      return { valid: false, reason: "past_date", message: "Non puoi prenotare per una data passata" };
-    }
-    
-    return { valid: true };
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAZIONE PERSONE
-  // ═══════════════════════════════════════════════════════════════════════════
-  isValidPeople(people, largeGroupThreshold = 10) {
-    if (!people) return { valid: false, reason: "missing" };
-    if (people < 1) return { valid: false, reason: "too_few", message: "Almeno 1 persona" };
-    if (people > 50) return { valid: false, reason: "too_many", message: "Per gruppi così grandi contatta il ristorante" };
-    if (people > largeGroupThreshold) {
-      return { valid: true, warning: "large_group", message: "prenotazione soggetta a conferma" };
-    }
-    return { valid: true };
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CAMPI MANCANTI
-  // ═══════════════════════════════════════════════════════════════════════════
-  getMissingFields(reservation) {
-    return this.REQUIRED_FIELDS.filter(f => !reservation[f]);
-  },
-  
-  isComplete(reservation) {
-    return this.getMissingFields(reservation).length === 0;
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PROSSIMA DOMANDA (deterministica!)
-  // ═══════════════════════════════════════════════════════════════════════════
-  getNextQuestion(reservation, lang = "it-IT") {
-    const missing = this.getMissingFields(reservation);
-    if (missing.length === 0) return null;
-    
-    const field = missing[0];
-    
-    const questions = {
-      "it-IT": {
-        date: "Per quale giorno vorresti prenotare?",
-        time: "A che ora?",
-        people: "Per quante persone?",
-        name: "A che nome?",
-      },
-      "en-US": {
-        date: "What day would you like to book?",
-        time: "What time?",
-        people: "For how many people?",
-        name: "What name?",
-      }
-    };
-    
-    const q = questions[lang] || questions["it-IT"];
-    return { 
-      field, 
-      question: q[field],
-      action: `ask_${field}`
-    };
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // MESSAGGI DI RISPOSTA (template fissi)
-  // ═══════════════════════════════════════════════════════════════════════════
-  buildConfirmationMessage(reservation, lang = "it-IT") {
-    const dayName = DateManager.getDayName(reservation.date, lang);
-    const dateNum = new Date(reservation.date + "T12:00:00").getDate();
-    const month = DateManager.MONTHS_IT[new Date(reservation.date + "T12:00:00").getMonth()];
-    const time = TimeManager.formatForDisplay(reservation.time);
-    
-    if (lang === "en-US") {
-      return `The reservation for ${reservation.people} people on ${dayName} ${dateNum} at ${time} is confirmed under the name ${reservation.name}. We look forward to seeing you!`;
-    }
-    return `La prenotazione per ${reservation.people} persone ${dayName} ${dateNum} ${month} alle ${time} è confermata a nome ${reservation.name}. Ti aspettiamo!`;
-  },
-  
-  buildAskEmailMessage(reservation, lang = "it-IT") {
-    if (lang === "en-US") {
-      return `Would you like to leave an email for confirmation?`;
-    }
-    return `Vuoi lasciare un'email per la conferma?`;
-  },
-  
-  buildErrorMessage(field, error, lang = "it-IT") {
-    if (error.message) return error.message;
-    
-    const messages = {
-      "it-IT": {
-        time: {
-          too_early: `Apriamo alle ${this.MIN_HOUR}:00, scegli un orario successivo`,
-          too_late: `L'ultima prenotazione è alle ${this.MAX_HOUR}:00`,
-          invalid_format: "Non ho capito l'orario, puoi ripetere?"
-        },
-        date: {
-          closed_monday: "Siamo chiusi il lunedì, scegli un altro giorno",
-          past_date: "Non puoi prenotare per una data passata"
-        }
-      }
-    };
-    
-    return messages[lang]?.[field]?.[error.reason] || "Non ho capito, puoi ripetere?";
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PROCESSA INPUT UTENTE (estrazione + validazione)
-  // ═══════════════════════════════════════════════════════════════════════════
-  processUserInput(userText, currentReservation, lang = "it-IT") {
-    const result = {
-      updates: {},
-      errors: [],
-      nextAction: null,
-      replyText: null
-    };
-    
-    // 1. Estrai data
-    const extractedDate = DateManager.extractFromText(userText);
-    if (extractedDate) {
-      const dateCheck = this.isValidDate(extractedDate);
-      if (dateCheck.valid) {
-        result.updates.date = extractedDate;
-      } else {
-        result.errors.push({ field: "date", ...dateCheck });
-      }
-    }
-    
-    // 2. Estrai orario
-    const extractedTime = TimeManager.extractFromText(userText);
-    if (extractedTime) {
-      const timeCheck = this.isValidTime(extractedTime);
-      if (timeCheck.valid) {
-        result.updates.time = extractedTime;
-      } else {
-        result.errors.push({ field: "time", ...timeCheck });
-      }
-    }
-    
-    // 3. Estrai persone
-    const extractedPeople = PeopleManager.parseFromText(userText);
-    if (extractedPeople) {
-      const peopleCheck = this.isValidPeople(extractedPeople);
-      if (peopleCheck.valid) {
-        result.updates.people = extractedPeople;
-        if (peopleCheck.warning) {
-          result.warnings = result.warnings || [];
-          result.warnings.push(peopleCheck.message);
-        }
-      } else {
-        result.errors.push({ field: "people", ...peopleCheck });
-      }
-    }
-    
-    // 4. Nome (GPT lo estrae, ma possiamo fare pattern matching semplice)
-    // Per ora lasciamo a GPT l'estrazione del nome
-    
-    return result;
-  }
-};
-
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // SEZIONE 10: CLOSURE CHECKER (copiato da v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1420,6 +1201,13 @@ const RecapManager = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ValidationPipeline = {
+  // FIX v3.3: Validazione orari DETERMINISTICA
+  isValidTime(time) {
+    if (!time) return false;
+    const hour = parseInt(time.split(':')[0]);
+    return hour >= 19 && hour <= 23;
+  },
+  
   async validate(gptResponse, userText, callId) {
     console.log("🔄 ValidationPipeline...");
     
@@ -1458,6 +1246,32 @@ const ValidationPipeline = {
       } else {
         const defaultTime = TimeManager.inferDefault(StateManager.getAllUserText(callId));
         if (defaultTime) reservation.time = defaultTime;
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.3: ANTI-ALLUCINAZIONE ORARI
+    // Se GPT rifiuta un orario valido (19-23), SOVRASCRIVIAMO la sua decisione
+    // ═══════════════════════════════════════════════════════════════════════
+    if (response.action === "ask_time" && reservation.time) {
+      // GPT sta chiedendo orario ma ne abbiamo già uno
+      if (this.isValidTime(reservation.time)) {
+        console.log(`⚠️ FIX ANTI-ALLUCINAZIONE: GPT rifiutava ${reservation.time} ma è valido!`);
+        // L'orario è valido, non permettere a GPT di rifiutarlo
+        // Cambiamo action solo se abbiamo altri dati mancanti
+        const merged = StateManager.getReservation(callId) || {};
+        if (!merged.people && !reservation.people) {
+          response.action = "ask_people";
+          response.reply_text = lang === "en-US" 
+            ? "For how many people?" 
+            : "Per quante persone?";
+        } else if (!merged.name && !reservation.name) {
+          response.action = "ask_name";
+          response.reply_text = lang === "en-US"
+            ? "What name for the reservation?"
+            : "A che nome la prenotazione?";
+        }
+        // Se abbiamo tutto, lasciamo che proceda
       }
     }
     
@@ -1571,13 +1385,6 @@ Per gruppi >${largeGroupThreshold}: "prenotazione soggetta a conferma"
 
 ORARI: "alle 8" senza specificare = 20:00 (sera)
 ORARI APERTURA: ${openingHours || "pranzo e cena"}
-
-⚠️ REGOLA ORARI IMPORTANTE:
-- Accetta QUALSIASI orario tra le 19:00 e le 23:00
-- 19:30, 20:00, 20:30, 21:00, 21:30, 22:00, 22:30 sono TUTTI validi
-- NON rifiutare MAI orari come 21:30 - sono PRIMA delle 23:00!
-- Se il cliente chiede un orario valido, ACCETTALO senza discutere
-
 MENU: ${menuSummary || "Cucina italiana"}
 EMAIL RISTORANTE: ${restaurantEmail}
 
@@ -1693,115 +1500,6 @@ RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
     } catch (e) {
       console.error("❌ JSON parse error:", e);
       return fallback;
-    }
-  },
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // v4: ESTRAZIONE NLU PURA (GPT non decide, solo estrae)
-  // ═══════════════════════════════════════════════════════════════════════════
-  async extractOnly(userText, callId) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY non impostata");
-    
-    const now = DateManager.getNow();
-    const todayISO = DateManager.toISO(now);
-    const calendar = DateManager.buildCalendar(7);
-    const calendarText = calendar.map(d => `${d.dayName}: ${d.date}`).join(', ');
-    
-    const extractPrompt = `Estrai i dati dalla frase del cliente per una prenotazione ristorante.
-
-OGGI: ${todayISO} (${DateManager.DAYS_IT[now.getDay()]})
-PROSSIMI GIORNI: ${calendarText}
-
-REGOLE ESTRAZIONE:
-- "domani" = ${calendar[1]?.date || "giorno successivo"}
-- "dopodomani" = ${calendar[2]?.date || "fra 2 giorni"}  
-- "alle 8" senza AM/PM = 20:00 (sera)
-- "alle 8 di sera" = 20:00
-- "alle 8 di mattina" = 08:00
-- Estrai SOLO ciò che il cliente dice esplicitamente
-- NON inventare dati non presenti
-
-Rispondi SOLO con JSON:
-{
-  "date": "YYYY-MM-DD o null",
-  "time": "HH:MM o null",
-  "people": numero o null,
-  "name": "stringa o null",
-  "email": "stringa o null",
-  "is_question": true/false,
-  "question_type": "menu|hours|location|other|null"
-}`;
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: CONFIG.GPT_MODEL,
-        messages: [
-          { role: "system", content: extractPrompt },
-          { role: "user", content: userText }
-        ],
-        max_completion_tokens: 200,
-        temperature: 0.1, // Bassa temperatura = più deterministico
-        response_format: { type: "json_object" },
-      }),
-    });
-    
-    if (!response.ok) {
-      console.error("❌ GPT extract error:", response.status);
-      return null;
-    }
-    
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-    console.log("🔍 GPT Extract:", content);
-    
-    try {
-      return JSON.parse(content);
-    } catch (e) {
-      console.error("❌ Extract JSON parse error:", e);
-      return null;
-    }
-  },
-  
-  // v4: Genera risposta conversazionale (solo testo, no logica)
-  async generateReply(context, reservation, question, lang = "it-IT") {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return question; // Fallback al template
-    
-    const restaurantName = context?.restaurant?.name || CONFIG.DEFAULT_RESTAURANT_NAME;
-    
-    const prompt = `Sei ${CONFIG.RECEPTIONIST_NAME}, receptionist di ${restaurantName}.
-Genera UNA frase breve (max 10 parole) per chiedere: "${question}"
-Tono: professionale ma amichevole.
-Lingua: ${lang === "en-US" ? "inglese" : "italiano"}
-Rispondi SOLO con la frase, niente altro.`;
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: CONFIG.GPT_MODEL,
-          messages: [{ role: "system", content: prompt }],
-          max_completion_tokens: 50,
-          temperature: 0.7,
-        }),
-      });
-      
-      if (!response.ok) return question;
-      
-      const data = await response.json();
-      return data.choices?.[0]?.message?.content?.trim() || question;
-    } catch (e) {
-      return question;
     }
   },
 };
@@ -2307,180 +2005,129 @@ app.post("/twilio", async (req, res) => {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // v4: FLUSSO DETERMINISTICO PER NUOVE PRENOTAZIONI
-    // GPT estrae solo il nome, tutto il resto è deterministico
+    // FLUSSO GPT NORMALE (nuove prenotazioni o dopo fase completed)
     // ═══════════════════════════════════════════════════════════════════════
+    const gptResponse = await GPTService.ask(callId, userText);
     
-    let replyText = "";
-    let action = "none";
-    let calendarResult = null;
+    let replyText = gptResponse.reply_text;
+    let action = gptResponse.action;
+    const reservation = gptResponse.reservation;
     
-    // 1. ESTRAZIONE DETERMINISTICA
-    const currentRes = StateManager.getReservation(callId) || {};
-    let updates = {};
-    let errors = [];
+    console.log(`📤 GPT: action=${action}, reply="${replyText.substring(0, 60)}..."`);
     
-    // Estrai data
-    if (!currentRes.date) {
-      const extractedDate = DateManager.parseFromText(userText, callId);
-      if (extractedDate) {
-        const dateCheck = FlowController.isValidDate(extractedDate);
-        if (dateCheck.valid) {
-          updates.date = extractedDate;
-        } else {
-          errors.push({ field: "date", message: dateCheck.message });
-        }
-      }
-    }
-    
-    // Estrai orario
-    if (!currentRes.time) {
-      const extractedTime = TimeManager.parseFromText(userText);
-      if (extractedTime) {
-        const timeCheck = FlowController.isValidTime(extractedTime);
-        if (timeCheck.valid) {
-          updates.time = extractedTime;
-        } else {
-          errors.push({ field: "time", message: timeCheck.message });
-        }
-      }
-    }
-    
-    // Estrai persone
-    if (!currentRes.people) {
-      const extractedPeople = PeopleManager.parseFromText(userText);
-      if (extractedPeople) {
-        const peopleCheck = FlowController.isValidPeople(extractedPeople);
-        if (peopleCheck.valid) {
-          updates.people = extractedPeople;
-        } else {
-          errors.push({ field: "people", message: peopleCheck.message });
-        }
-      }
-    }
-    
-    // Estrai nome (usa GPT solo per questo, è complesso)
-    if (!currentRes.name) {
-      const gptExtract = await GPTService.extractOnly(userText, callId);
-      if (gptExtract?.name) {
-        updates.name = gptExtract.name;
-      }
-    }
-    
-    // Estrai email (opzionale)
-    if (!currentRes.customerEmail) {
-      const emailMatch = userText.match(/[\w.+-]+@[\w.-]+\.\w+/i);
-      if (emailMatch) {
-        updates.customerEmail = emailMatch[0].toLowerCase();
-      }
-      // Se utente dice "no" alla mail, segna come rifiutata
-      if (/no\s*(grazie)?|non\s*(serve|voglio)/i.test(userText)) {
-        updates.emailDeclined = true;
-      }
-    }
-    
-    // 2. MERGE DATI
-    const merged = StateManager.mergeReservation(callId, updates);
-    console.log(`📊 Stato prenotazione:`, JSON.stringify(merged));
-    
-    // 3. GESTIONE ERRORI DI VALIDAZIONE
-    if (errors.length > 0) {
-      replyText = errors[0].message;
-      action = `ask_${errors[0].field}`;
-    }
-    
-    // 4. CHECK CHIUSURE STRAORDINARIE (solo se abbiamo data valida)
-    else if (merged.date) {
-      const closureCheck = await ClosureChecker.isOpen(merged.date, callId);
-      if (!closureCheck.open) {
-        replyText = ClosureChecker.buildClosedMessage(merged.date, closureCheck, lang);
-        action = "ask_date";
-        StateManager.mergeReservation(callId, { date: null });
-      }
-    }
-    
-    // 5. COSA MANCA? (se nessun errore)
-    if (!replyText) {
-      const nextQ = FlowController.getNextQuestion(merged, lang);
+    // ═══════════════════════════════════════════════════════════════════════
+    // GESTIONE CREATE_RESERVATION
+    // ═══════════════════════════════════════════════════════════════════════
+    if (action === "create_reservation" && reservation?.date && reservation?.time && reservation?.name) {
+      const thresholds = ContextService.getThresholds(callId);
+      const people = reservation.people || 2;
+      const isLargeGroup = people > thresholds.largeGroup;
       
-      if (nextQ) {
-        // Mancano ancora dati
-        replyText = nextQ.question;
-        action = nextQ.action;
-      } 
-      else if (!merged.customerEmail && !merged.emailDeclined) {
-        // Tutti i dati raccolti, chiedi email (opzionale)
-        replyText = FlowController.buildAskEmailMessage(merged, lang);
-        action = "ask_email";
+      // Evento gigante
+      if (people >= thresholds.event) {
+        const email = ContextService.getRestaurantEmail(callId);
+        replyText = lang === "en-US"
+          ? `For groups over ${thresholds.event}, please email ${email}.`
+          : `Per gruppi oltre ${thresholds.event} persone, scrivi a ${email}.`;
+        action = "none";
       }
-      else {
-        // 6. TUTTO COMPLETO → CREA PRENOTAZIONE
-        const thresholds = ContextService.getThresholds(callId);
-        const people = merged.people || 2;
+      // Gruppo grande (>10 <45)
+      else if (isLargeGroup) {
+        const availability = await CalendarService.checkAvailability(
+          reservation.date, reservation.time, people, callId
+        );
         
-        // Evento gigante (≥45)
-        if (people >= thresholds.event) {
-          const email = ContextService.getRestaurantEmail(callId);
-          replyText = lang === "en-US"
-            ? `For groups over ${thresholds.event}, please email ${email}.`
-            : `Per gruppi oltre ${thresholds.event} persone, scrivi a ${email}.`;
-          action = "none";
-        }
-        else {
-          // Check disponibilità
-          const availability = await CalendarService.checkAvailability(
-            merged.date, merged.time, people, callId
-          );
+        if (!availability.available) {
+          if (availability.reason === "day_closed") {
+            replyText = lang === "en-US"
+              ? "We're closed that day. Would you like another day?"
+              : "Quel giorno siamo chiusi. Vuoi provare un altro giorno?";
+            action = "ask_date";
+          } else {
+            const alternatives = await CalendarService.findAlternatives(
+              reservation.date, reservation.time, people, callId
+            );
+            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            action = "ask_time";
+          }
+        } else {
+          const calResult = await CalendarService.createReservation({
+            source: isDebug ? "debug" : "twilio",
+            name: reservation.name,
+            people,
+            date: reservation.date,
+            time: reservation.time,
+            phone: From || "unknown",
+            customerEmail: reservation.customerEmail,
+          }, callId);
           
-          if (!availability.available) {
-            if (availability.reason === "day_closed") {
-              replyText = lang === "en-US"
-                ? "We're closed that day. Another day?"
-                : "Quel giorno siamo chiusi. Un altro giorno?";
-              action = "ask_date";
-            } else {
-              const alternatives = await CalendarService.findAlternatives(
-                merged.date, merged.time, people, callId
-              );
-              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
-              action = "ask_time";
-            }
-          } 
-          else {
-            // CREA!
-            calendarResult = await CalendarService.createReservation({
-              source: isDebug ? "debug" : "twilio",
-              name: merged.name,
-              people,
-              date: merged.date,
-              time: merged.time,
-              phone: From || "unknown",
-              customerEmail: merged.customerEmail || null,
-            }, callId);
+          if (calResult?.success) {
+            const firstName = reservation.name.split(' ')[0];
+            const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+            const timeDisplay = reservation.time.substring(0, 5);
+            replyText = lang === "en-US"
+              ? `Thank you ${firstName}! Request registered for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant will confirm shortly.`
+              : `Grazie ${firstName}! Richiesta registrata per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore confermerà a breve.`;
             
-            if (calendarResult?.success) {
-              replyText = FlowController.buildConfirmationMessage(merged, lang);
-              action = "create_reservation";
-              
-              // Warning per gruppi grandi
-              if (people > thresholds.largeGroup) {
-                const firstName = merged.name.split(' ')[0];
-                replyText = lang === "en-US"
-                  ? `Thank you ${firstName}! Request registered for ${people} people. The restaurant will confirm shortly.`
-                  : `Grazie ${firstName}! Richiesta registrata per ${people} persone. Il ristoratore confermerà a breve.`;
-              }
-            } else if (calendarResult?.reason === "slot_full") {
-              const alternatives = await CalendarService.findAlternatives(
-                merged.date, merged.time, people, callId
-              );
-              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
-              action = "ask_time";
-            } else {
-              replyText = lang === "en-US"
-                ? "Sorry, technical problem. Please try again."
-                : "Mi dispiace, problema tecnico. Riprova.";
-              action = "none";
-            }
+            if (isDebug) gptResponse.calendarResult = calResult;
+          } else {
+            replyText = lang === "en-US"
+              ? "Sorry, technical problem. Please try again."
+              : "Mi dispiace, problema tecnico. Riprova.";
+            action = "none";
+          }
+        }
+      }
+      // Prenotazione normale
+      else {
+        const availability = await CalendarService.checkAvailability(
+          reservation.date, reservation.time, people, callId
+        );
+        
+        if (!availability.available) {
+          if (availability.reason === "day_closed") {
+            replyText = lang === "en-US"
+              ? "We're closed that day. Another day?"
+              : "Quel giorno siamo chiusi. Un altro giorno?";
+            action = "ask_date";
+          } else {
+            const alternatives = await CalendarService.findAlternatives(
+              reservation.date, reservation.time, people, callId
+            );
+            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            action = "ask_time";
+          }
+        } else {
+          const calResult = await CalendarService.createReservation({
+            source: isDebug ? "debug" : "twilio",
+            name: reservation.name,
+            people,
+            date: reservation.date,
+            time: reservation.time,
+            phone: From || "unknown",
+            customerEmail: reservation.customerEmail,
+          }, callId);
+          
+          if (calResult?.success) {
+            const firstName = reservation.name.split(' ')[0];
+            const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+            const timeDisplay = reservation.time.substring(0, 5);
+            replyText = lang === "en-US"
+              ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. See you soon!`
+              : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo!`;
+            
+            if (isDebug) gptResponse.calendarResult = calResult;
+          } else if (calResult?.reason === "slot_full") {
+            const alternatives = await CalendarService.findAlternatives(
+              reservation.date, reservation.time, people, callId
+            );
+            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            action = "ask_time";
+          } else {
+            replyText = lang === "en-US"
+              ? "Sorry, problem occurred. Try another time?"
+              : "Mi dispiace, c'è stato un problema. Prova un altro orario?";
+            action = "ask_time";
           }
         }
       }
@@ -2493,8 +2140,8 @@ app.post("/twilio", async (req, res) => {
       return res.status(200).json({
         reply_text: replyText,
         action,
-        reservation: merged,
-        calendarResult,
+        reservation,
+        calendarResult: gptResponse.calendarResult,
       });
     }
     
@@ -2623,11 +2270,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v4.0 AVVIATO                               ║
+║  🚀 PRENOW GATEWAY v3.3 AVVIATO                               ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FlowController: flusso deterministico                     ║
-║  ✨ GPT: solo estrazione NLU, no decisioni                    ║
+║  ✨ RECAP deterministico per cancel/modify                    ║
+║  ✨ FIX: Anti-allucinazione orari (19:00-23:00 sempre validi) ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
