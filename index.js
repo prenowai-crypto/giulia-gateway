@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.6
+// PRENOW - RECEPTIONIST AI GATEWAY v3.7
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4:
@@ -15,6 +15,10 @@
 // FIX v3.6:
 // - Lingua passata ESPLICITAMENTE nel system prompt GPT
 // - GPT riceve istruzione chiara: "This conversation is in ENGLISH"
+//
+// FIX v3.7:
+// - Gruppi >10: dopo PENDING, cliente NON può "confermare" da solo
+// - Intercetta risposte post-PENDING e spiega che il ristorante confermerà
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1743,7 +1747,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.6 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.7 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -1902,6 +1906,34 @@ app.post("/twilio", async (req, res) => {
       
       // Cambia fase per evitare loop
       StateManager.setPhase(callId, 'no_reservation_found');
+      
+      if (isDebug) {
+        return res.status(200).json({ reply_text: replyText, action: "none", reservation: null });
+      }
+      const twiml = `
+        <Response>
+          <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+            <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+          </Gather>
+        </Response>
+      `.trim();
+      return res.status(200).type("text/xml").send(twiml);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.7: Intercetta risposte dopo prenotazione PENDING (gruppi >10)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (phase === 'pending_large_group') {
+      console.log(`📍 Fase pending_large_group: cliente ha risposto dopo prenotazione PENDING`);
+      
+      // Il cliente ha risposto dopo che gli abbiamo detto "il ristoratore confermerà"
+      // Non deve poter "confermare" da solo!
+      const replyText = lang === "en-US"
+        ? "Your request has been registered. The restaurant will contact you to confirm the reservation. Is there anything else I can help you with?"
+        : "La tua richiesta è stata registrata. Il ristorante ti contatterà per confermare la prenotazione. Posso aiutarti con altro?";
+      
+      // Dopo questa risposta, resetta la fase
+      StateManager.setPhase(callId, 'completed');
       
       if (isDebug) {
         return res.status(200).json({ reply_text: replyText, action: "none", reservation: null });
@@ -2284,6 +2316,9 @@ app.post("/twilio", async (req, res) => {
               ? `Thank you ${firstName}! Request registered for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant will confirm shortly.`
               : `Grazie ${firstName}! Richiesta registrata per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore confermerà a breve.`;
             
+            // FIX v3.7: Salva stato PENDING per intercettare risposte successive
+            StateManager.setPhase(callId, 'pending_large_group');
+            
             if (isDebug) gptResponse.calendarResult = calResult;
           } else {
             replyText = lang === "en-US"
@@ -2485,7 +2520,7 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.6 AVVIATO                               ║
+║  🚀 PRENOW GATEWAY v3.7 AVVIATO                               ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
 ║  ✨ RECAP deterministico per cancel/modify                    ║
