@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.5
+// PRENOW - RECEPTIONIST AI GATEWAY v3.6
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4:
@@ -11,6 +11,10 @@
 // - "day after tomorrow" → +2 giorni (non +1)
 // - Language detection: più pattern per rilevare inglese
 // - Cancel senza prenotazione: risposta nella lingua corretta
+//
+// FIX v3.6:
+// - Lingua passata ESPLICITAMENTE nel system prompt GPT
+// - GPT riceve istruzione chiara: "This conversation is in ENGLISH"
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1423,7 +1427,7 @@ const ValidationPipeline = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const GPTService = {
-  buildSystemPrompt(context, reservation, callId) {
+  buildSystemPrompt(context, reservation, callId, lang = "it-IT") {
     const restaurantName = context?.restaurant?.name || CONFIG.DEFAULT_RESTAURANT_NAME;
     const restaurantEmail = context?.restaurant?.email || CONFIG.OWNER_EMAIL_DEFAULT;
     const openingHours = context?.restaurant?.openingHoursText || "";
@@ -1454,7 +1458,14 @@ ${reservation.customerEmail ? `- Email: ${reservation.customerEmail}` : ""}
 Se l'utente conferma, usa action="create_reservation" con questi dati!`;
     }
 
+    // FIX v3.6: Istruzione lingua ESPLICITA
+    const langInstruction = lang === "en-US"
+      ? `⚠️ LANGUAGE: This conversation is in ENGLISH. You MUST reply ONLY in English!`
+      : `⚠️ LINGUA: Questa conversazione è in ITALIANO. Rispondi SOLO in italiano!`;
+
     return `Sei ${CONFIG.RECEPTIONIST_NAME}, receptionist di ${restaurantName}.
+
+${langInstruction}
 
 OGGI: ${DateManager.DAYS_IT[now.getDay()]} ${now.getDate()} ${DateManager.MONTHS_IT[now.getMonth()]} ${now.getFullYear()} (${todayISO})
 
@@ -1462,16 +1473,13 @@ CALENDARIO:
 ${calendarText}
 
 CHIUSURE:
-- LUNEDÌ sempre chiuso
+- LUNEDÌ sempre chiuso (${lang === "en-US" ? "Mondays" : "lunedì"})
 - NON inventare altre chiusure (festività, ecc.)
 
 ${stateText}
 
 STILE:
 - Frasi brevi (5-7 secondi)
-- IMPORTANTE: Rispondi SEMPRE nella stessa lingua del cliente!
-  - Se il cliente parla inglese → rispondi in inglese
-  - Se il cliente parla italiano → rispondi in italiano
 - Professionale ma amichevole
 - Una domanda alla volta
 
@@ -1512,7 +1520,7 @@ REGOLE ACTION:
 RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
   },
 
-  async ask(callId, userText) {
+  async ask(callId, userText, lang = "it-IT") {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY non impostata");
     
@@ -1521,7 +1529,8 @@ RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
     const reservation = StateManager.getReservation(callId);
     
     let convo = StateManager.getConversation(callId);
-    const systemPrompt = this.buildSystemPrompt(context, reservation, callId);
+    const systemPrompt = this.buildSystemPrompt(context, reservation, callId, lang);
+    console.log(`🌍 GPT system prompt con lingua: ${lang}`);
     
     if (!convo) {
       convo = { messages: [{ role: "system", content: systemPrompt }] };
@@ -1734,7 +1743,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.5 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.6 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -1823,10 +1832,12 @@ app.post("/twilio", async (req, res) => {
     if (StateManager.getLanguage(callId) === "it-IT") {
       const detectedLang = TwilioHelpers.detectLanguageFromContent(userText);
       if (detectedLang) {
+        console.log(`🌍 Lingua rilevata dal contenuto: ${detectedLang}`);
         StateManager.setLanguage(callId, detectedLang);
       }
     }
     const lang = StateManager.getLanguage(callId);
+    console.log(`🗣️ Lingua conversazione: ${lang}`);
     
     await ContextService.ensureForCall(callId);
     
@@ -2211,7 +2222,7 @@ app.post("/twilio", async (req, res) => {
     // ═══════════════════════════════════════════════════════════════════════
     // FLUSSO GPT NORMALE (nuove prenotazioni o dopo fase completed)
     // ═══════════════════════════════════════════════════════════════════════
-    const gptResponse = await GPTService.ask(callId, userText);
+    const gptResponse = await GPTService.ask(callId, userText, lang);
     
     let replyText = gptResponse.reply_text;
     let action = gptResponse.action;
@@ -2474,7 +2485,7 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.3 AVVIATO                               ║
+║  🚀 PRENOW GATEWAY v3.6 AVVIATO                               ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
 ║  ✨ RECAP deterministico per cancel/modify                    ║
