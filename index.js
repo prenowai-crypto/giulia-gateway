@@ -1,11 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.4
+// PRENOW - RECEPTIONIST AI GATEWAY v3.5
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4:
 // - P1: Check disponibilità ANTICIPATO (prima di nome/email)
 // - P2: Pattern inglesi per cancel/modify
 // - P3: Language detection migliorata
+//
+// FIX v3.5:
+// - "day after tomorrow" → +2 giorni (non +1)
+// - Language detection: più pattern per rilevare inglese
+// - Cancel senza prenotazione: risposta nella lingua corretta
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -515,9 +520,11 @@ const DateManager = {
   },
   
   _parseRelativeDate(text, today) {
-    if (/dopodomani|dopo domani/.test(text)) return this.toISO(this.addDays(today, 2));
-    if (/domani|tomorrow/.test(text)) return this.toISO(this.addDays(today, 1));
-    if (/oggi|today|stasera|questa sera/.test(text)) return this.toISO(today);
+    // FIX v3.5: "day after tomorrow" PRIMA di "tomorrow" per evitare match parziale
+    if (/dopodomani|dopo domani|day after tomorrow/.test(text)) return this.toISO(this.addDays(today, 2));
+    // "tomorrow" ma NON "day after tomorrow" (già gestito sopra)
+    if (/\btomorrow\b/.test(text) || /\bdomani\b/.test(text)) return this.toISO(this.addDays(today, 1));
+    if (/oggi|today|stasera|questa sera|tonight/.test(text)) return this.toISO(today);
     
     const traMatch = text.match(/(?:tra|fra|in)\s*(\d+)\s*giorni/);
     if (traMatch) return this.toISO(this.addDays(today, parseInt(traMatch[1])));
@@ -1614,25 +1621,62 @@ const TwilioHelpers = {
     return null;
   },
   
-  // FIX P3: Rileva se il testo è in inglese
+  // FIX P3 v3.5: Rileva se il testo è in inglese - pattern migliorati
   detectLanguageFromContent(text) {
     const t = (text || "").toLowerCase();
     
     // Pattern comuni inglesi (non presenti in italiano)
     const englishPatterns = [
-      /\bi('d| would| want| need| have)\b/,  // I'd, I would, I want, I need, I have
-      /\b(book|booking|reservation)\b/,       // book, booking, reservation
-      /\b(table for|people at)\b/,            // table for, people at
-      /\b(tonight|tomorrow|today)\b/,         // tonight, tomorrow, today
-      /\b(hi|hello|hey|please|thank you|thanks)\b/, // saluti inglesi
-      /\b(can i|could i|may i)\b/,            // richieste inglesi
-      /\b(at \d|for \d|on monday|on tuesday|on wednesday|on thursday|on friday|on saturday|on sunday)\b/,
-      /\b(pm|am)\b/,                          // orari AM/PM
-      /\b(the name is|my name is|under)\b/,   // nome
+      // Saluti e cortesie
+      /^hi\b|^hello\b|^hey\b/,                    // Inizio con saluto
+      /\b(hi|hello|hey)\b.*\b(like|want|need)\b/, // "Hi, I'd like..."
+      /\bplease\b|\bthank you\b|\bthanks\b/,
+      
+      // Pronomi e verbi inglesi
+      /\bi('d| would| want| need| have| am)\b/,   // I'd, I would, I want, I need, I have, I am
+      /\bwe (need|want|are|have)\b/,              // We need, We want, We are
+      /\b(can|could|may|would) (i|we|you)\b/,     // Can I, Could we, May I
+      
+      // Prenotazioni
+      /\b(book|booking|reservation)\b/,
+      /\btable\b/,                                 // "table" da solo
+      /\bfor (dinner|lunch|breakfast)\b/,         // for dinner, for lunch
+      /\bat (dinner|lunch|breakfast)\b/,          // at dinner, at lunch
+      
+      // Tempo
+      /\b(tonight|tomorrow|today)\b/,
+      /\bday after tomorrow\b/,
+      /\b(this|next) (week|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/,
+      
+      // Giorni in inglese (senza "on")
+      /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/,
+      
+      // Orari
+      /\b\d{1,2}\s*(pm|am)\b/,                    // 8pm, 8 pm
+      /\bat \d{1,2}(:\d{2})?\b/,                  // at 8, at 8:30
+      
+      // Numeri di persone
+      /\bfor \d+ (people|persons|guests)\b/,      // for 4 people
+      /\b\d+ (people|persons|guests)\b/,          // 4 people
+      /\bparty of \d+\b/,                         // party of 4
+      
+      // Nome
+      /\b(the name is|my name is|name is|under the name|under)\b/,
+      
+      // Domande
+      /\bdo you have\b|\bis there\b|\bare there\b/,
+      /\bwhat time\b|\bwhat day\b/,
+      
+      // Cancellazioni/Modifiche
+      /\b(cancel|change|modify|reschedule)\b/,
+      /\bi need to\b|\bi want to\b|\bi have to\b/,
     ];
     
     for (const pattern of englishPatterns) {
-      if (pattern.test(t)) return "en-US";
+      if (pattern.test(t)) {
+        console.log(`🌍 Lingua rilevata: en-US (pattern: ${pattern})`);
+        return "en-US";
+      }
     }
     
     return null;
@@ -1690,7 +1734,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.4 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.5 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -1779,7 +1823,6 @@ app.post("/twilio", async (req, res) => {
     if (StateManager.getLanguage(callId) === "it-IT") {
       const detectedLang = TwilioHelpers.detectLanguageFromContent(userText);
       if (detectedLang) {
-        console.log(`🌍 Lingua rilevata: ${detectedLang}`);
         StateManager.setLanguage(callId, detectedLang);
       }
     }
@@ -1829,6 +1872,33 @@ app.post("/twilio", async (req, res) => {
         <Response>
           <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
             <Say language="${lang}" bargeIn="true">${escapeXml(reply)}</Say>
+          </Gather>
+        </Response>
+      `.trim();
+      return res.status(200).type("text/xml").send(twiml);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.5: CANCEL/MODIFY senza prenotazione trovata
+    // Se l'utente vuole cancellare/modificare ma non abbiamo trovato prenotazioni
+    // ═══════════════════════════════════════════════════════════════════════
+    if ((initialIntent === 'cancel' || initialIntent === 'modify') && !existingRes && phase === 'initial') {
+      console.log(`⚠️ Intent ${initialIntent} ma nessuna prenotazione trovata per ${From}`);
+      
+      const replyText = lang === "en-US"
+        ? "I'm sorry, I couldn't find a reservation under your phone number. Could you please provide the name on the reservation, or would you like to make a new booking?"
+        : "Mi dispiace, non ho trovato prenotazioni con questo numero di telefono. Puoi dirmi il nome della prenotazione, oppure vuoi fare una nuova prenotazione?";
+      
+      // Cambia fase per evitare loop
+      StateManager.setPhase(callId, 'no_reservation_found');
+      
+      if (isDebug) {
+        return res.status(200).json({ reply_text: replyText, action: "none", reservation: null });
+      }
+      const twiml = `
+        <Response>
+          <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+            <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
           </Gather>
         </Response>
       `.trim();
