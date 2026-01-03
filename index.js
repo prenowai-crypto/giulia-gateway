@@ -1,6 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.0
+// PRENOW - RECEPTIONIST AI GATEWAY v3.4
 // Architettura pulita con RECAP deterministico per cancel/modify
+// 
+// FIX v3.4:
+// - P1: Check disponibilità ANTICIPATO (prima di nome/email)
+// - P2: Pattern inglesi per cancel/modify
+// - P3: Language detection migliorata
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -96,29 +101,42 @@ function extractEmailFromText(text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const IntentDetector = {
+  // FIX P2: Pattern inglesi aggiunti
   CANCEL_KEYWORDS: [
+    // Italiano
     'cancellare', 'cancella', 'cancello', 'cancellazione',
     'disdire', 'disdetta', 'disdico',
     'annullare', 'annulla', 'annullo', 'annullamento',
     'eliminare', 'elimina', 'elimino',
     'non vengo', 'non veniamo', 'non riesco', 'non riusciamo',
-    'cancel', 'delete', 'remove'
+    // Inglese
+    'cancel', 'cancellation', 'delete', 'remove',
+    'i need to cancel', 'i want to cancel', 'i have to cancel',
+    'cancel my reservation', 'cancel my booking',
   ],
   
   MODIFY_KEYWORDS: [
+    // Italiano
     'modificare', 'modifica', 'modifico', 'modifiche',
     'spostare', 'sposta', 'sposto',
     'cambiare', 'cambia', 'cambio',
     'anticipare', 'posticipare',
     'aumentat', 'aggiunger',
-    'change', 'move', 'reschedule'
+    // Inglese
+    'change', 'modify', 'move', 'reschedule', 'update',
+    'i need to change', 'i want to change', 'i have to change',
+    'i need to modify', 'i want to modify',
+    'change my reservation', 'change my booking',
   ],
   
   // Keywords che indicano prenotazione esistente (anche senza modify/cancel esplicito)
   EXISTING_RESERVATION_KEYWORDS: [
+    // Italiano
     'ho prenotato', 'avevo prenotato', 'ho una prenotazione',
     'la mia prenotazione', 'la prenotazione',
-    'i have a reservation', 'my reservation', 'i booked'
+    // Inglese
+    'i have a reservation', 'my reservation', 'i booked',
+    'i have a booking', 'my booking',
   ],
   
   detectIntent(text) {
@@ -662,13 +680,15 @@ const ClosureChecker = {
     const dayOfWeek = DateManager.getDayOfWeek(dateISO);
     if (CONFIG.WEEKLY_CLOSING_DAYS.includes(dayOfWeek)) {
       const dayName = DateManager.getDayName(dateISO, "it-IT");
+      const dayNameEN = DateManager.getDayName(dateISO, "en-US");
       console.log(`⛔ CHIUSO: ${dayName}`);
       return {
         open: false,
         reason: "chiusura_settimanale",
         dayName,
+        dayNameEN,
         message_it: `Il ristorante è chiuso il ${dayName}.`,
-        message_en: `The restaurant is closed on ${DateManager.getDayName(dateISO, "en-US")}s.`,
+        message_en: `The restaurant is closed on ${dayNameEN}s.`,
       };
     }
     
@@ -707,9 +727,10 @@ const ClosureChecker = {
     const dateDisplay = DateManager.formatForDisplay(dateISO, lang);
     
     if (closureResult.reason === "chiusura_settimanale") {
+      const dayToShow = lang === "en-US" ? closureResult.dayNameEN : closureResult.dayName;
       return lang === "en-US"
-        ? `I'm sorry, the restaurant is closed on ${closureResult.dayName}s. Would you like another day?`
-        : `Mi dispiace, il ristorante è chiuso il ${closureResult.dayName}. Vuoi prenotare per un altro giorno?`;
+        ? `I'm sorry, the restaurant is closed on ${dayToShow}s. Would you like another day?`
+        : `Mi dispiace, il ristorante è chiuso il ${dayToShow}. Vuoi prenotare per un altro giorno?`;
     }
     
     return lang === "en-US"
@@ -1300,6 +1321,71 @@ const ValidationPipeline = {
       return response;
     }
     
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX P1: CHECK DISPONIBILITÀ ANTICIPATO
+    // Se abbiamo data+ora+persone e GPT sta per chiedere nome/email,
+    // verifichiamo PRIMA se c'è posto. Così evitiamo di raccogliere tutti
+    // i dati per poi dire "siamo pieni" alla fine.
+    // ═══════════════════════════════════════════════════════════════════════
+    const mergedForCheck = StateManager.getReservation(callId) || {};
+    const hasDateForCheck = mergedForCheck.date || reservation.date;
+    const hasTimeForCheck = mergedForCheck.time || reservation.time;
+    const hasPeopleForCheck = mergedForCheck.people || reservation.people;
+    
+    // Se abbiamo tutti e 3 i dati essenziali E GPT vuole procedere con nome/email
+    if (hasDateForCheck && hasTimeForCheck && hasPeopleForCheck) {
+      if (response.action === "ask_name" || response.action === "ask_email" || response.action === "create_reservation") {
+        
+        const dateToCheck = mergedForCheck.date || reservation.date;
+        const timeToCheck = mergedForCheck.time || reservation.time;
+        const peopleToCheck = mergedForCheck.people || reservation.people;
+        
+        // Salva stato prima del check (non abbiamo ancora fatto merge completo)
+        const preCheckReservation = {
+          ...mergedForCheck,
+          date: dateToCheck,
+          time: timeToCheck,
+          people: peopleToCheck,
+        };
+        
+        // Verifica disponibilità
+        console.log(`🔍 FIX P1: Check anticipato ${dateToCheck} ${timeToCheck} per ${peopleToCheck} pax`);
+        const availability = await CalendarService.checkAvailability(
+          dateToCheck, timeToCheck, peopleToCheck, callId
+        );
+        
+        if (!availability.available) {
+          console.log(`⚠️ FIX P1: Slot NON disponibile! Propongo alternative.`);
+          
+          if (availability.reason === "day_closed") {
+            response.reply_text = lang === "en-US"
+              ? "I'm sorry, we're closed that day. Would you like another day?"
+              : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
+            response.action = "ask_date";
+            // Reset data
+            reservation.date = null;
+            StateManager.mergeReservation(callId, { date: null });
+          } else {
+            // Slot pieno - cerca alternative
+            const alternatives = await CalendarService.findAlternatives(
+              dateToCheck, timeToCheck, peopleToCheck, callId
+            );
+            response.reply_text = CalendarService.buildAlternativesMessage(alternatives, lang);
+            response.action = "ask_time";
+            // Reset orario (mantieni data e persone)
+            reservation.time = null;
+            StateManager.mergeReservation(callId, { time: null });
+          }
+          
+          response.reservation = reservation;
+          console.log("✅ ValidationPipeline completato (con redirect P1)");
+          return response;
+        } else {
+          console.log(`✅ FIX P1: Slot disponibile, procedo normalmente`);
+        }
+      }
+    }
+    
     // STEP 6: Estrai email
     if (!reservation.customerEmail) {
       const email = extractEmailFromText(userText);
@@ -1376,7 +1462,9 @@ ${stateText}
 
 STILE:
 - Frasi brevi (5-7 secondi)
-- Rispondi nella lingua del cliente
+- IMPORTANTE: Rispondi SEMPRE nella stessa lingua del cliente!
+  - Se il cliente parla inglese → rispondi in inglese
+  - Se il cliente parla italiano → rispondi in italiano
 - Professionale ma amichevole
 - Una domanda alla volta
 
@@ -1517,10 +1605,36 @@ RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TwilioHelpers = {
+  // FIX P3: Language detection migliorata
   detectLanguageSwitch(text) {
     const t = (text || "").toLowerCase();
+    // Richiesta esplicita
     if (t.includes("speak english") || t.includes("in english")) return "en-US";
     if (t.includes("parla italiano") || t.includes("in italiano")) return "it-IT";
+    return null;
+  },
+  
+  // FIX P3: Rileva se il testo è in inglese
+  detectLanguageFromContent(text) {
+    const t = (text || "").toLowerCase();
+    
+    // Pattern comuni inglesi (non presenti in italiano)
+    const englishPatterns = [
+      /\bi('d| would| want| need| have)\b/,  // I'd, I would, I want, I need, I have
+      /\b(book|booking|reservation)\b/,       // book, booking, reservation
+      /\b(table for|people at)\b/,            // table for, people at
+      /\b(tonight|tomorrow|today)\b/,         // tonight, tomorrow, today
+      /\b(hi|hello|hey|please|thank you|thanks)\b/, // saluti inglesi
+      /\b(can i|could i|may i)\b/,            // richieste inglesi
+      /\b(at \d|for \d|on monday|on tuesday|on wednesday|on thursday|on friday|on saturday|on sunday)\b/,
+      /\b(pm|am)\b/,                          // orari AM/PM
+      /\b(the name is|my name is|under)\b/,   // nome
+    ];
+    
+    for (const pattern of englishPatterns) {
+      if (pattern.test(t)) return "en-US";
+    }
+    
     return null;
   },
   
@@ -1576,7 +1690,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.0 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.4 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -1653,10 +1767,22 @@ app.post("/twilio", async (req, res) => {
     
     // Salva testo e gestisci lingua
     StateManager.appendUserText(callId, userText);
+    
+    // FIX P3: Language detection migliorata
+    // Prima: richiesta esplicita ("speak english")
     const langSwitch = TwilioHelpers.detectLanguageSwitch(userText);
     if (langSwitch) StateManager.setLanguage(callId, langSwitch);
+    // Twilio language header
     if (Language?.startsWith("en")) StateManager.setLanguage(callId, "en-US");
     if (Language?.startsWith("it")) StateManager.setLanguage(callId, "it-IT");
+    // FIX P3: Rileva lingua dal contenuto (solo se non già impostata o default italiano)
+    if (StateManager.getLanguage(callId) === "it-IT") {
+      const detectedLang = TwilioHelpers.detectLanguageFromContent(userText);
+      if (detectedLang) {
+        console.log(`🌍 Lingua rilevata: ${detectedLang}`);
+        StateManager.setLanguage(callId, detectedLang);
+      }
+    }
     const lang = StateManager.getLanguage(callId);
     
     await ContextService.ensureForCall(callId);
