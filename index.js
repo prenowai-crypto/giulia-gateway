@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.1
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4:
@@ -20,10 +20,14 @@
 // - Gruppi >10: dopo PENDING, cliente NON può "confermare" da solo
 // - Intercetta risposte post-PENDING e spiega che il ristorante confermerà
 //
-// FIX v3.9 (CRITICI):
+// FIX v3.9:
 // - BUG CRONOLOGIA: Parser estrae SOLO dal messaggio corrente, MAI dalla cronologia
 // - BUG OVERRIDE: Se cliente dice nuovo orario, SEMPRE override (22 vince su 20:00)
 // - ANTI-ALLUCINAZIONE: Rileva se cliente chiede INFO vs dà orario
+//
+// FIX v3.9.1:
+// - A2: getNextWeekday: se oggi È il giorno cercato, usa OGGI (non settimana dopo)
+// - A4: TimeManager: pattern "le 22" senza "alle" + "at 8" inglese + "8pm"
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -443,7 +447,17 @@ const DateManager = {
   
   getNextWeekday(fromDate, targetWeekday) {
     const result = new Date(fromDate.getTime());
-    const diff = ((targetWeekday - result.getDay()) + 7) % 7 || 7;
+    const diff = ((targetWeekday - result.getDay()) + 7) % 7;
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.1: Se oggi È GIÀ il giorno cercato (diff=0), usa OGGI
+    // Prima faceva `|| 7` che saltava alla settimana dopo
+    // Esempio: oggi è domenica, cliente dice "domenica" → usa oggi, non domenica prossima
+    // ═══════════════════════════════════════════════════════════════════════
+    if (diff === 0) {
+      console.log(`📆 FIX v3.9.1: Oggi è già ${this.DAYS_IT[targetWeekday]}, uso OGGI`);
+    }
+    
     result.setDate(result.getDate() + diff);
     return result;
   },
@@ -597,11 +611,15 @@ const TimeManager = {
     
     // Trova TUTTI gli orari e prendi l'ULTIMO (per modifiche: prima dicono vecchio, poi nuovo)
     let lastTime = null;
-    
-    // Pattern "alle 20", "alle 20:30"
-    const itRegex = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
     let match;
-    while ((match = itRegex.exec(t)) !== null) {
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.1: Pattern multipli per catturare tutti i modi di dire l'ora
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    // Pattern 1: "alle 20", "alle 20:30", "ore 20", "per le 20"
+    const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
+    while ((match = pattern1.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = match[2] ? parseInt(match[2]) : 0;
       if (hour >= 1 && hour <= 11 && !t.includes("mattina") && !t.includes("pranzo")) {
@@ -609,18 +627,64 @@ const TimeManager = {
       }
       if (hour >= 0 && hour <= 23) {
         lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        console.log(`⏰ TimeManager pattern1: "${match[0]}" → ${lastTime}`);
+      }
+    }
+    
+    // Pattern 2: "le 22", "le 8" (SENZA "alle" davanti) - FIX per "Ok allora le 22"
+    // Usa lookbehind negativo per evitare double-match con "alle"
+    const pattern2 = /(?:^|[^l])\ble\s+(\d{1,2})(?::(\d{2}))?\b/gi;
+    while ((match = pattern2.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minutes = match[2] ? parseInt(match[2]) : 0;
+      if (hour >= 1 && hour <= 11 && !t.includes("mattina") && !t.includes("pranzo")) {
+        hour += 12;
+      }
+      if (hour >= 0 && hour <= 23) {
+        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        console.log(`⏰ TimeManager pattern2 (le X): "${match[0]}" → ${lastTime}`);
+      }
+    }
+    
+    // Pattern 3: "8pm", "8 pm", "8:30pm" (inglese)
+    const pattern3 = /\b(\d{1,2})(?::(\d{2}))?\s*(pm|am)\b/gi;
+    while ((match = pattern3.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minutes = match[2] ? parseInt(match[2]) : 0;
+      const isPM = match[3].toLowerCase() === 'pm';
+      if (isPM && hour < 12) hour += 12;
+      if (!isPM && hour === 12) hour = 0;
+      if (hour >= 0 && hour <= 23) {
+        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        console.log(`⏰ TimeManager pattern3 (pm/am): "${match[0]}" → ${lastTime}`);
+      }
+    }
+    
+    // Pattern 4: "at 8", "at 8:30" (inglese)
+    const pattern4 = /\bat\s+(\d{1,2})(?::(\d{2}))?\b/gi;
+    while ((match = pattern4.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minutes = match[2] ? parseInt(match[2]) : 0;
+      // Assume sera se ora ambigua
+      if (hour >= 1 && hour <= 11 && !t.includes("morning") && !t.includes("lunch")) {
+        hour += 12;
+      }
+      if (hour >= 0 && hour <= 23) {
+        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        console.log(`⏰ TimeManager pattern4 (at X): "${match[0]}" → ${lastTime}`);
       }
     }
     
     if (lastTime) return lastTime;
     
-    // "20:30" diretto - prendi l'ultimo
+    // Pattern 5: "20:30" diretto - prendi l'ultimo
     const directRegex = /\b(\d{1,2}):(\d{2})\b/g;
     while ((match = directRegex.exec(t)) !== null) {
       const hour = parseInt(match[1]);
       const minutes = parseInt(match[2]);
       if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
         lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        console.log(`⏰ TimeManager pattern5 (HH:MM): "${match[0]}" → ${lastTime}`);
       }
     }
     
@@ -1784,7 +1848,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.1 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2557,12 +2621,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9 AVVIATO                               ║
+║  🚀 PRENOW GATEWAY v3.9.1 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Parser estrae SOLO da messaggio corrente             ║
-║  ✨ FIX: Override orario SEMPRE se cliente dice nuovo         ║
-║  ✨ FIX: Anti-allucinazione distingue INFO vs ORARIO          ║
+║  ✨ FIX A2: "domenica" oggi = usa oggi (non sett. dopo)       ║
+║  ✨ FIX A4: "le 22" ora riconosciuto correttamente            ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
