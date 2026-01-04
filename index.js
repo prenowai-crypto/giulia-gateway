@@ -1,33 +1,28 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.1
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.3
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.4:
-// - P1: Check disponibilità ANTICIPATO (prima di nome/email)
-// - P2: Pattern inglesi per cancel/modify
-// - P3: Language detection migliorata
-//
-// FIX v3.5:
-// - "day after tomorrow" → +2 giorni (non +1)
-// - Language detection: più pattern per rilevare inglese
-// - Cancel senza prenotazione: risposta nella lingua corretta
-//
-// FIX v3.6:
-// - Lingua passata ESPLICITAMENTE nel system prompt GPT
-// - GPT riceve istruzione chiara: "This conversation is in ENGLISH"
-//
-// FIX v3.7:
-// - Gruppi >10: dopo PENDING, cliente NON può "confermare" da solo
-// - Intercetta risposte post-PENDING e spiega che il ristorante confermerà
+// FIX v3.4-v3.7: (vedi versioni precedenti)
 //
 // FIX v3.9:
 // - BUG CRONOLOGIA: Parser estrae SOLO dal messaggio corrente, MAI dalla cronologia
-// - BUG OVERRIDE: Se cliente dice nuovo orario, SEMPRE override (22 vince su 20:00)
+// - BUG OVERRIDE: Se cliente dice nuovo orario, SEMPRE override
 // - ANTI-ALLUCINAZIONE: Rileva se cliente chiede INFO vs dà orario
 //
 // FIX v3.9.1:
-// - A2: getNextWeekday: se oggi È il giorno cercato, usa OGGI (non settimana dopo)
-// - A4: TimeManager: pattern "le 22" senza "alle" + "at 8" inglese + "8pm"
+// - A2: getNextWeekday: se oggi È il giorno cercato, usa OGGI
+// - A4: TimeManager: pattern "le 22" senza "alle"
+//
+// FIX v3.9.2:
+// - PROTEZIONE DATI: Se cliente NON dice data/orario/persone, NON permettere a
+//   GPT di sovrascrivere i valori già salvati
+// - isValidTime: considera 23:30 INVALIDO (chiusura reale alle 22:30)
+// - CHECK ANTICIPATO: usa dati già corretti (reservation) non StateManager
+//
+// FIX v3.9.3 (CRITICO):
+// - ORARIO INVALIDO: Se cliente dice orario fuori range (es. 23:30), il sistema
+//   FORZA ask_time con messaggio "chiudiamo alle 22:30" INDIPENDENTEMENTE da
+//   cosa dice GPT. Prima il check avveniva solo se action=ask_time.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1311,11 +1306,27 @@ const RecapManager = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ValidationPipeline = {
-  // FIX v3.3: Validazione orari DETERMINISTICA
-  isValidTime(time) {
+  // ═══════════════════════════════════════════════════════════════════════
+  // FIX v3.9.2: Validazione orari DETERMINISTICA con orario chiusura
+  // Il ristorante chiude alle 22:30 (ultima prenotazione), non 23:00
+  // ═══════════════════════════════════════════════════════════════════════
+  isValidTime(time, context = null) {
     if (!time) return false;
-    const hour = parseInt(time.split(':')[0]);
-    return hour >= 19 && hour <= 23;
+    const [hourStr, minStr] = time.split(':');
+    const hour = parseInt(hourStr);
+    const minutes = parseInt(minStr || '0');
+    const totalMinutes = hour * 60 + minutes;
+    
+    // Orari di default (cena): 19:00 - 22:30
+    // TODO: prendere da context.openingHoursText se disponibile
+    const openMinutes = 19 * 60;       // 19:00
+    const closeMinutes = 22 * 60 + 30; // 22:30 (ultima prenotazione)
+    
+    const isValid = totalMinutes >= openMinutes && totalMinutes <= closeMinutes;
+    if (!isValid) {
+      console.log(`⏰ isValidTime: ${time} (${totalMinutes} min) fuori range ${openMinutes}-${closeMinutes}`);
+    }
+    return isValid;
   },
   
   async validate(gptResponse, userText, callId) {
@@ -1326,15 +1337,29 @@ const ValidationPipeline = {
     let reservation = response.reservation || {};
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9: STEP 1 - Estrai data con OVERRIDE PRIORITARIO
-    // Se il cliente dice una data nel messaggio corrente, SEMPRE override!
+    // FIX v3.9.2: CARICA DATI SALVATI PRIMA DI TUTTO
+    // Questo previene che GPT sovrascriva dati già confermati
     // ═══════════════════════════════════════════════════════════════════════
-    const parsedDate = DateManager.parseFromText(userText, null); // null = no cronologia!
+    const savedReservation = StateManager.getReservation(callId);
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.2: STEP 1 - Gestione DATA con protezione
+    // Se il parser trova una data nel messaggio → override
+    // Se NON trova una data → mantieni quella salvata (NON quella di GPT!)
+    // ═══════════════════════════════════════════════════════════════════════
+    const parsedDate = DateManager.parseFromText(userText, null);
     if (parsedDate) {
+      // Cliente ha detto una data → override
       if (reservation.date && reservation.date !== parsedDate) {
         console.log(`📆 FIX v3.9 OVERRIDE DATA: ${reservation.date} → ${parsedDate}`);
       }
       reservation.date = parsedDate;
+    } else if (savedReservation.date) {
+      // Cliente NON ha detto una data → proteggi quella salvata
+      if (reservation.date && reservation.date !== savedReservation.date) {
+        console.log(`📆 FIX v3.9.2 PROTEZIONE DATA: GPT dice ${reservation.date}, mantengo ${savedReservation.date}`);
+      }
+      reservation.date = savedReservation.date;
     }
     
     // STEP 2: Check chiusura
@@ -1352,20 +1377,25 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9: STEP 3 - Estrai orario con OVERRIDE PRIORITARIO
-    // Se il cliente dice un orario nel messaggio corrente, SEMPRE override!
-    // Questo risolve il bug dove "22" veniva ignorato perché c'era già "20:00"
+    // FIX v3.9.2: STEP 3 - Gestione ORARIO con protezione
+    // Se il parser trova un orario nel messaggio → override
+    // Se NON trova un orario → mantieni quello salvato (NON quello di GPT!)
     // ═══════════════════════════════════════════════════════════════════════
     const parsedTime = TimeManager.parseFromText(userText);
     if (parsedTime) {
-      // Cliente ha detto un orario → SEMPRE override
+      // Cliente ha detto un orario → override
       if (reservation.time && reservation.time !== parsedTime) {
         console.log(`⏰ FIX v3.9 OVERRIDE ORARIO: ${reservation.time} → ${parsedTime}`);
       }
       reservation.time = parsedTime;
+    } else if (savedReservation.time) {
+      // Cliente NON ha detto un orario → proteggi quello salvato
+      if (reservation.time && reservation.time !== savedReservation.time) {
+        console.log(`⏰ FIX v3.9.2 PROTEZIONE ORARIO: GPT dice ${reservation.time}, mantengo ${savedReservation.time}`);
+      }
+      reservation.time = savedReservation.time;
     } else if (!reservation.time) {
       // Nessun orario nel messaggio E nessuno salvato → prova inferire da "cena/pranzo"
-      // NOTA: usiamo SOLO il messaggio corrente, non la cronologia!
       const defaultTime = TimeManager.inferDefault(userText);
       if (defaultTime) {
         console.log(`⏰ FIX v3.9: Orario inferito da "${userText.substring(0,20)}": ${defaultTime}`);
@@ -1374,28 +1404,43 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9: ANTI-ALLUCINAZIONE ORARI (migliorato)
-    // Se GPT chiede orario MA:
-    //   - Abbiamo già un orario valido
-    //   - E il cliente NON sta chiedendo informazioni sugli orari
-    // Allora skip ask_time e procedi con la prossima domanda
+    // FIX v3.9.3: VERIFICA ORARIO INVALIDO - SEMPRE!
+    // Se abbiamo un orario che è FUORI RANGE (es. 23:30 quando chiudiamo alle 22:30),
+    // dobbiamo chiedere un orario valido INDIPENDENTEMENTE da cosa dice GPT.
     // ═══════════════════════════════════════════════════════════════════════
-    if (response.action === "ask_time" && reservation.time) {
+    if (reservation.time && !this.isValidTime(reservation.time)) {
+      // Rileva se il cliente sta CHIEDENDO info sugli orari
+      const isAskingAboutTime = /\b(ultimo|prima|quale|quali|orari|apertura|chiusura|when|what time|available|hours)\b/i.test(userText);
+      
+      if (isAskingAboutTime) {
+        // Cliente chiede info → lascia rispondere GPT ma resetta orario invalido
+        console.log(`ℹ️ FIX v3.9.3: Orario ${reservation.time} invalido + cliente chiede info → resetto`);
+        reservation.time = null;
+      } else {
+        // Orario invalido e cliente NON chiede info → forza ask_time con messaggio
+        console.log(`⏰ FIX v3.9.3: Orario ${reservation.time} INVALIDO → forzo ask_time`);
+        response.action = "ask_time";
+        response.reply_text = lang === "en-US"
+          ? "I'm sorry, we close at 10:30 PM. The last reservation is at 10:30 PM. What time works for you?"
+          : "Mi dispiace, chiudiamo alle 22:30. L'ultima prenotazione è alle 22:30. A che ora preferisci?";
+        reservation.time = null;  // Resetta così il cliente può dare un nuovo orario
+      }
+    }
+    // Se orario è VALIDO, verifica anti-allucinazione (GPT che chiede orario inutilmente)
+    else if (response.action === "ask_time" && reservation.time) {
       // Rileva se il cliente sta CHIEDENDO info sugli orari (non dando un orario)
       const isAskingAboutTime = /\b(ultimo|prima|quale|quali|orari|apertura|chiusura|when|what time|available|hours)\b/i.test(userText);
       
       if (isAskingAboutTime) {
         // Il cliente sta chiedendo INFO → lascia che GPT risponda
         console.log(`ℹ️ FIX v3.9: Cliente chiede info orari, lascio risposta GPT`);
-        // NON modificare action, GPT ha risposto correttamente
       } else if (this.isValidTime(reservation.time)) {
-        // Abbiamo un orario valido e cliente NON sta chiedendo info
+        // Abbiamo un orario VALIDO e cliente NON sta chiedendo info → skip
         console.log(`⚠️ FIX v3.9: GPT chiede orario ma abbiamo già ${reservation.time} valido → skip`);
         
-        const merged = StateManager.getReservation(callId) || {};
-        const hasPeople = merged.people || reservation.people;
-        const hasName = merged.name || reservation.name;
-        const hasDate = merged.date || reservation.date;
+        const hasPeople = savedReservation.people || reservation.people;
+        const hasName = savedReservation.name || reservation.name;
+        const hasDate = savedReservation.date || reservation.date;
         
         if (!hasPeople) {
           response.action = "ask_people";
@@ -1415,8 +1460,9 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9: STEP 4 - Estrai persone con OVERRIDE PRIORITARIO
-    // Se il cliente dice un numero nel messaggio corrente, SEMPRE override!
+    // FIX v3.9.2: STEP 4 - Gestione PERSONE con protezione
+    // Se il parser trova un numero nel messaggio → override
+    // Se NON trova un numero → mantieni quello salvato (NON quello di GPT!)
     // ═══════════════════════════════════════════════════════════════════════
     const parsedPeople = PeopleManager.parseFromText(userText);
     if (parsedPeople) {
@@ -1424,6 +1470,12 @@ const ValidationPipeline = {
         console.log(`👥 FIX v3.9 OVERRIDE PERSONE: ${reservation.people} → ${parsedPeople}`);
       }
       reservation.people = parsedPeople;
+    } else if (savedReservation.people) {
+      // Cliente NON ha detto un numero → proteggi quello salvato
+      if (reservation.people && reservation.people !== savedReservation.people) {
+        console.log(`👥 FIX v3.9.2 PROTEZIONE PERSONE: GPT dice ${reservation.people}, mantengo ${savedReservation.people}`);
+      }
+      reservation.people = savedReservation.people;
     }
     
     // STEP 5: Gestione eventi grandi (≥45)
@@ -1438,31 +1490,20 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX P1: CHECK DISPONIBILITÀ ANTICIPATO
-    // Se abbiamo data+ora+persone e GPT sta per chiedere nome/email,
-    // verifichiamo PRIMA se c'è posto. Così evitiamo di raccogliere tutti
-    // i dati per poi dire "siamo pieni" alla fine.
+    // FIX v3.9.2: CHECK DISPONIBILITÀ ANTICIPATO (usa dati GIÀ CORRETTI)
+    // Usa `reservation` (già aggiornato con override/protezioni) NON StateManager
     // ═══════════════════════════════════════════════════════════════════════
-    const mergedForCheck = StateManager.getReservation(callId) || {};
-    const hasDateForCheck = mergedForCheck.date || reservation.date;
-    const hasTimeForCheck = mergedForCheck.time || reservation.time;
-    const hasPeopleForCheck = mergedForCheck.people || reservation.people;
+    const hasDateForCheck = reservation.date;
+    const hasTimeForCheck = reservation.time;
+    const hasPeopleForCheck = reservation.people;
     
     // Se abbiamo tutti e 3 i dati essenziali E GPT vuole procedere con nome/email
     if (hasDateForCheck && hasTimeForCheck && hasPeopleForCheck) {
       if (response.action === "ask_name" || response.action === "ask_email" || response.action === "create_reservation") {
         
-        const dateToCheck = mergedForCheck.date || reservation.date;
-        const timeToCheck = mergedForCheck.time || reservation.time;
-        const peopleToCheck = mergedForCheck.people || reservation.people;
-        
-        // Salva stato prima del check (non abbiamo ancora fatto merge completo)
-        const preCheckReservation = {
-          ...mergedForCheck,
-          date: dateToCheck,
-          time: timeToCheck,
-          people: peopleToCheck,
-        };
+        const dateToCheck = reservation.date;
+        const timeToCheck = reservation.time;
+        const peopleToCheck = reservation.people;
         
         // Verifica disponibilità
         console.log(`🔍 FIX P1: Check anticipato ${dateToCheck} ${timeToCheck} per ${peopleToCheck} pax`);
@@ -1848,7 +1889,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.1 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.3 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2621,11 +2662,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.1 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.3 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX A2: "domenica" oggi = usa oggi (non sett. dopo)       ║
-║  ✨ FIX A4: "le 22" ora riconosciuto correttamente            ║
+║  ✨ FIX A4: Orario invalido → forza ask_time SEMPRE           ║
+║  ✨ FIX: "23:30" → "chiudiamo alle 22:30"                     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
