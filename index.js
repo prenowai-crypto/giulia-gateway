@@ -25,6 +25,8 @@
 //   (Es: cliente dice "2 gen" poi corregge "9 gen" → sistema usava 2 gen!)
 // - BUG2: isValidTime ora controlla MINUTI (23:30 non è più accettato se chiusura 23:00)
 //   (Es: cliente chiedeva 23:30, sistema accettava ignorando chiusura)
+// - BUG3: Anti-allucinazione si attiva SOLO per orari nel messaggio CORRENTE
+//   (Es: cliente chiedeva "ultimo orario?" e sistema saltava la domanda)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1314,14 +1316,18 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.3: ANTI-ALLUCINAZIONE ORARI
-    // Se GPT rifiuta un orario valido (19-23), SOVRASCRIVIAMO la sua decisione
+    // FIX v3.8: ANTI-ALLUCINAZIONE ORARI (più preciso)
+    // Si attiva SOLO se il cliente ha detto un orario nel messaggio CORRENTE
+    // e GPT lo sta rifiutando nonostante sia valido
     // ═══════════════════════════════════════════════════════════════════════
-    if (response.action === "ask_time" && reservation.time) {
-      // GPT sta chiedendo orario ma ne abbiamo già uno
-      if (this.isValidTime(reservation.time)) {
-        console.log(`⚠️ FIX ANTI-ALLUCINAZIONE: GPT rifiutava ${reservation.time} ma è valido!`);
-        // L'orario è valido, non permettere a GPT di rifiutarlo
+    const timeFromCurrentMessage = TimeManager.parseFromText(userText);
+    if (response.action === "ask_time" && timeFromCurrentMessage) {
+      // Il cliente ha detto un orario in QUESTO messaggio e GPT chiede un altro orario
+      if (this.isValidTime(timeFromCurrentMessage)) {
+        console.log(`⚠️ FIX ANTI-ALLUCINAZIONE: GPT rifiutava ${timeFromCurrentMessage} ma è valido!`);
+        // Usa l'orario del cliente, non quello proposto da GPT
+        reservation.time = timeFromCurrentMessage;
+        
         // Cambiamo action in base ai dati mancanti
         const merged = StateManager.getReservation(callId) || {};
         const hasPeople = merged.people || reservation.people;
@@ -1339,11 +1345,12 @@ const ValidationPipeline = {
             ? "What name for the reservation?"
             : "A che nome la prenotazione?";
         } else if (hasDate && hasPeople && hasName) {
-          // ABBIAMO TUTTO! Forza create_reservation
           console.log(`✅ FIX: Tutti i dati presenti, forzo create_reservation`);
           response.action = "create_reservation";
-          // reply_text verrà gestito dopo nel flusso normale
         }
+      } else {
+        // L'orario del cliente NON è valido, GPT ha ragione a rifiutarlo
+        console.log(`✅ GPT correttamente rifiuta ${timeFromCurrentMessage} (non valido)`);
       }
     }
     
