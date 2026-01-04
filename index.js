@@ -27,6 +27,10 @@
 //   (Es: cliente chiedeva 23:30, sistema accettava ignorando chiusura)
 // - BUG3: Anti-allucinazione si attiva SOLO per orari nel messaggio CORRENTE
 //   (Es: cliente chiedeva "ultimo orario?" e sistema saltava la domanda)
+// - BUG4: GPT ora riceve ORARI ESATTI nel prompt (pranzo 12-14:30, cena 19-22:30)
+//   (Es: GPT inventava "ultimo orario 21:00" perché non sapeva gli orari reali)
+// - BUG5: Orario cliente ha PRIORITÀ ASSOLUTA su orario GPT
+//   (Es: cliente dice "le 22", GPT mette 21:00 nel JSON → sistema usa 22:00)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1304,53 +1308,53 @@ const ValidationPipeline = {
       }
     }
     
-    // STEP 3: Estrai orario
-    if (!reservation.time) {
-      const parsedTime = TimeManager.parseFromText(userText);
-      if (parsedTime) {
-        reservation.time = parsedTime;
+    // STEP 3: Estrai orario - FIX v3.8: PRIORITÀ ASSOLUTA al messaggio del cliente
+    // Se il cliente ha detto un orario VALIDO in questo messaggio, usalo SEMPRE
+    // ignorando qualsiasi orario GPT abbia messo nel JSON
+    const timeFromCurrentMessage = TimeManager.parseFromText(userText);
+    if (timeFromCurrentMessage) {
+      if (this.isValidTime(timeFromCurrentMessage)) {
+        // Orario valido dal cliente - OVERRIDE qualsiasi cosa GPT abbia detto
+        if (reservation.time && reservation.time !== timeFromCurrentMessage) {
+          console.log(`🔄 OVERRIDE: Cliente dice ${timeFromCurrentMessage}, GPT aveva ${reservation.time} → uso cliente`);
+        }
+        reservation.time = timeFromCurrentMessage;
       } else {
-        const defaultTime = TimeManager.inferDefault(StateManager.getAllUserText(callId));
-        if (defaultTime) reservation.time = defaultTime;
+        // Orario non valido - lascia che GPT gestisca il rifiuto
+        console.log(`⚠️ Cliente ha detto ${timeFromCurrentMessage} ma non è valido (fuori orari apertura)`);
       }
+    } else if (!reservation.time) {
+      // Nessun orario nel messaggio corrente e nessuno in reservation
+      const defaultTime = TimeManager.inferDefault(StateManager.getAllUserText(callId));
+      if (defaultTime) reservation.time = defaultTime;
     }
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.8: ANTI-ALLUCINAZIONE ORARI (più preciso)
-    // Si attiva SOLO se il cliente ha detto un orario nel messaggio CORRENTE
-    // e GPT lo sta rifiutando nonostante sia valido
+    // Se GPT sta chiedendo un orario ma il cliente ne ha già dato uno valido,
+    // saltiamo la domanda e passiamo alla prossima
     // ═══════════════════════════════════════════════════════════════════════
-    const timeFromCurrentMessage = TimeManager.parseFromText(userText);
-    if (response.action === "ask_time" && timeFromCurrentMessage) {
-      // Il cliente ha detto un orario in QUESTO messaggio e GPT chiede un altro orario
-      if (this.isValidTime(timeFromCurrentMessage)) {
-        console.log(`⚠️ FIX ANTI-ALLUCINAZIONE: GPT rifiutava ${timeFromCurrentMessage} ma è valido!`);
-        // Usa l'orario del cliente, non quello proposto da GPT
-        reservation.time = timeFromCurrentMessage;
-        
-        // Cambiamo action in base ai dati mancanti
-        const merged = StateManager.getReservation(callId) || {};
-        const hasPeople = merged.people || reservation.people;
-        const hasName = merged.name || reservation.name;
-        const hasDate = merged.date || reservation.date;
-        
-        if (!hasPeople) {
-          response.action = "ask_people";
-          response.reply_text = lang === "en-US" 
-            ? "For how many people?" 
-            : "Per quante persone?";
-        } else if (!hasName) {
-          response.action = "ask_name";
-          response.reply_text = lang === "en-US"
-            ? "What name for the reservation?"
-            : "A che nome la prenotazione?";
-        } else if (hasDate && hasPeople && hasName) {
-          console.log(`✅ FIX: Tutti i dati presenti, forzo create_reservation`);
-          response.action = "create_reservation";
-        }
-      } else {
-        // L'orario del cliente NON è valido, GPT ha ragione a rifiutarlo
-        console.log(`✅ GPT correttamente rifiuta ${timeFromCurrentMessage} (non valido)`);
+    if (response.action === "ask_time" && reservation.time && this.isValidTime(reservation.time)) {
+      console.log(`⚠️ FIX: GPT chiede orario ma abbiamo già ${reservation.time} valido → skip`);
+      // Cambiamo action in base ai dati mancanti
+      const merged = StateManager.getReservation(callId) || {};
+      const hasPeople = merged.people || reservation.people;
+      const hasName = merged.name || reservation.name;
+      const hasDate = merged.date || reservation.date;
+      
+      if (!hasPeople) {
+        response.action = "ask_people";
+        response.reply_text = lang === "en-US" 
+          ? "For how many people?" 
+          : "Per quante persone?";
+      } else if (!hasName) {
+        response.action = "ask_name";
+        response.reply_text = lang === "en-US"
+          ? "What name for the reservation?"
+          : "A che nome la prenotazione?";
+      } else if (hasDate && hasPeople && hasName) {
+        console.log(`✅ FIX: Tutti i dati presenti, forzo create_reservation`);
+        response.action = "create_reservation";
       }
     }
     
@@ -1534,7 +1538,13 @@ ORDINE DOMANDE:
 Per gruppi >${largeGroupThreshold}: "prenotazione soggetta a conferma"
 
 ORARI: "alle 8" senza specificare = 20:00 (sera)
-ORARI APERTURA: ${openingHours || "pranzo e cena"}
+
+⚠️ ORARI APERTURA (IMPORTANTE - NON INVENTARE!):
+- PRANZO: 12:00 - 14:30 (ultima prenotazione pranzo: 14:00)
+- CENA: 19:00 - 23:00 (ultima prenotazione cena: 22:30)
+- Se cliente chiede orario fuori range, proponi l'orario valido più vicino
+- L'ULTIMO orario disponibile per CENA è 22:30, NON 21:00!
+
 MENU: ${menuSummary || "Cucina italiana"}
 EMAIL RISTORANTE: ${restaurantEmail}
 
@@ -2558,8 +2568,8 @@ app.listen(CONFIG.PORT, () => {
 ║  🚀 PRENOW GATEWAY v3.8 AVVIATO                               ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Date non sovrascritte dalla cronologia               ║
-║  ✨ FIX: Orari validati con minuti (22:30 max per cena)       ║
+║  ✨ FIX: Orario cliente OVERRIDE su GPT                       ║
+║  ✨ FIX: GPT riceve orari esatti (pranzo/cena)                ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
