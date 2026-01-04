@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.3
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.4
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.7: (vedi versioni precedenti)
@@ -19,10 +19,16 @@
 // - isValidTime: considera 23:30 INVALIDO (chiusura reale alle 22:30)
 // - CHECK ANTICIPATO: usa dati già corretti (reservation) non StateManager
 //
-// FIX v3.9.3 (CRITICO):
+// FIX v3.9.3:
 // - ORARIO INVALIDO: Se cliente dice orario fuori range (es. 23:30), il sistema
-//   FORZA ask_time con messaggio "chiudiamo alle 22:30" INDIPENDENTEMENTE da
-//   cosa dice GPT. Prima il check avveniva solo se action=ask_time.
+//   FORZA ask_time con messaggio INDIPENDENTEMENTE da cosa dice GPT.
+//
+// FIX v3.9.4 (CRITICO):
+// - isValidTime: INCLUDE PRANZO (12:00-15:00) + CENA (19:00-22:30)
+//   Prima accettava solo cena, ora accetta entrambi
+// - mergeReservation: FIX BUG null ?? prev = prev! Ora usa 'in' operator
+//   per permettere di settare esplicitamente valori a null
+// - Messaggio orario invalido: include entrambi gli orari pranzo/cena
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -215,12 +221,17 @@ const StateManager = {
   },
   mergeReservation(callId, newData = {}) {
     const prev = this.getReservation(callId);
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.4: Usa 'in' invece di ?? per permettere di settare null
+    // Prima: date: newData.date ?? prev.date  ← BUG! null ?? prev = prev
+    // Ora:   'date' in newData ? newData.date : prev.date  ← null viene salvato
+    // ═══════════════════════════════════════════════════════════════════════
     const merged = {
-      date: newData.date ?? prev.date,
-      time: newData.time ?? prev.time,
-      people: newData.people ?? prev.people,
-      name: newData.name ?? prev.name,
-      customerEmail: newData.customerEmail ?? prev.customerEmail,
+      date: 'date' in newData ? newData.date : prev.date,
+      time: 'time' in newData ? newData.time : prev.time,
+      people: 'people' in newData ? newData.people : prev.people,
+      name: 'name' in newData ? newData.name : prev.name,
+      customerEmail: 'customerEmail' in newData ? newData.customerEmail : prev.customerEmail,
     };
     this.setReservation(callId, merged);
     return merged;
@@ -1317,14 +1328,22 @@ const ValidationPipeline = {
     const minutes = parseInt(minStr || '0');
     const totalMinutes = hour * 60 + minutes;
     
-    // Orari di default (cena): 19:00 - 22:30
-    // TODO: prendere da context.openingHoursText se disponibile
-    const openMinutes = 19 * 60;       // 19:00
-    const closeMinutes = 22 * 60 + 30; // 22:30 (ultima prenotazione)
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.4: Orari PRANZO + CENA
+    // Pranzo: 12:00 - 15:00 (ultima prenotazione pranzo)
+    // Cena:   19:00 - 22:30 (ultima prenotazione cena)
+    // ═══════════════════════════════════════════════════════════════════════
+    const lunchOpen = 12 * 60;         // 12:00
+    const lunchClose = 15 * 60;        // 15:00
+    const dinnerOpen = 19 * 60;        // 19:00
+    const dinnerClose = 22 * 60 + 30;  // 22:30
     
-    const isValid = totalMinutes >= openMinutes && totalMinutes <= closeMinutes;
+    const isLunch = totalMinutes >= lunchOpen && totalMinutes <= lunchClose;
+    const isDinner = totalMinutes >= dinnerOpen && totalMinutes <= dinnerClose;
+    const isValid = isLunch || isDinner;
+    
     if (!isValid) {
-      console.log(`⏰ isValidTime: ${time} (${totalMinutes} min) fuori range ${openMinutes}-${closeMinutes}`);
+      console.log(`⏰ isValidTime: ${time} (${totalMinutes} min) fuori range pranzo ${lunchOpen}-${lunchClose} E cena ${dinnerOpen}-${dinnerClose}`);
     }
     return isValid;
   },
@@ -1404,9 +1423,9 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.3: VERIFICA ORARIO INVALIDO - SEMPRE!
-    // Se abbiamo un orario che è FUORI RANGE (es. 23:30 quando chiudiamo alle 22:30),
-    // dobbiamo chiedere un orario valido INDIPENDENTEMENTE da cosa dice GPT.
+    // FIX v3.9.3/v3.9.4: VERIFICA ORARIO INVALIDO - SEMPRE!
+    // Se abbiamo un orario che è FUORI RANGE, dobbiamo chiedere un orario valido.
+    // FIX v3.9.4: Messaggio include sia PRANZO (12:00-15:00) che CENA (19:00-22:30)
     // ═══════════════════════════════════════════════════════════════════════
     if (reservation.time && !this.isValidTime(reservation.time)) {
       // Rileva se il cliente sta CHIEDENDO info sugli orari
@@ -1418,11 +1437,11 @@ const ValidationPipeline = {
         reservation.time = null;
       } else {
         // Orario invalido e cliente NON chiede info → forza ask_time con messaggio
-        console.log(`⏰ FIX v3.9.3: Orario ${reservation.time} INVALIDO → forzo ask_time`);
+        console.log(`⏰ FIX v3.9.4: Orario ${reservation.time} INVALIDO → forzo ask_time`);
         response.action = "ask_time";
         response.reply_text = lang === "en-US"
-          ? "I'm sorry, we close at 10:30 PM. The last reservation is at 10:30 PM. What time works for you?"
-          : "Mi dispiace, chiudiamo alle 22:30. L'ultima prenotazione è alle 22:30. A che ora preferisci?";
+          ? "I'm sorry, that time is outside our opening hours. We're open for lunch 12:00-15:00 and dinner 19:00-22:30. What time works for you?"
+          : "Mi dispiace, quell'orario è fuori dai nostri orari di apertura. Siamo aperti a pranzo 12:00-15:00 e a cena 19:00-22:30. A che ora preferisci?";
         reservation.time = null;  // Resetta così il cliente può dare un nuovo orario
       }
     }
@@ -1889,7 +1908,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.3 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.4 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2662,11 +2681,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.3 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.4 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX A4: Orario invalido → forza ask_time SEMPRE           ║
-║  ✨ FIX: "23:30" → "chiudiamo alle 22:30"                     ║
+║  ✨ FIX A3: isValidTime ora include PRANZO + CENA             ║
+║  ✨ FIX A8: mergeReservation permette null esplicito          ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
