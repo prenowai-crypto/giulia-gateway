@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.7
+// PRENOW - RECEPTIONIST AI GATEWAY v3.8
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4:
@@ -19,6 +19,12 @@
 // FIX v3.7:
 // - Gruppi >10: dopo PENDING, cliente NON può "confermare" da solo
 // - Intercetta risposte post-PENDING e spiega che il ristorante confermerà
+//
+// FIX v3.8: BUG CRITICI DA TEST SUITE
+// - BUG1: "Correggo data" non sovrascrive più date valide con date dalla cronologia
+//   (Es: cliente dice "2 gen" poi corregge "9 gen" → sistema usava 2 gen!)
+// - BUG2: isValidTime ora controlla MINUTI (23:30 non è più accettato se chiusura 23:00)
+//   (Es: cliente chiedeva 23:30, sistema accettava ignorando chiusura)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1237,11 +1243,27 @@ const RecapManager = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ValidationPipeline = {
-  // FIX v3.3: Validazione orari DETERMINISTICA
+  // FIX v3.8: Validazione orari con MINUTI e rispetto chiusura
+  // Pranzo: 12:00-14:30, Cena: 19:00-22:30 (ultima prenotazione 30min prima chiusura)
   isValidTime(time) {
     if (!time) return false;
-    const hour = parseInt(time.split(':')[0]);
-    return hour >= 19 && hour <= 23;
+    const parts = time.split(':');
+    const hours = parseInt(parts[0]);
+    const minutes = parseInt(parts[1]) || 0;
+    const totalMinutes = hours * 60 + minutes;
+    
+    // Pranzo: 12:00 - 14:30
+    const lunchStart = 12 * 60;      // 720
+    const lunchEnd = 14 * 60 + 30;   // 870
+    
+    // Cena: 19:00 - 22:30 (chiusura 23:00, ultima prenotazione 22:30)
+    const dinnerStart = 19 * 60;     // 1140
+    const dinnerEnd = 22 * 60 + 30;  // 1350
+    
+    const isLunch = totalMinutes >= lunchStart && totalMinutes <= lunchEnd;
+    const isDinner = totalMinutes >= dinnerStart && totalMinutes <= dinnerEnd;
+    
+    return isLunch || isDinner;
   },
   
   async validate(gptResponse, userText, callId) {
@@ -1251,14 +1273,20 @@ const ValidationPipeline = {
     let response = { ...gptResponse };
     let reservation = response.reservation || {};
     
-    // STEP 1: Estrai data dal testo utente (priorità utente)
-    const parsedDate = DateManager.parseFromText(userText, callId);
-    if (parsedDate) {
-      if (reservation.date && reservation.date !== parsedDate) {
-        console.log(`📆 Correggo data: ${reservation.date} -> ${parsedDate}`);
+    // STEP 1: Estrai data dal testo utente CORRENTE (senza cronologia!)
+    // FIX v3.8: Passiamo null invece di callId per evitare che cerchi nella cronologia
+    // La cronologia può contenere date vecchie/errate che il cliente ha già corretto
+    const parsedDateFromCurrentText = DateManager.parseFromText(userText, null);
+    
+    if (parsedDateFromCurrentText) {
+      // Il cliente ha menzionato una data nel messaggio corrente
+      if (reservation.date && reservation.date !== parsedDateFromCurrentText) {
+        console.log(`📆 Cliente cambia data: ${reservation.date} -> ${parsedDateFromCurrentText}`);
       }
-      reservation.date = parsedDate;
+      reservation.date = parsedDateFromCurrentText;
     }
+    // FIX v3.8: Se GPT ha già una data valida e il cliente NON ha menzionato una nuova data,
+    // FIDATI di GPT e NON cercare nella cronologia
     
     // STEP 2: Check chiusura
     if (reservation.date) {
@@ -2520,11 +2548,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.7 AVVIATO                               ║
+║  🚀 PRENOW GATEWAY v3.8 AVVIATO                               ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ RECAP deterministico per cancel/modify                    ║
-║  ✨ FIX: Anti-allucinazione orari (19:00-23:00 sempre validi) ║
+║  ✨ FIX: Date non sovrascritte dalla cronologia               ║
+║  ✨ FIX: Orari validati con minuti (22:30 max per cena)       ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
