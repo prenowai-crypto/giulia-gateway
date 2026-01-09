@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.5
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.6
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.7: (vedi versioni precedenti)
@@ -30,6 +30,10 @@
 // FIX v3.9.5:
 // - TimeManager: prende l'ULTIMO orario per POSIZIONE nel testo
 //   Risolve "aprite alle 12? Allora facciamo 12:30" → ora prende 12:30
+//
+// FIX v3.9.6:
+// - UX: Quando facciamo override orario, correggiamo anche reply_text di GPT
+//   Risolve "cliente dice 22, GPT risponde 21:30" → ora risposta dice 22:00
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1373,6 +1377,12 @@ const ValidationPipeline = {
     let reservation = response.reservation || {};
     
     // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.6: Salva orario/data originali di GPT per correggere reply_text
+    // ═══════════════════════════════════════════════════════════════════════
+    const gptOriginalTime = reservation.time;
+    const gptOriginalDate = reservation.date;
+    
+    // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.2: CARICA DATI SALVATI PRIMA DI TUTTO
     // Questo previene che GPT sovrascriva dati già confermati
     // ═══════════════════════════════════════════════════════════════════════
@@ -1595,6 +1605,45 @@ const ValidationPipeline = {
       else if (!merged.time) response.action = "ask_time";
       else if (!merged.people) response.action = "ask_people";
       else if (!merged.name) response.action = "ask_name";
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.6: CORREGGI reply_text SE ORARIO/DATA SONO STATI MODIFICATI
+    // Quando facciamo override, GPT ha risposto con dati sbagliati.
+    // Dobbiamo correggere il testo per evitare confusione al cliente.
+    // ═══════════════════════════════════════════════════════════════════════
+    if (response.reply_text && merged.time && gptOriginalTime && gptOriginalTime !== merged.time) {
+      const oldTimeDisplay = TimeManager.formatForDisplay(gptOriginalTime); // "21:30"
+      const newTimeDisplay = TimeManager.formatForDisplay(merged.time);     // "22:00"
+      
+      // Sostituisci tutte le varianti dell'orario sbagliato
+      const oldHour = parseInt(gptOriginalTime.split(':')[0]);
+      const oldMin = parseInt(gptOriginalTime.split(':')[1]);
+      const newHour = parseInt(merged.time.split(':')[0]);
+      const newMin = parseInt(merged.time.split(':')[1]);
+      
+      let fixedText = response.reply_text;
+      
+      // Pattern da sostituire: "21:30", "21.30", "alle 21:30", "alle 21", "ore 21:30", "ore 21"
+      // Solo se i minuti sono diversi o l'ora è diversa
+      if (oldHour !== newHour || oldMin !== newMin) {
+        // Formato HH:MM
+        fixedText = fixedText.replace(new RegExp(oldTimeDisplay.replace(':', '[:\\.]'), 'g'), newTimeDisplay);
+        
+        // Formato "alle X" o "ore X" (senza minuti) - solo se l'ora è diversa
+        if (oldHour !== newHour) {
+          // "alle 21" → "alle 22" (ma non "alle 21:30" che è già gestito sopra)
+          fixedText = fixedText.replace(
+            new RegExp(`(alle|ore)\\s+${oldHour}(?!:\\d|\\d)`, 'gi'),
+            `$1 ${newHour}`
+          );
+        }
+      }
+      
+      if (fixedText !== response.reply_text) {
+        console.log(`📝 FIX v3.9.6: Corretto reply_text: "${oldTimeDisplay}" → "${newTimeDisplay}"`);
+        response.reply_text = fixedText;
+      }
     }
     
     console.log("✅ ValidationPipeline completato");
@@ -1925,7 +1974,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.5 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.6 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2698,11 +2747,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.5 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.6 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX A3: TimeManager prende ULTIMO orario per posizione    ║
-║  ✨ "alle 12? facciamo 12:30" → ora prende 12:30              ║
+║  ✨ FIX A4 UX: Corregge reply_text quando override orario     ║
+║  ✨ "cliente dice 22, GPT dice 21:30" → ora risponde "22:00"  ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
