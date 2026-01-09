@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.4
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.5
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.7: (vedi versioni precedenti)
@@ -23,12 +23,13 @@
 // - ORARIO INVALIDO: Se cliente dice orario fuori range (es. 23:30), il sistema
 //   FORZA ask_time con messaggio INDIPENDENTEMENTE da cosa dice GPT.
 //
-// FIX v3.9.4 (CRITICO):
+// FIX v3.9.4:
 // - isValidTime: INCLUDE PRANZO (12:00-15:00) + CENA (19:00-22:30)
-//   Prima accettava solo cena, ora accetta entrambi
 // - mergeReservation: FIX BUG null ?? prev = prev! Ora usa 'in' operator
-//   per permettere di settare esplicitamente valori a null
-// - Messaggio orario invalido: include entrambi gli orari pranzo/cena
+//
+// FIX v3.9.5:
+// - TimeManager: prende l'ULTIMO orario per POSIZIONE nel testo
+//   Risolve "aprite alle 12? Allora facciamo 12:30" → ora prende 12:30
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -615,13 +616,13 @@ const TimeManager = {
     if (/mezzogiorno|noon/.test(t)) return "12:00:00";
     if (/mezzanotte|midnight/.test(t)) return "00:00:00";
     
-    // Trova TUTTI gli orari e prendi l'ULTIMO (per modifiche: prima dicono vecchio, poi nuovo)
-    let lastTime = null;
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.5: Raccoglie TUTTI gli orari con la loro POSIZIONE nel testo
+    // e prende l'ULTIMO (quello più a destra)
+    // Questo gestisce frasi come "aprite alle 12? Allora facciamo 12:30"
+    // ═══════════════════════════════════════════════════════════════════════
+    const allTimes = []; // Array di {position, time, pattern, match}
     let match;
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.1: Pattern multipli per catturare tutti i modi di dire l'ora
-    // ═══════════════════════════════════════════════════════════════════════
     
     // Pattern 1: "alle 20", "alle 20:30", "ore 20", "per le 20"
     const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
@@ -632,13 +633,12 @@ const TimeManager = {
         hour += 12;
       }
       if (hour >= 0 && hour <= 23) {
-        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        console.log(`⏰ TimeManager pattern1: "${match[0]}" → ${lastTime}`);
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        allTimes.push({ position: match.index, time: timeStr, pattern: 'pattern1', match: match[0] });
       }
     }
     
-    // Pattern 2: "le 22", "le 8" (SENZA "alle" davanti) - FIX per "Ok allora le 22"
-    // Usa lookbehind negativo per evitare double-match con "alle"
+    // Pattern 2: "le 22", "le 8" (SENZA "alle" davanti)
     const pattern2 = /(?:^|[^l])\ble\s+(\d{1,2})(?::(\d{2}))?\b/gi;
     while ((match = pattern2.exec(t)) !== null) {
       let hour = parseInt(match[1]);
@@ -647,8 +647,8 @@ const TimeManager = {
         hour += 12;
       }
       if (hour >= 0 && hour <= 23) {
-        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        console.log(`⏰ TimeManager pattern2 (le X): "${match[0]}" → ${lastTime}`);
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        allTimes.push({ position: match.index, time: timeStr, pattern: 'pattern2', match: match[0] });
       }
     }
     
@@ -661,8 +661,8 @@ const TimeManager = {
       if (isPM && hour < 12) hour += 12;
       if (!isPM && hour === 12) hour = 0;
       if (hour >= 0 && hour <= 23) {
-        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        console.log(`⏰ TimeManager pattern3 (pm/am): "${match[0]}" → ${lastTime}`);
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        allTimes.push({ position: match.index, time: timeStr, pattern: 'pattern3', match: match[0] });
       }
     }
     
@@ -671,30 +671,47 @@ const TimeManager = {
     while ((match = pattern4.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = match[2] ? parseInt(match[2]) : 0;
-      // Assume sera se ora ambigua
       if (hour >= 1 && hour <= 11 && !t.includes("morning") && !t.includes("lunch")) {
         hour += 12;
       }
       if (hour >= 0 && hour <= 23) {
-        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        console.log(`⏰ TimeManager pattern4 (at X): "${match[0]}" → ${lastTime}`);
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        allTimes.push({ position: match.index, time: timeStr, pattern: 'pattern4', match: match[0] });
       }
     }
     
-    if (lastTime) return lastTime;
-    
-    // Pattern 5: "20:30" diretto - prendi l'ultimo
-    const directRegex = /\b(\d{1,2}):(\d{2})\b/g;
-    while ((match = directRegex.exec(t)) !== null) {
+    // Pattern 5: "12:30", "20:30" diretto (HH:MM)
+    const pattern5 = /\b(\d{1,2}):(\d{2})\b/g;
+    while ((match = pattern5.exec(t)) !== null) {
       const hour = parseInt(match[1]);
       const minutes = parseInt(match[2]);
       if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
-        lastTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        console.log(`⏰ TimeManager pattern5 (HH:MM): "${match[0]}" → ${lastTime}`);
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        // Evita duplicati: controlla se esiste già un match alla stessa posizione
+        const isDuplicate = allTimes.some(t => 
+          Math.abs(t.position - match.index) < 5 && t.time === timeStr
+        );
+        if (!isDuplicate) {
+          allTimes.push({ position: match.index, time: timeStr, pattern: 'pattern5', match: match[0] });
+        }
       }
     }
     
-    return lastTime;
+    if (allTimes.length === 0) return null;
+    
+    // Ordina per posizione e prendi l'ULTIMO
+    allTimes.sort((a, b) => a.position - b.position);
+    const lastTime = allTimes[allTimes.length - 1];
+    
+    // Log tutti gli orari trovati e quale viene scelto
+    if (allTimes.length > 1) {
+      console.log(`⏰ TimeManager: trovati ${allTimes.length} orari: ${allTimes.map(t => `"${t.match}"→${t.time}`).join(', ')}`);
+      console.log(`⏰ TimeManager: scelto ULTIMO → "${lastTime.match}" = ${lastTime.time}`);
+    } else {
+      console.log(`⏰ TimeManager ${lastTime.pattern}: "${lastTime.match}" → ${lastTime.time}`);
+    }
+    
+    return lastTime.time;
   },
   
   inferDefault(text) {
@@ -1908,7 +1925,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.4 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.5 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2681,11 +2698,11 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.4 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.5 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX A3: isValidTime ora include PRANZO + CENA             ║
-║  ✨ FIX A8: mergeReservation permette null esplicito          ║
+║  ✨ FIX A3: TimeManager prende ULTIMO orario per posizione    ║
+║  ✨ "alle 12? facciamo 12:30" → ora prende 12:30              ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
