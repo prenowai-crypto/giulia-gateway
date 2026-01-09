@@ -1,39 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.6
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.7
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.4-v3.7: (vedi versioni precedenti)
-//
-// FIX v3.9:
-// - BUG CRONOLOGIA: Parser estrae SOLO dal messaggio corrente, MAI dalla cronologia
-// - BUG OVERRIDE: Se cliente dice nuovo orario, SEMPRE override
-// - ANTI-ALLUCINAZIONE: Rileva se cliente chiede INFO vs dà orario
-//
-// FIX v3.9.1:
-// - A2: getNextWeekday: se oggi È il giorno cercato, usa OGGI
-// - A4: TimeManager: pattern "le 22" senza "alle"
-//
-// FIX v3.9.2:
-// - PROTEZIONE DATI: Se cliente NON dice data/orario/persone, NON permettere a
-//   GPT di sovrascrivere i valori già salvati
-// - isValidTime: considera 23:30 INVALIDO (chiusura reale alle 22:30)
-// - CHECK ANTICIPATO: usa dati già corretti (reservation) non StateManager
-//
-// FIX v3.9.3:
-// - ORARIO INVALIDO: Se cliente dice orario fuori range (es. 23:30), il sistema
-//   FORZA ask_time con messaggio INDIPENDENTEMENTE da cosa dice GPT.
-//
-// FIX v3.9.4:
-// - isValidTime: INCLUDE PRANZO (12:00-15:00) + CENA (19:00-22:30)
-// - mergeReservation: FIX BUG null ?? prev = prev! Ora usa 'in' operator
-//
-// FIX v3.9.5:
-// - TimeManager: prende l'ULTIMO orario per POSIZIONE nel testo
-//   Risolve "aprite alle 12? Allora facciamo 12:30" → ora prende 12:30
+// FIX v3.4-v3.9.5: (vedi versioni precedenti)
 //
 // FIX v3.9.6:
 // - UX: Quando facciamo override orario, correggiamo anche reply_text di GPT
-//   Risolve "cliente dice 22, GPT risponde 21:30" → ora risposta dice 22:00
+//
+// FIX v3.9.7:
+// - GPT System Prompt: Aggiunti orari ESATTI (Pranzo 12:00-15:00, Cena 19:00-22:30)
+//   Prima GPT diceva "ultimo orario 21:00" perché non sapeva gli orari reali
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1726,7 +1702,8 @@ ORDINE DOMANDE:
 Per gruppi >${largeGroupThreshold}: "prenotazione soggetta a conferma"
 
 ORARI: "alle 8" senza specificare = 20:00 (sera)
-ORARI APERTURA: ${openingHours || "pranzo e cena"}
+ORARI APERTURA: Pranzo 12:00-15:00, Cena 19:00-22:30. Ultima prenotazione alle 22:30.
+${openingHours ? `INFO AGGIUNTIVE: ${openingHours}` : ""}
 MENU: ${menuSummary || "Cucina italiana"}
 EMAIL RISTORANTE: ${restaurantEmail}
 
@@ -1974,7 +1951,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.6 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.7 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2747,11 +2724,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.6 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.7 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX A4 UX: Corregge reply_text quando override orario     ║
-║  ✨ "cliente dice 22, GPT dice 21:30" → ora risponde "22:00"  ║
+║  ✨ FIX: GPT ora conosce orari esatti (pranzo/cena 22:30)     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
