@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.12
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.13
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -26,14 +26,17 @@
 // FIX v3.9.11:
 // - Mismatch con suggestedDate: invece di chiedere conferma, USA la data suggerita
 //   come "pre-commit" e continua il flusso normalmente
-//   Es: "venerdì 6 alle 21" → sistema usa 6 febbraio e chiede prossimo campo mancante
-//   Prima: "Intendi venerdì 6 febbraio?" (blocca flusso, perde dati)
-//   Ora:   "OK, venerdì 6 febbraio. A che ora?" (continua flusso, mantiene dati)
 //
 // FIX v3.9.12:
 // - Ordinali inglesi: "the 4th", "5th", "Wednesday the 4th" ora riconosciuti
 // - Contesto serale: "7:30" in contesto "tonight/dinner" → 19:30 (non 07:30)
 // - Correzione persone: "Siamo in 8... anzi facciamo 12" → usa 12 (ultimo numero)
+//
+// FIX v3.9.13:
+// - explicitTimeMatch ora cattura anche "at 7pm", "7pm", "at 8:30" (pattern inglesi)
+//   Fix per "Thursday the 5th at 7pm" - il 5 non viene più ignorato
+// - Pattern5 (HH:MM): se ora AM (1-11) è fuori fascia ma PM è dentro → usa PM
+//   Fix per "7:30" → 19:30 automaticamente (senza bisogno di contesto serale)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -724,16 +727,30 @@ const TimeManager = {
     
     // Pattern 5: "12:30", "20:30" diretto (HH:MM)
     // FIX v3.9.12: Se contesto serale E orario < 12, aggiungi 12 ore
+    // FIX v3.9.13: Se orario AM (1-11) è fuori fascia ma PM è dentro → usa PM
     const eveningContext = /tonight|dinner|evening|sera|cena|stasera/i.test(t);
     const pattern5 = /\b(\d{1,2}):(\d{2})\b/g;
     while ((match = pattern5.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = parseInt(match[2]);
       
-      // FIX v3.9.12: In contesto serale, orari 1-11 diventano PM (es. 7:30 tonight → 19:30)
+      // FIX v3.9.12: In contesto serale esplicito, orari 1-11 diventano PM
       if (eveningContext && hour >= 1 && hour <= 11) {
         console.log(`⏰ FIX v3.9.12: Contesto serale rilevato, ${hour}:${String(minutes).padStart(2,'0')} → ${hour+12}:${String(minutes).padStart(2,'0')}`);
         hour += 12;
+      }
+      // FIX v3.9.13: Se ora ambigua (1-11) è fuori orario apertura ma +12 è dentro → usa +12
+      // Fasce orarie: Pranzo 12:00-15:00 (720-900min), Cena 19:00-22:30 (1140-1350min)
+      else if (hour >= 1 && hour <= 11) {
+        const amMinutes = hour * 60 + minutes;
+        const pmMinutes = (hour + 12) * 60 + minutes;
+        const isAmValid = (amMinutes >= 720 && amMinutes <= 900) || (amMinutes >= 1140 && amMinutes <= 1350);
+        const isPmValid = (pmMinutes >= 720 && pmMinutes <= 900) || (pmMinutes >= 1140 && pmMinutes <= 1350);
+        
+        if (!isAmValid && isPmValid) {
+          console.log(`⏰ FIX v3.9.13: ${hour}:${String(minutes).padStart(2,'0')} fuori orario, ${hour+12}:${String(minutes).padStart(2,'0')} valido → uso PM`);
+          hour += 12;
+        }
       }
       
       if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
@@ -1493,11 +1510,14 @@ const ValidationPipeline = {
     let mentionedDayNumber = dayNumberMatch ? parseInt(dayNumberMatch[1]) : null;
     
     // FIX v3.9.10: Logica migliorata per distinguere numero giorno da orario
-    // Se c'è già un orario ESPLICITO (es. "alle 21", "ore 20:30", "20:00")
+    // Se c'è già un orario ESPLICITO (es. "alle 21", "ore 20:30", "20:00", "7pm", "at 8")
     // allora un numero trovato separatamente è il GIORNO, non l'orario
+    // FIX v3.9.13: Aggiunto supporto pattern inglesi (at X, Xpm, Xam)
     const explicitTimeMatch = text.match(/(?:alle|ore|per le)\s+(\d{1,2})(?:[:\.]\d{2})?/i) ||
                               text.match(/\b(\d{1,2}:\d{2})\b/) ||
-                              text.match(/\b(\d{1,2})[:\.]\d{2}\b/);
+                              text.match(/\b(\d{1,2})[:\.]\d{2}\b/) ||
+                              text.match(/\bat\s+(\d{1,2})(?:[:\.]\d{2})?\b/i) ||   // FIX v3.9.13: "at 7", "at 8:30"
+                              text.match(/\b(\d{1,2})\s*(?:pm|am)\b/i);              // FIX v3.9.13: "7pm", "8 am"
     
     if (explicitTimeMatch && mentionedDayNumber && mentionedDayNumber <= 12) {
       // C'è un orario esplicito - il numero trovato è il giorno
@@ -2330,7 +2350,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.12 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.13 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3103,10 +3123,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.12 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.13 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Ordinali EN, contesto serale, correzione persone     ║
+║  ✨ FIX: Pattern EN per orari, auto-correzione AM→PM           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
