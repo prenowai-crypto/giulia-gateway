@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.10
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.11
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -22,7 +22,13 @@
 // - Se c'è già un orario esplicito (es. "alle 21"), il numero è il giorno, non l'ora
 //   Es: "venerdì 6 alle 21" → 6 è il giorno, 21 è l'ora (fix test B7)
 // - Mismatch giorno/numero: invece di chiedere il mese, propone la data più vicina
-//   Es: "mercoledì 4" → "Intendi mercoledì 4 febbraio?" (cerca quando mer=4)
+//
+// FIX v3.9.11:
+// - Mismatch con suggestedDate: invece di chiedere conferma, USA la data suggerita
+//   come "pre-commit" e continua il flusso normalmente
+//   Es: "venerdì 6 alle 21" → sistema usa 6 febbraio e chiede prossimo campo mancante
+//   Prima: "Intendi venerdì 6 febbraio?" (blocca flusso, perde dati)
+//   Ora:   "OK, venerdì 6 febbraio. A che ora?" (continua flusso, mantiene dati)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1606,7 +1612,7 @@ const ValidationPipeline = {
     // Se il parser trova una data nel messaggio → override
     // Se NON trova una data → mantieni quella salvata (NON quella di GPT!)
     // ═══════════════════════════════════════════════════════════════════════
-    const parsedDate = DateManager.parseFromText(userText, null);
+    let parsedDate = DateManager.parseFromText(userText, null);
     if (parsedDate) {
       // Cliente ha detto una data → override
       if (reservation.date && reservation.date !== parsedDate) {
@@ -1615,20 +1621,33 @@ const ValidationPipeline = {
       reservation.date = parsedDate;
       
       // ═══════════════════════════════════════════════════════════════════════
-      // FIX v3.9.9: SAFETY NET PER DATE CON GIORNO+NUMERO SENZA MESE
+      // FIX v3.9.9/v3.9.11: SAFETY NET PER DATE CON GIORNO+NUMERO SENZA MESE
       // Se l'utente dice "sabato 7" senza specificare il mese, verifichiamo
       // che la data calcolata sia effettivamente sabato E il giorno 7.
-      // Se non corrisponde, chiediamo il mese per disambiguare.
+      // v3.9.11: Se troviamo una data suggerita, la USIAMO direttamente
+      // invece di chiedere conferma (pre-commit della data corretta)
       // ═══════════════════════════════════════════════════════════════════════
       const dayWeekMismatch = this.checkDayWeekNumberMismatch(userText, parsedDate, lang);
       if (dayWeekMismatch.mismatch) {
-        console.log(`⚠️ FIX v3.9.10: Mismatch rilevato! Propongo data più vicina.`);
-        response.reply_text = dayWeekMismatch.message;
-        response.action = "ask_date";
-        reservation.date = null;
-        StateManager.mergeReservation(callId, { date: null });
-        response.reservation = reservation;
-        return response;
+        if (dayWeekMismatch.suggestedDate) {
+          // FIX v3.9.11: Usa la data suggerita come "pre-commit"
+          // Non blocchiamo il flusso, ma usiamo direttamente la data più vicina
+          console.log(`⚠️ FIX v3.9.11: Mismatch rilevato! Uso data suggerita: ${dayWeekMismatch.suggestedDate}`);
+          reservation.date = dayWeekMismatch.suggestedDate;
+          parsedDate = dayWeekMismatch.suggestedDate;
+          // Segna che abbiamo fatto una correzione per poi aggiornare il messaggio
+          response._dateWasCorrected = true;
+          response._correctedDateMessage = dayWeekMismatch.message.replace('?', '.');
+        } else {
+          // Fallback: chiedi il mese (caso raro dove non troviamo data nei 12 mesi)
+          console.log(`⚠️ FIX v3.9.10: Mismatch rilevato! Chiedo il mese (no suggestedDate).`);
+          response.reply_text = dayWeekMismatch.message;
+          response.action = "ask_date";
+          reservation.date = null;
+          StateManager.mergeReservation(callId, { date: null });
+          response.reservation = reservation;
+          return response;
+        }
       }
     } else if (savedReservation.date) {
       // Cliente NON ha detto una data → proteggi quella salvata
@@ -1670,6 +1689,9 @@ const ValidationPipeline = {
         response.action = "ask_time";
         console.log(`📝 FIX v3.9.9: Nuova reply: "${response.reply_text}"`);
       }
+      
+      // FIX v3.9.11: La correzione messaggio per _dateWasCorrected avviene alla FINE del pipeline,
+      // dopo che tutti i campi (time, people, name) sono stati estratti
     }
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -1894,6 +1916,55 @@ const ValidationPipeline = {
         console.log(`📝 FIX v3.9.6: Corretto reply_text: "${oldTimeDisplay}" → "${newTimeDisplay}"`);
         response.reply_text = fixedText;
       }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.11: CORREZIONE REPLY_TEXT PER DATA CORRETTA (PRE-COMMIT)
+    // Se abbiamo corretto la data con suggestedDate, aggiorniamo il messaggio
+    // per confermare la data e continuare il flusso (ask_time, ask_people, etc.)
+    // POSIZIONE: Alla FINE del pipeline, dopo che time/people/name sono estratti
+    // ═══════════════════════════════════════════════════════════════════════
+    if (response._dateWasCorrected) {
+      console.log(`📝 FIX v3.9.11: Data corretta a ${merged.date} - costruisco messaggio appropriato`);
+      
+      const dateDisplay = DateManager.formatForDisplay(merged.date, lang);
+      
+      // Determina cosa chiedere dopo in base a cosa manca VERAMENTE
+      // A questo punto time, people, name sono già stati estratti dal messaggio utente
+      if (!merged.time) {
+        if (lang === "en-US") {
+          response.reply_text = `OK, ${dateDisplay}. What time would you like to book?`;
+        } else {
+          response.reply_text = `OK, ${dateDisplay}. A che ora vorresti prenotare?`;
+        }
+        response.action = "ask_time";
+      } else if (!merged.people) {
+        if (lang === "en-US") {
+          response.reply_text = `OK, ${dateDisplay} at ${TimeManager.formatForDisplay(merged.time)}. How many people?`;
+        } else {
+          response.reply_text = `OK, ${dateDisplay} alle ${TimeManager.formatForDisplay(merged.time)}. Per quante persone?`;
+        }
+        response.action = "ask_people";
+      } else if (!merged.name) {
+        if (lang === "en-US") {
+          response.reply_text = `OK, ${dateDisplay} at ${TimeManager.formatForDisplay(merged.time)} for ${merged.people} people. What name for the reservation?`;
+        } else {
+          response.reply_text = `OK, ${dateDisplay} alle ${TimeManager.formatForDisplay(merged.time)} per ${merged.people} persone. A che nome?`;
+        }
+        response.action = "ask_name";
+      } else {
+        // Ha già tutto! Chiedi solo email
+        if (lang === "en-US") {
+          response.reply_text = `OK, ${dateDisplay} at ${TimeManager.formatForDisplay(merged.time)} for ${merged.people} people, name ${merged.name}. Would you like to provide an email for confirmation?`;
+        } else {
+          response.reply_text = `OK, ${dateDisplay} alle ${TimeManager.formatForDisplay(merged.time)} per ${merged.people} persone a nome ${merged.name}. Vuoi lasciare un'email per la conferma?`;
+        }
+        response.action = "ask_email";
+      }
+      
+      console.log(`📝 FIX v3.9.11: Nuova reply: "${response.reply_text}"`);
+      delete response._dateWasCorrected;
+      delete response._correctedDateMessage;
     }
     
     console.log("✅ ValidationPipeline completato");
@@ -2225,7 +2296,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.10 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.11 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2998,10 +3069,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.10 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.11 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Mismatch date propone data vicina, "venerdì 6 alle 21"║
+║  ✨ FIX: Mismatch usa suggestedDate come pre-commit (no blocco)║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
