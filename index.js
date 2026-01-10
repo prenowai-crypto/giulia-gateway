@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.9
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.10
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -14,13 +14,15 @@
 // FIX v3.9.9:
 // - Correzione reply_text quando GPT dice "chiuso/lunedì" ma il giorno è APERTO
 // - Safety net per date con giorno+numero senza mese (es. "sabato 7")
-//   Se il giorno settimana non corrisponde al numero, chiede il mese
-//
-// FIX v3.9.9:
 // - "sabato prossimo" ora funziona (prima usava OGGI se oggi è sabato)
 // - Parsing date formato DD/MM (es. "3/2" = 3 febbraio)
 // - checkDayWeekNumberMismatch ignora numeri 1-12 in contesto orario
-//   (es. "martedì 11" → 11 è orario, non giorno 11)
+//
+// FIX v3.9.10:
+// - Se c'è già un orario esplicito (es. "alle 21"), il numero è il giorno, non l'ora
+//   Es: "venerdì 6 alle 21" → 6 è il giorno, 21 è l'ora (fix test B7)
+// - Mismatch giorno/numero: invece di chiedere il mese, propone la data più vicina
+//   Es: "mercoledì 4" → "Intendi mercoledì 4 febbraio?" (cerca quando mer=4)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1415,6 +1417,14 @@ const ValidationPipeline = {
       'sabato': 6, 'saturday': 6,
     };
     
+    // Nomi giorni per output
+    const dayNamesIT = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+    const dayNamesEN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const monthNamesIT = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+                          'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+    const monthNamesEN = ['January', 'February', 'March', 'April', 'May', 'June',
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+    
     // Cerca giorno della settimana menzionato
     let mentionedDayOfWeek = null;
     let mentionedDayName = null;
@@ -1439,15 +1449,28 @@ const ValidationPipeline = {
     
     // Cerca numero giorno (1-31 isolato, non parte di orario come "20:30")
     // Escludiamo numeri che fanno parte di orari (seguiti da ":" o preceduti da "alle/ore")
-    // FIX v3.9.9: Escludiamo anche numeri 1-12 che potrebbero essere orari se preceduti da "alle/ore/le"
-    //             es. "martedì alle 11" → 11 è un ORARIO, non il giorno 11
     const dayNumberMatch = text.match(/(?<!alle\s|ore\s|le\s|\d|:)\b([1-9]|[12][0-9]|3[01])\b(?!:|\d|pm|am)/i);
-    const mentionedDayNumber = dayNumberMatch ? parseInt(dayNumberMatch[1]) : null;
+    let mentionedDayNumber = dayNumberMatch ? parseInt(dayNumberMatch[1]) : null;
     
-    // FIX v3.9.9: Se il numero trovato è 1-12 E c'è un pattern orario nel testo, ignora
-    // Es. "martedì 11" potrebbe essere "martedì alle 11"
-    if (mentionedDayNumber && mentionedDayNumber <= 12) {
-      // Controlla se c'è un contesto che suggerisce orario
+    // FIX v3.9.10: Logica migliorata per distinguere numero giorno da orario
+    // Se c'è già un orario ESPLICITO (es. "alle 21", "ore 20:30", "20:00")
+    // allora un numero trovato separatamente è il GIORNO, non l'orario
+    const explicitTimeMatch = text.match(/(?:alle|ore|per le)\s+(\d{1,2})(?:[:\.]\d{2})?/i) ||
+                              text.match(/\b(\d{1,2}:\d{2})\b/) ||
+                              text.match(/\b(\d{1,2})[:\.]\d{2}\b/);
+    
+    if (explicitTimeMatch && mentionedDayNumber && mentionedDayNumber <= 12) {
+      // C'è un orario esplicito - il numero trovato è il giorno
+      const explicitTimeValue = explicitTimeMatch[1].split(/[:.]/)[0];
+      if (mentionedDayNumber.toString() !== explicitTimeValue) {
+        console.log(`📆 FIX v3.9.10: Numero ${mentionedDayNumber} è il giorno (orario esplicito trovato: ${explicitTimeMatch[0]})`);
+        // Continua con il check mismatch - il numero è un giorno valido
+      } else {
+        // Il numero trovato È l'orario, non cercare giorno
+        mentionedDayNumber = null;
+      }
+    } else if (!explicitTimeMatch && mentionedDayNumber && mentionedDayNumber <= 12) {
+      // NON c'è orario esplicito - se c'è contesto orario generico, potrebbe essere l'ora
       const timeContext = /\b(alle|ore|per le|sera|pranzo|cena|mattina|pomeriggio|at|pm|am)\b/i.test(text);
       if (timeContext) {
         console.log(`📆 FIX v3.9.9: Numero ${mentionedDayNumber} ignorato (probabile orario, contesto time presente)`);
@@ -1468,23 +1491,75 @@ const ValidationPipeline = {
     
     // Verifica se combaciano
     if (mentionedDayOfWeek !== actualDayOfWeek || mentionedDayNumber !== actualDayNumber) {
-      console.log(`📆 FIX v3.9.9: Mismatch! Utente dice "${mentionedDayName} ${mentionedDayNumber}", calcolato ${calculatedDate} (dow=${actualDayOfWeek}, day=${actualDayNumber})`);
+      console.log(`📆 FIX v3.9.10: Mismatch! Utente dice "${mentionedDayName} ${mentionedDayNumber}", calcolato ${calculatedDate} (dow=${actualDayOfWeek}, day=${actualDayNumber})`);
       
-      // Costruisci messaggio in base alla lingua
-      const message = lang === "en-US"
-        ? `You said ${mentionedDayName} the ${mentionedDayNumber}th, but I'm not sure which month you mean. Could you specify the month?`
-        : `Hai detto ${mentionedDayName} ${mentionedDayNumber}, ma non ho capito il mese. Puoi specificare il mese?`;
+      // FIX v3.9.10: Cerca la data più vicina dove quel giorno cade su quel numero
+      const suggestedDate = this._findNextMatchingDate(mentionedDayOfWeek, mentionedDayNumber);
       
-      return {
-        mismatch: true,
-        mentionedDay: mentionedDayName,
-        mentionedNumber: mentionedDayNumber,
-        calculatedDate: calculatedDate,
-        message: message,
-      };
+      if (suggestedDate) {
+        const suggestedDayName = lang === "en-US" ? dayNamesEN[mentionedDayOfWeek] : dayNamesIT[mentionedDayOfWeek];
+        const suggestedMonthName = lang === "en-US" ? monthNamesEN[suggestedDate.getMonth()] : monthNamesIT[suggestedDate.getMonth()];
+        const suggestedDateStr = `${suggestedDate.getFullYear()}-${String(suggestedDate.getMonth() + 1).padStart(2, '0')}-${String(suggestedDate.getDate()).padStart(2, '0')}`;
+        
+        console.log(`📆 FIX v3.9.10: Data più vicina trovata: ${suggestedDateStr} (${suggestedDayName} ${mentionedDayNumber} ${suggestedMonthName})`);
+        
+        // Costruisci messaggio con suggerimento
+        const message = lang === "en-US"
+          ? `Do you mean ${suggestedDayName} ${mentionedDayNumber} ${suggestedMonthName}?`
+          : `Intendi ${suggestedDayName} ${mentionedDayNumber} ${suggestedMonthName}?`;
+        
+        return {
+          mismatch: true,
+          mentionedDay: mentionedDayName,
+          mentionedNumber: mentionedDayNumber,
+          calculatedDate: calculatedDate,
+          suggestedDate: suggestedDateStr,
+          message: message,
+        };
+      } else {
+        // Fallback: chiedi il mese se non troviamo una data valida
+        const message = lang === "en-US"
+          ? `You said ${mentionedDayName} the ${mentionedDayNumber}th, but I'm not sure which month you mean. Could you specify the month?`
+          : `Hai detto ${mentionedDayName} ${mentionedDayNumber}, ma non ho capito il mese. Puoi specificare il mese?`;
+        
+        return {
+          mismatch: true,
+          mentionedDay: mentionedDayName,
+          mentionedNumber: mentionedDayNumber,
+          calculatedDate: calculatedDate,
+          message: message,
+        };
+      }
     }
     
     return { mismatch: false };
+  },
+  
+  // FIX v3.9.10: Trova la data più vicina dove il giorno della settimana cade sul numero specificato
+  _findNextMatchingDate(dayOfWeek, dayNumber) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Cerca nei prossimi 12 mesi
+    for (let monthOffset = 0; monthOffset < 12; monthOffset++) {
+      const testYear = today.getFullYear() + Math.floor((today.getMonth() + monthOffset) / 12);
+      const testMonth = (today.getMonth() + monthOffset) % 12;
+      
+      const testDate = new Date(testYear, testMonth, dayNumber);
+      
+      // Verifica che il giorno esista in quel mese (es. 31 febbraio non esiste)
+      if (testDate.getDate() !== dayNumber) continue;
+      
+      // Verifica che sia il giorno della settimana corretto
+      if (testDate.getDay() !== dayOfWeek) continue;
+      
+      // Verifica che sia nel futuro (o oggi)
+      if (testDate >= today) {
+        return testDate;
+      }
+    }
+    
+    return null; // Non trovato nei prossimi 12 mesi
   },
   
   // ═══════════════════════════════════════════════════════════════════════
@@ -1547,7 +1622,7 @@ const ValidationPipeline = {
       // ═══════════════════════════════════════════════════════════════════════
       const dayWeekMismatch = this.checkDayWeekNumberMismatch(userText, parsedDate, lang);
       if (dayWeekMismatch.mismatch) {
-        console.log(`⚠️ FIX v3.9.9: Mismatch rilevato! Chiedo il mese.`);
+        console.log(`⚠️ FIX v3.9.10: Mismatch rilevato! Propongo data più vicina.`);
         response.reply_text = dayWeekMismatch.message;
         response.action = "ask_date";
         reservation.date = null;
@@ -2150,7 +2225,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.9 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.10 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2923,10 +2998,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.9 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.10 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: "sabato prossimo", DD/MM, orari ambigui              ║
+║  ✨ FIX: Mismatch date propone data vicina, "venerdì 6 alle 21"║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
