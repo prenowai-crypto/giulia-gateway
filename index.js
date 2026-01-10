@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.11
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.12
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -29,6 +29,11 @@
 //   Es: "venerdì 6 alle 21" → sistema usa 6 febbraio e chiede prossimo campo mancante
 //   Prima: "Intendi venerdì 6 febbraio?" (blocca flusso, perde dati)
 //   Ora:   "OK, venerdì 6 febbraio. A che ora?" (continua flusso, mantiene dati)
+//
+// FIX v3.9.12:
+// - Ordinali inglesi: "the 4th", "5th", "Wednesday the 4th" ora riconosciuti
+// - Contesto serale: "7:30" in contesto "tonight/dinner" → 19:30 (non 07:30)
+// - Correzione persone: "Siamo in 8... anzi facciamo 12" → usa 12 (ultimo numero)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -718,10 +723,19 @@ const TimeManager = {
     }
     
     // Pattern 5: "12:30", "20:30" diretto (HH:MM)
+    // FIX v3.9.12: Se contesto serale E orario < 12, aggiungi 12 ore
+    const eveningContext = /tonight|dinner|evening|sera|cena|stasera/i.test(t);
     const pattern5 = /\b(\d{1,2}):(\d{2})\b/g;
     while ((match = pattern5.exec(t)) !== null) {
-      const hour = parseInt(match[1]);
+      let hour = parseInt(match[1]);
       const minutes = parseInt(match[2]);
+      
+      // FIX v3.9.12: In contesto serale, orari 1-11 diventano PM (es. 7:30 tonight → 19:30)
+      if (eveningContext && hour >= 1 && hour <= 11) {
+        console.log(`⏰ FIX v3.9.12: Contesto serale rilevato, ${hour}:${String(minutes).padStart(2,'0')} → ${hour+12}:${String(minutes).padStart(2,'0')}`);
+        hour += 12;
+      }
+      
       if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
         const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
         // Evita duplicati: controlla se esiste già un match alla stessa posizione
@@ -773,6 +787,25 @@ const PeopleManager = {
   parseFromText(text) {
     if (!text) return null;
     const t = text.toLowerCase().trim();
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.12: Pattern di correzione - quando l'utente si corregge,
+    // prendi l'ULTIMO numero menzionato, non il primo
+    // Es: "Siamo in 8... anzi no aspetta, facciamo 12" → 12 (non 8)
+    // ═══════════════════════════════════════════════════════════════════════
+    const correctionPatterns = /anzi|no aspetta|aspetta|facciamo|meglio|diciamo|actually|no wait|wait|let's say|make it|changed to|now it's/i;
+    if (correctionPatterns.test(t)) {
+      // Trova TUTTI i numeri nel testo
+      const allNumbers = t.match(/\b(\d+)\b/g);
+      if (allNumbers && allNumbers.length >= 2) {
+        // Prendi l'ultimo numero
+        const lastNum = parseInt(allNumbers[allNumbers.length - 1]);
+        if (lastNum > 0 && lastNum < 100) {
+          console.log(`👥 FIX v3.9.12: Correzione rilevata! Numeri trovati: [${allNumbers.join(', ')}] → uso ULTIMO: ${lastNum}`);
+          return lastNum;
+        }
+      }
+    }
     
     const patterns = [
       // Pattern specifici per modifiche
@@ -1455,7 +1488,8 @@ const ValidationPipeline = {
     
     // Cerca numero giorno (1-31 isolato, non parte di orario come "20:30")
     // Escludiamo numeri che fanno parte di orari (seguiti da ":" o preceduti da "alle/ore")
-    const dayNumberMatch = text.match(/(?<!alle\s|ore\s|le\s|\d|:)\b([1-9]|[12][0-9]|3[01])\b(?!:|\d|pm|am)/i);
+    // FIX v3.9.12: Supporto ordinali inglesi (1st, 2nd, 3rd, 4th, 5th, etc.)
+    const dayNumberMatch = text.match(/(?<!alle\s|ore\s|le\s|\d|:)\b([1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?\b(?!:|\d|pm|am)/i);
     let mentionedDayNumber = dayNumberMatch ? parseInt(dayNumberMatch[1]) : null;
     
     // FIX v3.9.10: Logica migliorata per distinguere numero giorno da orario
@@ -2296,7 +2330,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.11 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.12 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3069,10 +3103,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.11 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.12 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Mismatch usa suggestedDate come pre-commit (no blocco)║
+║  ✨ FIX: Ordinali EN, contesto serale, correzione persone     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
