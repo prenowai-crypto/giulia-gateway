@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.7
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.8
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -10,6 +10,11 @@
 // FIX v3.9.7:
 // - GPT System Prompt: Aggiunti orari ESATTI (Pranzo 12:00-15:00, Cena 19:00-22:30)
 //   Prima GPT diceva "ultimo orario 21:00" perché non sapeva gli orari reali
+//
+// FIX v3.9.8:
+// - Correzione reply_text quando GPT dice "chiuso/lunedì" ma il giorno è APERTO
+// - Safety net per date con giorno+numero senza mese (es. "sabato 7")
+//   Se il giorno settimana non corrisponde al numero, chiede il mese
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1345,6 +1350,106 @@ const ValidationPipeline = {
     return isValid;
   },
   
+  // ═══════════════════════════════════════════════════════════════════════
+  // FIX v3.9.8: Verifica coerenza giorno settimana + numero giorno
+  // Quando l'utente dice "sabato 7" senza mese, verifichiamo che la data
+  // calcolata sia effettivamente sabato E il giorno 7 del mese.
+  // ═══════════════════════════════════════════════════════════════════════
+  checkDayWeekNumberMismatch(userText, calculatedDate, lang = "it-IT") {
+    if (!userText || !calculatedDate) return { mismatch: false };
+    
+    const text = normalizeText(userText);
+    
+    // Mappa giorni settimana (normalizzati senza accenti)
+    const daysMap = {
+      'domenica': 0, 'sunday': 0,
+      'lunedi': 1, 'monday': 1,
+      'martedi': 2, 'tuesday': 2,
+      'mercoledi': 3, 'wednesday': 3,
+      'giovedi': 4, 'thursday': 4,
+      'venerdi': 5, 'friday': 5,
+      'sabato': 6, 'saturday': 6,
+    };
+    
+    // Cerca giorno della settimana menzionato
+    let mentionedDayOfWeek = null;
+    let mentionedDayName = null;
+    for (const [dayName, dayIndex] of Object.entries(daysMap)) {
+      if (text.includes(dayName)) {
+        mentionedDayOfWeek = dayIndex;
+        mentionedDayName = dayName;
+        break;
+      }
+    }
+    
+    // Cerca numero giorno menzionato (solo se NON c'è un mese esplicito)
+    const monthNames = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+                        'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
+                        'january', 'february', 'march', 'april', 'may', 'june',
+                        'july', 'august', 'september', 'october', 'november', 'december'];
+    
+    const hasExplicitMonth = monthNames.some(m => text.includes(m));
+    
+    // Se c'è un mese esplicito, non serve il check (la data è già precisa)
+    if (hasExplicitMonth) return { mismatch: false };
+    
+    // Cerca numero giorno (1-31 isolato, non parte di orario come "20:30")
+    // Escludiamo numeri che fanno parte di orari (seguiti da ":" o preceduti da "alle/ore")
+    const dayNumberMatch = text.match(/(?<!\d|:)\b([1-9]|[12][0-9]|3[01])\b(?!:|\d)/);
+    const mentionedDayNumber = dayNumberMatch ? parseInt(dayNumberMatch[1]) : null;
+    
+    // Se NON abbiamo sia giorno settimana CHE numero, non c'è ambiguità da verificare
+    if (mentionedDayOfWeek === null || mentionedDayNumber === null) {
+      return { mismatch: false };
+    }
+    
+    // Calcola giorno settimana e numero della data calcolata
+    const [year, month, day] = calculatedDate.split('-').map(Number);
+    const dateObj = new Date(year, month - 1, day);
+    const actualDayOfWeek = dateObj.getDay();
+    const actualDayNumber = dateObj.getDate();
+    
+    // Verifica se combaciano
+    if (mentionedDayOfWeek !== actualDayOfWeek || mentionedDayNumber !== actualDayNumber) {
+      console.log(`📆 FIX v3.9.8: Mismatch! Utente dice "${mentionedDayName} ${mentionedDayNumber}", calcolato ${calculatedDate} (dow=${actualDayOfWeek}, day=${actualDayNumber})`);
+      
+      // Costruisci messaggio in base alla lingua
+      const message = lang === "en-US"
+        ? `You said ${mentionedDayName} the ${mentionedDayNumber}th, but I'm not sure which month you mean. Could you specify the month?`
+        : `Hai detto ${mentionedDayName} ${mentionedDayNumber}, ma non ho capito il mese. Puoi specificare il mese?`;
+      
+      return {
+        mismatch: true,
+        mentionedDay: mentionedDayName,
+        mentionedNumber: mentionedDayNumber,
+        calculatedDate: calculatedDate,
+        message: message,
+      };
+    }
+    
+    return { mismatch: false };
+  },
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // FIX v3.9.8: Pattern per rilevare false chiusure nella reply_text di GPT
+  // ═══════════════════════════════════════════════════════════════════════
+  FALSE_CLOSURE_PATTERNS: [
+    /è (un |il )?lunedì/i,
+    /lunedì.*chius/i,
+    /chius.*lunedì/i,
+    /siamo chius/i,
+    /ristorante.*chius/i,
+    /giorno.*chius/i,
+    /quel giorno.*chius/i,
+    /is closed/i,
+    /we are closed/i,
+    /we're closed/i,
+    /it's.*monday/i,
+    /is a monday/i,
+    /on monday/i,
+    /that day.*closed/i,
+  ],
+  
   async validate(gptResponse, userText, callId) {
     console.log("🔄 ValidationPipeline...");
     
@@ -1376,6 +1481,23 @@ const ValidationPipeline = {
         console.log(`📆 FIX v3.9 OVERRIDE DATA: ${reservation.date} → ${parsedDate}`);
       }
       reservation.date = parsedDate;
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // FIX v3.9.8: SAFETY NET PER DATE CON GIORNO+NUMERO SENZA MESE
+      // Se l'utente dice "sabato 7" senza specificare il mese, verifichiamo
+      // che la data calcolata sia effettivamente sabato E il giorno 7.
+      // Se non corrisponde, chiediamo il mese per disambiguare.
+      // ═══════════════════════════════════════════════════════════════════════
+      const dayWeekMismatch = this.checkDayWeekNumberMismatch(userText, parsedDate, lang);
+      if (dayWeekMismatch.mismatch) {
+        console.log(`⚠️ FIX v3.9.8: Mismatch rilevato! Chiedo il mese.`);
+        response.reply_text = dayWeekMismatch.message;
+        response.action = "ask_date";
+        reservation.date = null;
+        StateManager.mergeReservation(callId, { date: null });
+        response.reservation = reservation;
+        return response;
+      }
     } else if (savedReservation.date) {
       // Cliente NON ha detto una data → proteggi quella salvata
       if (reservation.date && reservation.date !== savedReservation.date) {
@@ -1395,6 +1517,26 @@ const ValidationPipeline = {
         StateManager.mergeReservation(callId, { date: null });
         response.reservation = reservation;
         return response;
+      }
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // FIX v3.9.8: CORREZIONE REPLY_TEXT PER FALSE CHIUSURE
+      // Se GPT ha detto "chiuso/lunedì/closed" ma il giorno è APERTO,
+      // correggiamo la reply_text per evitare informazioni false al cliente
+      // ═══════════════════════════════════════════════════════════════════════
+      if (this.FALSE_CLOSURE_PATTERNS.some(p => p.test(response.reply_text))) {
+        console.log(`📝 FIX v3.9.8: GPT dice "chiuso" ma ${reservation.date} è APERTO - correggo reply_text`);
+        
+        // Costruisci risposta corretta
+        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+        
+        if (lang === "en-US") {
+          response.reply_text = `Perfect, ${dateDisplay}! What time would you like to book?`;
+        } else {
+          response.reply_text = `Perfetto, ${dateDisplay}! A che ora vorresti prenotare?`;
+        }
+        response.action = "ask_time";
+        console.log(`📝 FIX v3.9.8: Nuova reply: "${response.reply_text}"`);
       }
     }
     
@@ -1951,7 +2093,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.7 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.8 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2724,10 +2866,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.7 AVVIATO                             ║
+║  🚀 PRENOW GATEWAY v3.9.8 AVVIATO                             ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: GPT ora conosce orari esatti (pranzo/cena 22:30)     ║
+║  ✨ FIX v3.9.8: Correzione false chiusure + mismatch date     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
