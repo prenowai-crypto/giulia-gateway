@@ -1,29 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.19
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.20
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.14: (vedi versioni precedenti)
 //
-// FIX v3.9.15:
-// - REVERTE FIX v3.9.1: "domenica" quando oggi è domenica → prossima domenica
-// - NameManager: aggiunte parole italiane a excludeWords
+// FIX v3.9.15-v3.9.19: (vedi versioni precedenti)
 //
-// FIX v3.9.16:
-// - SPOSTA correzione "fully booked" DOPO parsing data
-//
-// FIX v3.9.17:
-// - ANTI-ALLUCINAZIONE DATA: Se GPT chiede ask_date ma abbiamo già una data
-//   valida salvata, override action al prossimo step logico
-//
-// FIX v3.9.18:
-// - GESTIONE RIFIUTO EMAIL: Se GPT chiede email ma cliente rifiuta ("no grazie",
-//   "no thanks") E abbiamo tutti i dati essenziali → forza create_reservation
-//
-// FIX v3.9.19:
-// - CORREZIONE UX REPLY_TEXT: Quando FIX v3.9.2 PROTEZIONE DATA si attiva
-//   (GPT cerca di cambiare la data salvata), corregge anche il reply_text
-//   per mostrare la data corretta invece di quella sbagliata di GPT
-//   Es: GPT dice "17 gennaio" ma data salvata è "7 febbraio" → corregge messaggio
+// FIX v3.9.20:
+// - PATTERN STRETTO GIORNO+NUMERO: Cerca numeri SOLO se adiacenti al giorno
+//   della settimana. Es: "sabato 7", "venerdì il 4", "the 5th"
+//   NON cattura più numeri separati come "2 persone" o "siamo in 4"
+//   Risolve bug H3/H4/H5 dove numeri persone → date future errate
+// - LIMITE 60 GIORNI: La ricerca data suggerita si ferma a ~2 mesi
+//   Evita suggerimenti tipo "agosto 2026" per input ambigui
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1539,39 +1528,56 @@ const ValidationPipeline = {
     // Se c'è un mese esplicito, non serve il check (la data è già precisa)
     if (hasExplicitMonth) return { mismatch: false };
     
-    // Cerca numero giorno (1-31 isolato, non parte di orario come "20:30")
-    // Escludiamo numeri che fanno parte di orari (seguiti da ":" o preceduti da "alle/ore")
-    // FIX v3.9.12: Supporto ordinali inglesi (1st, 2nd, 3rd, 4th, 5th, etc.)
-    const dayNumberMatch = text.match(/(?<!alle\s|ore\s|le\s|\d|:)\b([1-9]|[12][0-9]|3[01])(?:st|nd|rd|th)?\b(?!:|\d|pm|am)/i);
-    let mentionedDayNumber = dayNumberMatch ? parseInt(dayNumberMatch[1]) : null;
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.20: PATTERN STRETTO PER GIORNO + NUMERO
+    // Cerca SOLO numeri ADIACENTI al giorno della settimana
+    // Es: "sabato 7", "venerdì il 4", "martedì 3", "the 5th", "friday the 6th"
+    // 
+    // NON cattura numeri separati come:
+    // - "sabato 21:00, 2 persone" (il 2 non è adiacente a "sabato")
+    // - "domenica per 2" (il 2 segue "per", non "domenica")
+    // - "venerdì pranzo, siamo in 4" (il 4 è numero persone, non giorno)
+    //
+    // Questo risolve i bug H3/H4/H5 dove numeri di persone venivano
+    // interpretati come giorni del mese
+    // ═══════════════════════════════════════════════════════════════════════
+    const allDays = Object.keys(daysMap).join('|');
     
-    // FIX v3.9.10: Logica migliorata per distinguere numero giorno da orario
-    // Se c'è già un orario ESPLICITO (es. "alle 21", "ore 20:30", "20:00", "7pm", "at 8")
-    // allora un numero trovato separatamente è il GIORNO, non l'orario
-    // FIX v3.9.13: Aggiunto supporto pattern inglesi (at X, Xpm, Xam)
-    const explicitTimeMatch = text.match(/(?:alle|ore|per le)\s+(\d{1,2})(?:[:\.]\d{2})?/i) ||
-                              text.match(/\b(\d{1,2}:\d{2})\b/) ||
-                              text.match(/\b(\d{1,2})[:\.]\d{2}\b/) ||
-                              text.match(/\bat\s+(\d{1,2})(?:[:\.]\d{2})?\b/i) ||   // FIX v3.9.13: "at 7", "at 8:30"
-                              text.match(/\b(\d{1,2})\s*(?:pm|am)\b/i);              // FIX v3.9.13: "7pm", "8 am"
+    // Pattern italiano: "sabato 7", "venerdì il 4", "martedì 3"
+    const italianPattern = new RegExp(
+      `\\b(${allDays})\\s+(?:il\\s+)?(\\d{1,2})\\b`, 'i'
+    );
     
-    if (explicitTimeMatch && mentionedDayNumber && mentionedDayNumber <= 12) {
-      // C'è un orario esplicito - il numero trovato è il giorno
-      const explicitTimeValue = explicitTimeMatch[1].split(/[:.]/)[0];
-      if (mentionedDayNumber.toString() !== explicitTimeValue) {
-        console.log(`📆 FIX v3.9.10: Numero ${mentionedDayNumber} è il giorno (orario esplicito trovato: ${explicitTimeMatch[0]})`);
-        // Continua con il check mismatch - il numero è un giorno valido
-      } else {
-        // Il numero trovato È l'orario, non cercare giorno
-        mentionedDayNumber = null;
+    // Pattern inglese: "friday the 5th", "saturday 7", "sunday the 3rd"
+    const englishPattern = new RegExp(
+      `\\b(${allDays})\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'i'
+    );
+    
+    // Pattern inverso inglese: "the 5th of february" - ma questo ha mese esplicito, già gestito sopra
+    // Pattern inverso: "il 7 sabato" (raro ma possibile)
+    const inversePattern = new RegExp(
+      `\\b(?:il\\s+|the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(${allDays})\\b`, 'i'
+    );
+    
+    let mentionedDayNumber = null;
+    let adjacentDayMatch = text.match(italianPattern) || text.match(englishPattern);
+    
+    if (adjacentDayMatch) {
+      // Il numero è nel gruppo 2
+      mentionedDayNumber = parseInt(adjacentDayMatch[2]);
+      console.log(`📆 FIX v3.9.20: Pattern adiacente trovato: "${adjacentDayMatch[0]}" → giorno ${mentionedDayNumber}`);
+    } else {
+      // Prova pattern inverso
+      const inverseMatch = text.match(inversePattern);
+      if (inverseMatch) {
+        mentionedDayNumber = parseInt(inverseMatch[1]);
+        console.log(`📆 FIX v3.9.20: Pattern inverso trovato: "${inverseMatch[0]}" → giorno ${mentionedDayNumber}`);
       }
-    } else if (!explicitTimeMatch && mentionedDayNumber && mentionedDayNumber <= 12) {
-      // NON c'è orario esplicito - se c'è contesto orario generico, potrebbe essere l'ora
-      const timeContext = /\b(alle|ore|per le|sera|pranzo|cena|mattina|pomeriggio|at|pm|am)\b/i.test(text);
-      if (timeContext) {
-        console.log(`📆 FIX v3.9.9: Numero ${mentionedDayNumber} ignorato (probabile orario, contesto time presente)`);
-        return { mismatch: false };
-      }
+    }
+    
+    // Se non abbiamo trovato un numero ADIACENTE al giorno, non c'è ambiguità
+    if (mentionedDayNumber === null) {
+      return { mismatch: false };
     }
     
     // Se NON abbiamo sia giorno settimana CHE numero, non c'è ambiguità da verificare
@@ -1631,13 +1637,17 @@ const ValidationPipeline = {
     return { mismatch: false };
   },
   
-  // FIX v3.9.10: Trova la data più vicina dove il giorno della settimana cade sul numero specificato
-  _findNextMatchingDate(dayOfWeek, dayNumber) {
+  // FIX v3.9.10/v3.9.20: Trova la data più vicina dove il giorno della settimana cade sul numero specificato
+  // FIX v3.9.20: Limite a 60 giorni (circa 2 mesi) per evitare suggerimenti troppo lontani
+  _findNextMatchingDate(dayOfWeek, dayNumber, maxDays = 60) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Cerca nei prossimi 12 mesi
-    for (let monthOffset = 0; monthOffset < 12; monthOffset++) {
+    const maxDate = new Date(today);
+    maxDate.setDate(maxDate.getDate() + maxDays);
+    
+    // Cerca nei prossimi 2-3 mesi (per coprire il limite di 60 giorni)
+    for (let monthOffset = 0; monthOffset < 3; monthOffset++) {
       const testYear = today.getFullYear() + Math.floor((today.getMonth() + monthOffset) / 12);
       const testMonth = (today.getMonth() + monthOffset) % 12;
       
@@ -1651,11 +1661,17 @@ const ValidationPipeline = {
       
       // Verifica che sia nel futuro (o oggi)
       if (testDate >= today) {
-        return testDate;
+        // FIX v3.9.20: Verifica che sia entro il limite di maxDays
+        if (testDate <= maxDate) {
+          return testDate;
+        } else {
+          console.log(`📆 FIX v3.9.20: Data ${testDate.toISOString().split('T')[0]} oltre limite ${maxDays} giorni, ignorata`);
+          return null;
+        }
       }
     }
     
-    return null; // Non trovato nei prossimi 12 mesi
+    return null; // Non trovato entro il limite
   },
   
   // ═══════════════════════════════════════════════════════════════════════
@@ -2552,7 +2568,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.19 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.20 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3325,10 +3341,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.19 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.20 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Correzione UX reply_text per data protetta            ║
+║  ✨ FIX: Pattern stretto giorno+numero, limite 60gg            ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
