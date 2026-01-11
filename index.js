@@ -1,30 +1,10 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.16
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.17
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
 //
-// FIX v3.9.6:
-// - UX: Quando facciamo override orario, correggiamo anche reply_text di GPT
-//
-// FIX v3.9.7:
-// - GPT System Prompt: Aggiunti orari ESATTI (Pranzo 12:00-15:00, Cena 19:00-22:30)
-//
-// FIX v3.9.9:
-// - Correzione reply_text quando GPT dice "chiuso/lunedì" ma il giorno è APERTO
-// - Safety net per date con giorno+numero senza mese (es. "sabato 7")
-// - "sabato prossimo" ora funziona
-// - Parsing date formato DD/MM
-//
-// FIX v3.9.10-v3.9.11:
-// - Mismatch giorno/numero: propone data più vicina e la usa come pre-commit
-//
-// FIX v3.9.12-v3.9.13:
-// - Ordinali inglesi, contesto serale, correzione persone
-// - Pattern inglesi per explicitTimeMatch, auto-correzione AM→PM
-//
-// FIX v3.9.14:
-// - NameManager: estrae nome da pattern espliciti
+// FIX v3.9.6-v3.9.14: (vedi versioni precedenti)
 //
 // FIX v3.9.15:
 // - REVERTE FIX v3.9.1: "domenica" quando oggi è domenica → prossima domenica
@@ -32,8 +12,12 @@
 //
 // FIX v3.9.16:
 // - SPOSTA correzione "fully booked" DOPO parsing data
-//   Prima: GPT dice "fully booked" con date=null → correggevamo ma data persa
-//   Ora: Prima parsiamo la data, poi correggiamo con data disponibile
+//
+// FIX v3.9.17:
+// - ANTI-ALLUCINAZIONE DATA: Se GPT chiede ask_date ma abbiamo già una data
+//   valida salvata, override action al prossimo step logico (ask_time, 
+//   ask_people, ask_name, ask_email)
+//   Fix per C2 "tonight" e C5 one-shot dove GPT ignorava la data salvata
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1845,6 +1829,48 @@ const ValidationPipeline = {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.17: ANTI-ALLUCINAZIONE DATA
+    // Se GPT chiede ask_date ma abbiamo GIÀ una data valida salvata,
+    // override action al prossimo step logico
+    // ═══════════════════════════════════════════════════════════════════════
+    const effectiveDate = reservation.date || savedReservation.date;
+    if (response.action === "ask_date" && effectiveDate) {
+      console.log(`⚠️ FIX v3.9.17: GPT chiede data ma abbiamo già ${effectiveDate} → skip`);
+      
+      // Assicurati che la data sia nel reservation object
+      reservation.date = effectiveDate;
+      
+      // Determina il prossimo step basato su cosa manca
+      const hasTime = reservation.time || savedReservation.time;
+      const hasPeople = reservation.people || savedReservation.people;
+      const hasName = reservation.name || savedReservation.name;
+      
+      if (!hasTime) {
+        response.action = "ask_time";
+        response.reply_text = lang === "en-US"
+          ? "What time would you like to book?"
+          : "A che ora vorresti prenotare?";
+      } else if (!hasPeople) {
+        response.action = "ask_people";
+        response.reply_text = lang === "en-US"
+          ? "How many people will be in your party?"
+          : "Per quante persone?";
+      } else if (!hasName) {
+        response.action = "ask_name";
+        response.reply_text = lang === "en-US"
+          ? "What name for the reservation?"
+          : "A che nome la prenotazione?";
+      } else {
+        // Abbiamo tutto tranne email → ask_email o create_reservation
+        response.action = "ask_email";
+        response.reply_text = lang === "en-US"
+          ? "Would you like to provide an email for confirmation?"
+          : "Vuoi fornire un'email per la conferma?";
+      }
+      console.log(`⚠️ FIX v3.9.17: Nuovo action: ${response.action}`);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.2: STEP 3 - Gestione ORARIO con protezione
     // Se il parser trova un orario nel messaggio → override
     // Se NON trova un orario → mantieni quello salvato (NON quello di GPT!)
@@ -2460,7 +2486,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.16 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.17 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3233,10 +3259,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.16 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.17 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Fully booked spostato dopo parsing data               ║
+║  ✨ FIX: Anti-allucinazione data (GPT ignora data salvata)     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
