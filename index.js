@@ -1,10 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.17
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.18
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.4-v3.9.5: (vedi versioni precedenti)
-//
-// FIX v3.9.6-v3.9.14: (vedi versioni precedenti)
+// FIX v3.4-v3.9.14: (vedi versioni precedenti)
 //
 // FIX v3.9.15:
 // - REVERTE FIX v3.9.1: "domenica" quando oggi è domenica → prossima domenica
@@ -15,9 +13,12 @@
 //
 // FIX v3.9.17:
 // - ANTI-ALLUCINAZIONE DATA: Se GPT chiede ask_date ma abbiamo già una data
-//   valida salvata, override action al prossimo step logico (ask_time, 
-//   ask_people, ask_name, ask_email)
-//   Fix per C2 "tonight" e C5 one-shot dove GPT ignorava la data salvata
+//   valida salvata, override action al prossimo step logico
+//
+// FIX v3.9.18:
+// - GESTIONE RIFIUTO EMAIL: Se GPT chiede email ma cliente rifiuta ("no grazie",
+//   "no thanks") E abbiamo tutti i dati essenziali → forza create_reservation
+//   GPT a volte insiste sull'email anche se è opzionale
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -2157,6 +2158,34 @@ const ValidationPipeline = {
       delete response._correctedDateMessage;
     }
     
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.18: GESTIONE RIFIUTO EMAIL
+    // Se GPT chiede email ma il cliente rifiuta ("no grazie", "no thanks")
+    // E abbiamo tutti i dati essenziali → forza create_reservation
+    // GPT a volte insiste sull'email anche se è opzionale
+    // ═══════════════════════════════════════════════════════════════════════
+    const emailRefusalPatterns = /\b(no thanks|no thank you|no grazie|no email|non ho email|niente email|skip|don'?t have|not necessary|call me|chiamami|chiamatemi)\b/i;
+    
+    if (response.action === "ask_email" && emailRefusalPatterns.test(userText)) {
+      const hasAllEssentials = reservation.date && reservation.time && reservation.people && reservation.name;
+      
+      if (hasAllEssentials) {
+        console.log(`⚠️ FIX v3.9.18: Cliente rifiuta email ma abbiamo tutti i dati → create_reservation`);
+        response.action = "create_reservation";
+        
+        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+        const timeDisplay = TimeManager.formatForDisplay(reservation.time);
+        const firstName = reservation.name.split(' ')[0];
+        
+        if (lang === "en-US") {
+          response.reply_text = `Your reservation for ${reservation.people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. See you soon!`;
+        } else {
+          response.reply_text = `Prenotazione confermata per ${reservation.people} persone ${dateDisplay} alle ${timeDisplay}, ${firstName}. A presto!`;
+        }
+        console.log(`⚠️ FIX v3.9.18: Nuova reply: "${response.reply_text}"`);
+      }
+    }
+    
     console.log("✅ ValidationPipeline completato");
     return response;
   },
@@ -2486,7 +2515,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.17 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.18 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3259,10 +3288,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.17 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.18 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Anti-allucinazione data (GPT ignora data salvata)     ║
+║  ✨ FIX: Gestione rifiuto email → create_reservation           ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
