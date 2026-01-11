@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.18
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.19
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.14: (vedi versioni precedenti)
@@ -18,7 +18,12 @@
 // FIX v3.9.18:
 // - GESTIONE RIFIUTO EMAIL: Se GPT chiede email ma cliente rifiuta ("no grazie",
 //   "no thanks") E abbiamo tutti i dati essenziali → forza create_reservation
-//   GPT a volte insiste sull'email anche se è opzionale
+//
+// FIX v3.9.19:
+// - CORREZIONE UX REPLY_TEXT: Quando FIX v3.9.2 PROTEZIONE DATA si attiva
+//   (GPT cerca di cambiare la data salvata), corregge anche il reply_text
+//   per mostrare la data corretta invece di quella sbagliata di GPT
+//   Es: GPT dice "17 gennaio" ma data salvata è "7 febbraio" → corregge messaggio
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1758,6 +1763,38 @@ const ValidationPipeline = {
       // Cliente NON ha detto una data → proteggi quella salvata
       if (reservation.date && reservation.date !== savedReservation.date) {
         console.log(`📆 FIX v3.9.2 PROTEZIONE DATA: GPT dice ${reservation.date}, mantengo ${savedReservation.date}`);
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // FIX v3.9.19: CORREZIONE REPLY_TEXT PER DATA PROTETTA
+        // Se GPT ha menzionato la data sbagliata nel messaggio, correggiamola
+        // per evitare confusione UX (es. "17 gennaio" → "7 febbraio")
+        // ═══════════════════════════════════════════════════════════════════════
+        const wrongDate = reservation.date; // La data sbagliata che GPT voleva usare
+        const correctDate = savedReservation.date; // La data corretta salvata
+        
+        // Pattern per trovare date nel testo (italiano e inglese)
+        const italianMonths = "gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre";
+        const englishMonths = "January|February|March|April|May|June|July|August|September|October|November|December";
+        
+        // Pattern: "17 gennaio", "7 febbraio", etc.
+        const italianDatePattern = new RegExp(`\\b(\\d{1,2})\\s+(${italianMonths})\\b`, 'gi');
+        // Pattern: "January 17", "February 7", etc.
+        const englishDatePattern = new RegExp(`\\b(${englishMonths})\\s+(\\d{1,2})\\b`, 'gi');
+        
+        const correctDateDisplay = DateManager.formatForDisplay(correctDate, lang);
+        
+        // Controlla se il reply_text contiene una data diversa da quella corretta
+        if (italianDatePattern.test(response.reply_text) || englishDatePattern.test(response.reply_text)) {
+          // Sostituisci tutte le date con quella corretta
+          let correctedReply = response.reply_text;
+          correctedReply = correctedReply.replace(italianDatePattern, correctDateDisplay);
+          correctedReply = correctedReply.replace(englishDatePattern, correctDateDisplay);
+          
+          if (correctedReply !== response.reply_text) {
+            console.log(`📝 FIX v3.9.19: Corretto reply_text con data protetta: "${correctDateDisplay}"`);
+            response.reply_text = correctedReply;
+          }
+        }
       }
       reservation.date = savedReservation.date;
     }
@@ -2515,7 +2552,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.18 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.19 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3288,10 +3325,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.18 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.19 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Gestione rifiuto email → create_reservation           ║
+║  ✨ FIX: Correzione UX reply_text per data protetta            ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
