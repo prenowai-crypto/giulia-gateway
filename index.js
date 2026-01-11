@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.15
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.16
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -9,40 +9,31 @@
 //
 // FIX v3.9.7:
 // - GPT System Prompt: Aggiunti orari ESATTI (Pranzo 12:00-15:00, Cena 19:00-22:30)
-//   Prima GPT diceva "ultimo orario 21:00" perché non sapeva gli orari reali
 //
 // FIX v3.9.9:
 // - Correzione reply_text quando GPT dice "chiuso/lunedì" ma il giorno è APERTO
 // - Safety net per date con giorno+numero senza mese (es. "sabato 7")
-// - "sabato prossimo" ora funziona (prima usava OGGI se oggi è sabato)
-// - Parsing date formato DD/MM (es. "3/2" = 3 febbraio)
-// - checkDayWeekNumberMismatch ignora numeri 1-12 in contesto orario
+// - "sabato prossimo" ora funziona
+// - Parsing date formato DD/MM
 //
-// FIX v3.9.10:
-// - Se c'è già un orario esplicito (es. "alle 21"), il numero è il giorno, non l'ora
-// - Mismatch giorno/numero: invece di chiedere il mese, propone la data più vicina
+// FIX v3.9.10-v3.9.11:
+// - Mismatch giorno/numero: propone data più vicina e la usa come pre-commit
 //
-// FIX v3.9.11:
-// - Mismatch con suggestedDate: invece di chiedere conferma, USA la data suggerita
-//   come "pre-commit" e continua il flusso normalmente
-//
-// FIX v3.9.12:
-// - Ordinali inglesi: "the 4th", "5th", "Wednesday the 4th" ora riconosciuti
-// - Contesto serale: "7:30" in contesto "tonight/dinner" → 19:30 (non 07:30)
-// - Correzione persone: "Siamo in 8... anzi facciamo 12" → usa 12 (ultimo numero)
-//
-// FIX v3.9.13:
-// - explicitTimeMatch ora cattura anche "at 7pm", "7pm", "at 8:30" (pattern inglesi)
-// - Pattern5 (HH:MM): se ora AM (1-11) è fuori fascia ma PM è dentro → usa PM
+// FIX v3.9.12-v3.9.13:
+// - Ordinali inglesi, contesto serale, correzione persone
+// - Pattern inglesi per explicitTimeMatch, auto-correzione AM→PM
 //
 // FIX v3.9.14:
-// - NameManager: estrae nome da pattern espliciti "name is Brown", "a nome Rossi"
+// - NameManager: estrae nome da pattern espliciti
 //
 // FIX v3.9.15:
-// - REVERTE FIX v3.9.1: "domenica" quando oggi è domenica → prossima domenica (+7)
-//   Se vuoi prenotare per oggi dici "oggi/stasera", non il nome del giorno
-// - Correzione "fully booked" falso: GPT inventa "siamo pieni" senza check reale
-// - NameManager: aggiunte parole italiane a excludeWords (mio, sua, etc.)
+// - REVERTE FIX v3.9.1: "domenica" quando oggi è domenica → prossima domenica
+// - NameManager: aggiunte parole italiane a excludeWords
+//
+// FIX v3.9.16:
+// - SPOSTA correzione "fully booked" DOPO parsing data
+//   Prima: GPT dice "fully booked" con date=null → correggevamo ma data persa
+//   Ora: Prima parsiamo la data, poi correggiamo con data disponibile
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -1734,34 +1725,7 @@ const ValidationPipeline = {
     // ═══════════════════════════════════════════════════════════════════════
     const savedReservation = StateManager.getReservation(callId);
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.15: CORREZIONE "FULLY BOOKED" FALSO
-    // Se GPT dice "siamo pieni/fully booked" ma NON abbiamo ancora fatto
-    // un check reale (mancano orario o persone), correggi il messaggio
-    // ═══════════════════════════════════════════════════════════════════════
-    const earlyTimeCheck = reservation.time || savedReservation.time;
-    const earlyPeopleCheck = reservation.people || savedReservation.people;
-    const gptSaysFullyBooked = this.FALSE_FULLYBOOOKED_PATTERNS.some(p => p.test(response.reply_text));
-    
-    if (gptSaysFullyBooked && (!earlyTimeCheck || !earlyPeopleCheck)) {
-      console.log(`📝 FIX v3.9.15: GPT dice "pieni/fully booked" ma non abbiamo verificato - correggo`);
-      
-      // Determina cosa manca e costruisci risposta appropriata
-      const dateDisplay = reservation.date ? DateManager.formatForDisplay(reservation.date, lang) : null;
-      
-      if (!earlyTimeCheck) {
-        response.reply_text = lang === "en-US"
-          ? `We're open${dateDisplay ? ' on ' + dateDisplay : ' tonight'}. What time would you like to book?`
-          : `Siamo aperti${dateDisplay ? ' ' + dateDisplay : ' stasera'}. A che ora vorresti prenotare?`;
-        response.action = "ask_time";
-      } else if (!earlyPeopleCheck) {
-        response.reply_text = lang === "en-US"
-          ? `How many people will be in your party?`
-          : `Per quante persone?`;
-        response.action = "ask_people";
-      }
-      console.log(`📝 FIX v3.9.15: Nuova reply: "${response.reply_text}"`);
-    }
+    // FIX v3.9.15/v3.9.16: Check "fully booked" spostato DOPO parsing data
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.2: STEP 1 - Gestione DATA con protezione
@@ -1844,6 +1808,36 @@ const ValidationPipeline = {
         }
         response.action = "ask_time";
         console.log(`📝 FIX v3.9.9: Nuova reply: "${response.reply_text}"`);
+      }
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // FIX v3.9.16: CORREZIONE "FULLY BOOKED" FALSO (spostato qui da v3.9.15)
+      // Se GPT dice "siamo pieni/fully booked" ma NON abbiamo ancora fatto
+      // un check reale (mancano orario o persone), correggi il messaggio
+      // ORA la data è già stata parsata, quindi possiamo usarla nel messaggio
+      // ═══════════════════════════════════════════════════════════════════════
+      const earlyTimeCheck = reservation.time || savedReservation.time;
+      const earlyPeopleCheck = reservation.people || savedReservation.people;
+      const gptSaysFullyBooked = this.FALSE_FULLYBOOOKED_PATTERNS.some(p => p.test(response.reply_text));
+      
+      if (gptSaysFullyBooked && (!earlyTimeCheck || !earlyPeopleCheck)) {
+        console.log(`📝 FIX v3.9.16: GPT dice "pieni/fully booked" ma non abbiamo verificato - correggo`);
+        
+        // Usa la data PARSATA (ora disponibile!) per costruire il messaggio
+        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+        
+        if (!earlyTimeCheck) {
+          response.reply_text = lang === "en-US"
+            ? `We're open on ${dateDisplay}. What time would you like to book?`
+            : `Siamo aperti ${dateDisplay}. A che ora vorresti prenotare?`;
+          response.action = "ask_time";
+        } else if (!earlyPeopleCheck) {
+          response.reply_text = lang === "en-US"
+            ? `How many people will be in your party?`
+            : `Per quante persone?`;
+          response.action = "ask_people";
+        }
+        console.log(`📝 FIX v3.9.16: Nuova reply: "${response.reply_text}"`);
       }
       
       // FIX v3.9.11: La correzione messaggio per _dateWasCorrected avviene alla FINE del pipeline,
@@ -2466,7 +2460,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.15 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.16 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3239,10 +3233,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.15 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.16 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Giorno=prossima sett, fully booked falso, mio        ║
+║  ✨ FIX: Fully booked spostato dopo parsing data               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
