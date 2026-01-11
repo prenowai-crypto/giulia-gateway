@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.13
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.14
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -37,6 +37,10 @@
 //   Fix per "Thursday the 5th at 7pm" - il 5 non viene più ignorato
 // - Pattern5 (HH:MM): se ora AM (1-11) è fuori fascia ma PM è dentro → usa PM
 //   Fix per "7:30" → 19:30 automaticamente (senza bisogno di contesto serale)
+//
+// FIX v3.9.14:
+// - NameManager: estrae nome da pattern espliciti "name is Brown", "a nome Rossi"
+//   Supporta one-shot booking completo in inglese e italiano
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -858,6 +862,47 @@ const PeopleManager = {
     
     for (const [word, num] of Object.entries(wordNumbers)) {
       if (t.includes(word)) return num;
+    }
+    
+    return null;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEZIONE 9B: NAME MANAGER (FIX v3.9.14)
+// Estrae il nome SOLO da pattern espliciti per evitare false positive
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const NameManager = {
+  parseFromText(text) {
+    if (!text) return null;
+    const t = text.trim();
+    
+    // Lista di parole comuni da escludere (non sono nomi)
+    const excludeWords = ['not', 'the', 'a', 'an', 'is', 'are', 'it', 'my', 'your', 'no', 'yes', 'ok', 'and', 'or'];
+    
+    // Pattern MOLTO conservativi - solo frasi esplicite
+    const patterns = [
+      // Inglese: "name is Brown", "name is Mary Jane"
+      /\bname\s+is\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
+      // Inglese: "under the name Smith"
+      /\bunder\s+(?:the\s+)?name\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
+      // Italiano: "a nome Rossi", "a nome di Rossi"
+      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
+      // Italiano: "nome Bianchi" (a inizio frase o dopo virgola)
+      /(?:^|,\s*)\s*nome\s+([A-Z][a-zA-Z]+)\b/i,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = t.match(pattern);
+      if (match && match[1]) {
+        const name = match[1].trim();
+        // Safeguard: almeno 2 caratteri e non parola comune
+        if (name.length >= 2 && !excludeWords.includes(name.toLowerCase())) {
+          console.log(`👤 FIX v3.9.14 NameManager: estratto "${name}" da "${t.substring(0,40)}..."`);
+          return name;
+        }
+      }
     }
     
     return null;
@@ -1850,6 +1895,20 @@ const ValidationPipeline = {
       reservation.people = savedReservation.people;
     }
     
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.14: STEP 4B - Gestione NOME con estrazione conservativa
+    // Estrae il nome SOLO da pattern espliciti come "name is Brown", "a nome Rossi"
+    // ═══════════════════════════════════════════════════════════════════════
+    const parsedName = NameManager.parseFromText(userText);
+    if (parsedName) {
+      if (!reservation.name) {
+        reservation.name = parsedName;
+      }
+    } else if (savedReservation.name && !reservation.name) {
+      // Proteggi nome salvato
+      reservation.name = savedReservation.name;
+    }
+    
     // STEP 5: Gestione eventi grandi (≥45)
     if (reservation.people >= CONFIG.EVENT_THRESHOLD) {
       const email = ContextService.getRestaurantEmail(callId);
@@ -2350,7 +2409,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.13 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.14 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3123,10 +3182,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.13 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.14 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Pattern EN per orari, auto-correzione AM→PM           ║
+║  ✨ FIX: NameManager per one-shot booking                      ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
