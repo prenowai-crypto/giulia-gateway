@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.14
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.15
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
 // FIX v3.4-v3.9.5: (vedi versioni precedenti)
@@ -20,7 +20,6 @@
 //
 // FIX v3.9.10:
 // - Se c'è già un orario esplicito (es. "alle 21"), il numero è il giorno, non l'ora
-//   Es: "venerdì 6 alle 21" → 6 è il giorno, 21 è l'ora (fix test B7)
 // - Mismatch giorno/numero: invece di chiedere il mese, propone la data più vicina
 //
 // FIX v3.9.11:
@@ -34,13 +33,16 @@
 //
 // FIX v3.9.13:
 // - explicitTimeMatch ora cattura anche "at 7pm", "7pm", "at 8:30" (pattern inglesi)
-//   Fix per "Thursday the 5th at 7pm" - il 5 non viene più ignorato
 // - Pattern5 (HH:MM): se ora AM (1-11) è fuori fascia ma PM è dentro → usa PM
-//   Fix per "7:30" → 19:30 automaticamente (senza bisogno di contesto serale)
 //
 // FIX v3.9.14:
 // - NameManager: estrae nome da pattern espliciti "name is Brown", "a nome Rossi"
-//   Supporta one-shot booking completo in inglese e italiano
+//
+// FIX v3.9.15:
+// - REVERTE FIX v3.9.1: "domenica" quando oggi è domenica → prossima domenica (+7)
+//   Se vuoi prenotare per oggi dici "oggi/stasera", non il nome del giorno
+// - Correzione "fully booked" falso: GPT inventa "siamo pieni" senza check reale
+// - NameManager: aggiunte parole italiane a excludeWords (mio, sua, etc.)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -468,15 +470,17 @@ const DateManager = {
     const diff = ((targetWeekday - result.getDay()) + 7) % 7;
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.1: Se oggi È GIÀ il giorno cercato (diff=0), usa OGGI
-    // Prima faceva `|| 7` che saltava alla settimana dopo
-    // Esempio: oggi è domenica, cliente dice "domenica" → usa oggi, non domenica prossima
+    // FIX v3.9.15: Se oggi È GIÀ il giorno cercato (diff=0), vai alla PROSSIMA settimana
+    // Logica: se dici "domenica" e oggi è domenica, intendi domenica prossima
+    // Se vuoi prenotare per oggi, dici "oggi" o "stasera", non il nome del giorno
+    // REVERTE FIX v3.9.1 che usava OGGI (comportamento sbagliato)
     // ═══════════════════════════════════════════════════════════════════════
+    const daysToAdd = diff === 0 ? 7 : diff;
     if (diff === 0) {
-      console.log(`📆 FIX v3.9.1: Oggi è già ${this.DAYS_IT[targetWeekday]}, uso OGGI`);
+      console.log(`📆 FIX v3.9.15: Oggi è già ${this.DAYS_IT[targetWeekday]}, uso PROSSIMA settimana (+7 giorni)`);
     }
     
-    result.setDate(result.getDate() + diff);
+    result.setDate(result.getDate() + daysToAdd);
     return result;
   },
   
@@ -879,7 +883,13 @@ const NameManager = {
     const t = text.trim();
     
     // Lista di parole comuni da escludere (non sono nomi)
-    const excludeWords = ['not', 'the', 'a', 'an', 'is', 'are', 'it', 'my', 'your', 'no', 'yes', 'ok', 'and', 'or'];
+    // FIX v3.9.15: Aggiunte parole italiane comuni
+    const excludeWords = [
+      // Inglese
+      'not', 'the', 'a', 'an', 'is', 'are', 'it', 'my', 'your', 'no', 'yes', 'ok', 'and', 'or',
+      // Italiano
+      'mio', 'mia', 'suo', 'sua', 'nostro', 'nostra', 'vostro', 'vostra', 'il', 'la', 'lo', 'un', 'una'
+    ];
     
     // Pattern MOLTO conservativi - solo frasi esplicite
     const patterns = [
@@ -1687,6 +1697,24 @@ const ValidationPipeline = {
     /that day.*closed/i,
   ],
   
+  // ═══════════════════════════════════════════════════════════════════════
+  // FIX v3.9.15: Pattern per rilevare false "pieni" quando non abbiamo verificato
+  // GPT a volte inventa "siamo pieni" senza che noi abbiamo fatto check
+  // ═══════════════════════════════════════════════════════════════════════
+  FALSE_FULLYBOOOKED_PATTERNS: [
+    /fully booked/i,
+    /we.?re full/i,
+    /we are full/i,
+    /no availability/i,
+    /no tables? available/i,
+    /all booked/i,
+    /siamo (al )?complet/i,
+    /siamo pien/i,
+    /tutto (e)?saurito/i,
+    /non abbiamo (più )?posto/i,
+    /non abbiamo disponibilità/i,
+  ],
+  
   async validate(gptResponse, userText, callId) {
     console.log("🔄 ValidationPipeline...");
     
@@ -1705,6 +1733,35 @@ const ValidationPipeline = {
     // Questo previene che GPT sovrascriva dati già confermati
     // ═══════════════════════════════════════════════════════════════════════
     const savedReservation = StateManager.getReservation(callId);
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.15: CORREZIONE "FULLY BOOKED" FALSO
+    // Se GPT dice "siamo pieni/fully booked" ma NON abbiamo ancora fatto
+    // un check reale (mancano orario o persone), correggi il messaggio
+    // ═══════════════════════════════════════════════════════════════════════
+    const hasTimeForCheck = reservation.time || savedReservation.time;
+    const hasPeopleForCheck = reservation.people || savedReservation.people;
+    const gptSaysFullyBooked = this.FALSE_FULLYBOOOKED_PATTERNS.some(p => p.test(response.reply_text));
+    
+    if (gptSaysFullyBooked && (!hasTimeForCheck || !hasPeopleForCheck)) {
+      console.log(`📝 FIX v3.9.15: GPT dice "pieni/fully booked" ma non abbiamo verificato - correggo`);
+      
+      // Determina cosa manca e costruisci risposta appropriata
+      const dateDisplay = reservation.date ? DateManager.formatForDisplay(reservation.date, lang) : null;
+      
+      if (!hasTimeForCheck) {
+        response.reply_text = lang === "en-US"
+          ? `We're open${dateDisplay ? ' on ' + dateDisplay : ' tonight'}. What time would you like to book?`
+          : `Siamo aperti${dateDisplay ? ' ' + dateDisplay : ' stasera'}. A che ora vorresti prenotare?`;
+        response.action = "ask_time";
+      } else if (!hasPeopleForCheck) {
+        response.reply_text = lang === "en-US"
+          ? `How many people will be in your party?`
+          : `Per quante persone?`;
+        response.action = "ask_people";
+      }
+      console.log(`📝 FIX v3.9.15: Nuova reply: "${response.reply_text}"`);
+    }
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.2: STEP 1 - Gestione DATA con protezione
@@ -2409,7 +2466,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.14 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.15 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -3182,10 +3239,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.14 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.15 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: NameManager per one-shot booking                      ║
+║  ✨ FIX: Giorno=prossima sett, fully booked falso, mio        ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
