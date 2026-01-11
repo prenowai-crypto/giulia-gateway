@@ -1739,22 +1739,22 @@ const ValidationPipeline = {
     // Se GPT dice "siamo pieni/fully booked" ma NON abbiamo ancora fatto
     // un check reale (mancano orario o persone), correggi il messaggio
     // ═══════════════════════════════════════════════════════════════════════
-    const hasTimeForCheck = reservation.time || savedReservation.time;
-    const hasPeopleForCheck = reservation.people || savedReservation.people;
+    const earlyTimeCheck = reservation.time || savedReservation.time;
+    const earlyPeopleCheck = reservation.people || savedReservation.people;
     const gptSaysFullyBooked = this.FALSE_FULLYBOOOKED_PATTERNS.some(p => p.test(response.reply_text));
     
-    if (gptSaysFullyBooked && (!hasTimeForCheck || !hasPeopleForCheck)) {
+    if (gptSaysFullyBooked && (!earlyTimeCheck || !earlyPeopleCheck)) {
       console.log(`📝 FIX v3.9.15: GPT dice "pieni/fully booked" ma non abbiamo verificato - correggo`);
       
       // Determina cosa manca e costruisci risposta appropriata
       const dateDisplay = reservation.date ? DateManager.formatForDisplay(reservation.date, lang) : null;
       
-      if (!hasTimeForCheck) {
+      if (!earlyTimeCheck) {
         response.reply_text = lang === "en-US"
           ? `We're open${dateDisplay ? ' on ' + dateDisplay : ' tonight'}. What time would you like to book?`
           : `Siamo aperti${dateDisplay ? ' ' + dateDisplay : ' stasera'}. A che ora vorresti prenotare?`;
         response.action = "ask_time";
-      } else if (!hasPeopleForCheck) {
+      } else if (!earlyPeopleCheck) {
         response.reply_text = lang === "en-US"
           ? `How many people will be in your party?`
           : `Per quante persone?`;
