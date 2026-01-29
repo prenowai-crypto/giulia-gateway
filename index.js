@@ -1,8 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.21
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.22
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.21 - BATCH FIX PER TEST E/F/Z:
+// FIX v3.9.22 - POST-TEST BATCH:
+//
+// BUG-017 (P0): "annullarla/cancellarla" ora riconosciuti come intent cancel
+//   - Aggiunte forme con pronomi cliticizzati (la, lo, li, le)
+//
+// BUG-013 (P1): nameMatches non fa più falsi positivi su negazioni
+//   - "io sono Rossi, non Martini" → NON matcha più "Martini"
+//
+// UX-G6: extractName pulisce prefissi comuni ("sempre Barbieri" → "Barbieri")
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.21 (ereditati):
 // 
 // BUG-001 (P0): Verifica nome completamente riscritta
 //   - nameMatches ora cerca il nome ATTESO nella risposta utente (non viceversa)
@@ -14,13 +25,8 @@
 //   - Aggiunto word boundary ai pattern cancel per evitare match parziali
 //
 // BUG-009 (P0): NameManager pattern ampliati
-//   - Aggiunto pattern ", nome X" (virgola + nome)
-//   - Aggiunto pattern "per N, X" dove X è il nome alla fine
-//
 // BUG-003/004 (P1): Soglia gruppi corretta nel prompt GPT
-//
 // BUG-008 (P1): Alternative per gruppi PENDING su slot pieno
-//
 // BUG-010 (P1): Recovery dopo verifica nome fallita (retry)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -120,11 +126,16 @@ function extractEmailFromText(text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const IntentDetector = {
+  // FIX v3.9.22 BUG-017: Aggiunte forme con pronomi cliticizzati
   CANCEL_KEYWORDS: [
     'cancellare', 'cancella', 'cancello', 'cancellazione',
+    'cancellarla', 'cancellarlo', 'cancellarli', 'cancellarle',  // v3.9.22
     'disdire', 'disdetta', 'disdico',
+    'disdirla', 'disdirlo', 'disdirli', 'disdirle',              // v3.9.22
     'annullare', 'annulla', 'annullo', 'annullamento',
+    'annullarla', 'annullarlo', 'annullarli', 'annullarle',      // v3.9.22
     'eliminare', 'elimina', 'elimino',
+    'eliminarla', 'eliminarlo', 'eliminarli', 'eliminarle',      // v3.9.22
     'non vengo', 'non veniamo', 'non riesco', 'non riusciamo',
     'cancel', 'cancellation', 'delete', 'remove',
     'i need to cancel', 'i want to cancel', 'i have to cancel',
@@ -1321,6 +1332,7 @@ const RecapManager = {
   },
   
   // FIX v3.9.21 BUG-001: Estrae SOLO il cognome/nome
+  // FIX v3.9.22 UX-G6: Rimuove prefissi comuni ("sempre", "ancora", etc.)
   extractName(text) {
     if (!text) return null;
     const t = text.trim();
@@ -1337,7 +1349,9 @@ const RecapManager = {
     for (const pattern of explicitPatterns) {
       const match = t.match(pattern);
       if (match && match[1]) {
-        const name = match[1].trim();
+        let name = match[1].trim();
+        // FIX v3.9.22: Strip parole comuni prima del nome
+        name = name.replace(/^(sempre|ancora|proprio|stesso|solito)\s*/i, '');
         const commonWords = ['io', 'me', 'here', 'yes', 'si', 'no', 'quello', 'quella', 'esatto', 'confermo'];
         if (!commonWords.includes(name.toLowerCase()) && name.length >= 2) {
           console.log(`👤 FIX v3.9.21 extractName (explicit): "${name}"`);
@@ -1347,12 +1361,14 @@ const RecapManager = {
     }
     
     const words = t.split(/[\s,]+/);
+    // FIX v3.9.22: Aggiunti prefissi italiani comuni da escludere
     const capitalizedWords = words.filter(w => {
       if (w.length < 2) return false;
       if (!/^[A-Z]/.test(w)) return false;
       const lower = w.toLowerCase();
       const exclude = ['sì', 'si', 'yes', 'no', 'ok', 'esatto', 'confermo', 'giusto', 'certo', 
-                       'quello', 'quella', 'here', 'that', 'right', 'correct', 'sono', 'io'];
+                       'quello', 'quella', 'here', 'that', 'right', 'correct', 'sono', 'io',
+                       'sempre', 'ancora', 'proprio', 'stesso', 'solito'];  // FIX v3.9.22
       return !exclude.includes(lower);
     });
     
@@ -1366,12 +1382,29 @@ const RecapManager = {
   },
   
   // FIX v3.9.21 BUG-001: Cerca nome ATTESO nella risposta + conferme implicite
+  // FIX v3.9.22 BUG-013: Ignora nomi in contesto di negazione
   nameMatches(userResponse, expectedName) {
     if (!expectedName) return false;
     if (!userResponse) return false;
     
     const responseLower = userResponse.toLowerCase().trim();
     const expectedLower = expectedName.toLowerCase().trim();
+    
+    // FIX v3.9.22 BUG-013: Check negazione PRIMA di cercare il nome
+    // Se il nome atteso è in un contesto di negazione, non è un match
+    const negationPatterns = [
+      new RegExp(`non\\s+(sono|mi\\s+chiamo|è|e')\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`(non|no)\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(no|non|sbagliato|errato)`, 'i'),
+      new RegExp(`(sbagliato|errato|errore|non\\s+è).*${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+    ];
+    
+    for (const pattern of negationPatterns) {
+      if (pattern.test(responseLower)) {
+        console.log(`❌ FIX v3.9.22 nameMatches: "${expectedLower}" in contesto NEGAZIONE, ignoro`);
+        return false;
+      }
+    }
     
     // STEP 1: Nome atteso contenuto nella risposta
     if (responseLower.includes(expectedLower)) {
