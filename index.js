@@ -1,18 +1,27 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.20
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.21
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.4-v3.9.14: (vedi versioni precedenti)
+// FIX v3.9.21 - BATCH FIX PER TEST E/F/Z:
+// 
+// BUG-001 (P0): Verifica nome completamente riscritta
+//   - nameMatches ora cerca il nome ATTESO nella risposta utente (non viceversa)
+//   - Aggiunto supporto per conferme implicite ("sì esatto", "yes that's us")
+//   - extractName migliorato per estrarre SOLO il nome
 //
-// FIX v3.9.15-v3.9.19: (vedi versioni precedenti)
+// BUG-002 (P0): Intent "Cancelleri" protetto
+//   - Aggiunto pre-processing per rimuovere "a nome X" prima del detect
+//   - Aggiunto word boundary ai pattern cancel per evitare match parziali
 //
-// FIX v3.9.20:
-// - PATTERN STRETTO GIORNO+NUMERO: Cerca numeri SOLO se adiacenti al giorno
-//   della settimana. Es: "sabato 7", "venerdì il 4", "the 5th"
-//   NON cattura più numeri separati come "2 persone" o "siamo in 4"
-//   Risolve bug H3/H4/H5 dove numeri persone → date future errate
-// - LIMITE 60 GIORNI: La ricerca data suggerita si ferma a ~2 mesi
-//   Evita suggerimenti tipo "agosto 2026" per input ambigui
+// BUG-009 (P0): NameManager pattern ampliati
+//   - Aggiunto pattern ", nome X" (virgola + nome)
+//   - Aggiunto pattern "per N, X" dove X è il nome alla fine
+//
+// BUG-003/004 (P1): Soglia gruppi corretta nel prompt GPT
+//
+// BUG-008 (P1): Alternative per gruppi PENDING su slot pieno
+//
+// BUG-010 (P1): Recovery dopo verifica nome fallita (retry)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from "express";
@@ -67,6 +76,9 @@ const STATE = {
   conversationPhases: new Map(),  // Fase conversazione (v3)
   pendingModifications: new Map(),// Modifica in attesa di conferma (v3.1)
   
+  // FIX v3.9.21 BUG-010: Contatore retry verifica nome
+  nameVerificationRetries: new Map(),
+  
   // Registry cache
   registryCache: null,
   registryCacheTime: 0,
@@ -108,61 +120,78 @@ function extractEmailFromText(text) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const IntentDetector = {
-  // FIX P2: Pattern inglesi aggiunti
   CANCEL_KEYWORDS: [
-    // Italiano
     'cancellare', 'cancella', 'cancello', 'cancellazione',
     'disdire', 'disdetta', 'disdico',
     'annullare', 'annulla', 'annullo', 'annullamento',
     'eliminare', 'elimina', 'elimino',
     'non vengo', 'non veniamo', 'non riesco', 'non riusciamo',
-    // Inglese
     'cancel', 'cancellation', 'delete', 'remove',
     'i need to cancel', 'i want to cancel', 'i have to cancel',
     'cancel my reservation', 'cancel my booking',
   ],
   
   MODIFY_KEYWORDS: [
-    // Italiano
     'modificare', 'modifica', 'modifico', 'modifiche',
     'spostare', 'sposta', 'sposto',
     'cambiare', 'cambia', 'cambio',
     'anticipare', 'posticipare',
     'aumentat', 'aggiunger',
-    // Inglese
     'change', 'modify', 'move', 'reschedule', 'update',
     'i need to change', 'i want to change', 'i have to change',
     'i need to modify', 'i want to modify',
     'change my reservation', 'change my booking',
   ],
   
-  // Keywords che indicano prenotazione esistente (anche senza modify/cancel esplicito)
   EXISTING_RESERVATION_KEYWORDS: [
-    // Italiano
     'ho prenotato', 'avevo prenotato', 'ho una prenotazione',
     'la mia prenotazione', 'la prenotazione',
-    // Inglese
     'i have a reservation', 'my reservation', 'i booked',
     'i have a booking', 'my booking',
   ],
   
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIX v3.9.21 BUG-002: Pre-processing per proteggere cognomi
+  // ═══════════════════════════════════════════════════════════════════════════
+  _preprocessText(text) {
+    if (!text) return '';
+    let t = text.toLowerCase();
+    t = t.replace(/\ba\s+nome\s+\w+/gi, ' ');
+    t = t.replace(/\bnome\s+\w+/gi, ' ');
+    t = t.replace(/\bname\s+\w+/gi, ' ');
+    t = t.replace(/\bunder\s+(the\s+)?name\s+\w+/gi, ' ');
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+  },
+  
   detectIntent(text) {
     if (!text) return 'create';
-    const t = text.toLowerCase();
     
-    // Prima: cancellazione (priorità alta)
+    const t = this._preprocessText(text);
+    const tOriginal = text.toLowerCase();
+    
+    // FIX v3.9.21: Word boundary per evitare match parziali
     for (const kw of this.CANCEL_KEYWORDS) {
-      if (t.includes(kw)) return 'cancel';
+      if (kw.includes(' ')) {
+        if (t.includes(kw)) {
+          console.log(`🎯 FIX v3.9.21: Intent cancel da frase "${kw}"`);
+          return 'cancel';
+        }
+      } else {
+        const regex = new RegExp(`\\b${kw}\\b`, 'i');
+        if (regex.test(t)) {
+          console.log(`🎯 FIX v3.9.21: Intent cancel da keyword "${kw}" (con boundary)`);
+          return 'cancel';
+        }
+      }
     }
     
-    // Poi: modifica
     for (const kw of this.MODIFY_KEYWORDS) {
       if (t.includes(kw)) return 'modify';
     }
     
-    // Poi: riferimento a prenotazione esistente (trattalo come modify)
     for (const kw of this.EXISTING_RESERVATION_KEYWORDS) {
-      if (t.includes(kw)) return 'modify';
+      if (tOriginal.includes(kw)) return 'modify';
     }
     
     return 'create';
@@ -205,11 +234,6 @@ const StateManager = {
   },
   mergeReservation(callId, newData = {}) {
     const prev = this.getReservation(callId);
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.4: Usa 'in' invece di ?? per permettere di settare null
-    // Prima: date: newData.date ?? prev.date  ← BUG! null ?? prev = prev
-    // Ora:   'date' in newData ? newData.date : prev.date  ← null viene salvato
-    // ═══════════════════════════════════════════════════════════════════════
     const merged = {
       date: 'date' in newData ? newData.date : prev.date,
       time: 'time' in newData ? newData.time : prev.time,
@@ -274,6 +298,16 @@ const StateManager = {
     console.log(`📍 Fase conversazione: ${phase}`);
   },
   
+  // FIX v3.9.21 BUG-010: Gestione retry verifica nome
+  getNameVerificationRetries(callId) {
+    return STATE.nameVerificationRetries.get(callId) || 0;
+  },
+  incrementNameVerificationRetries(callId) {
+    const current = this.getNameVerificationRetries(callId);
+    STATE.nameVerificationRetries.set(callId, current + 1);
+    return current + 1;
+  },
+  
   // Cleanup
   clearCall(callId) {
     STATE.conversations.delete(callId);
@@ -286,11 +320,12 @@ const StateManager = {
     STATE.existingReservations.delete(callId);
     STATE.conversationPhases.delete(callId);
     STATE.pendingModifications.delete(callId);
+    STATE.nameVerificationRetries.delete(callId);
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 6: MULTI-TENANT REGISTRY (copiato da v2 - funziona)
+// SEZIONE 6: MULTI-TENANT REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const Registry = {
@@ -380,7 +415,7 @@ const Registry = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 7: DATE MANAGER (copiato da v2 - funziona)
+// SEZIONE 7: DATE MANAGER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const DateManager = {
@@ -438,18 +473,10 @@ const DateManager = {
   getNextWeekday(fromDate, targetWeekday) {
     const result = new Date(fromDate.getTime());
     const diff = ((targetWeekday - result.getDay()) + 7) % 7;
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.15: Se oggi È GIÀ il giorno cercato (diff=0), vai alla PROSSIMA settimana
-    // Logica: se dici "domenica" e oggi è domenica, intendi domenica prossima
-    // Se vuoi prenotare per oggi, dici "oggi" o "stasera", non il nome del giorno
-    // REVERTE FIX v3.9.1 che usava OGGI (comportamento sbagliato)
-    // ═══════════════════════════════════════════════════════════════════════
     const daysToAdd = diff === 0 ? 7 : diff;
     if (diff === 0) {
       console.log(`📆 FIX v3.9.15: Oggi è già ${this.DAYS_IT[targetWeekday]}, uso PROSSIMA settimana (+7 giorni)`);
     }
-    
     result.setDate(result.getDate() + daysToAdd);
     return result;
   },
@@ -477,38 +504,29 @@ const DateManager = {
     return calendar;
   },
   
-  // Parse date da testo (FIX17/18/24 inclusi)
-  // FIX v3.9: Estrae SOLO dal messaggio corrente, MAI dalla cronologia
   parseFromText(text, callId = null) {
     if (!text) return null;
     const t = normalizeText(text);
     const now = this.getNow();
     const today = this.startOfDay(now);
     
-    // 1. Data esplicita: "10 dicembre"
     const explicitDate = this._parseExplicitDate(t, today);
     if (explicitDate) {
       console.log(`📆 FIX v3.9: Data esplicita trovata: ${explicitDate}`);
       return explicitDate;
     }
     
-    // 2. Data relativa: "domani", "dopodomani"
     const relativeDate = this._parseRelativeDate(t, today);
     if (relativeDate) {
       console.log(`📆 FIX v3.9: Data relativa trovata: ${relativeDate}`);
       return relativeDate;
     }
     
-    // 3. Giorno settimana: "martedì" (usa ULTIMO menzionato - FIX24a)
     const weekdayDate = this._parseWeekdayDate(t, today);
     if (weekdayDate) {
       console.log(`📆 FIX v3.9: Giorno settimana trovato: ${weekdayDate}`);
       return weekdayDate;
     }
-    
-    // FIX v3.9: RIMOSSA ricerca nella cronologia!
-    // La cronologia causava bug dove date/orari vecchi "avvelenavano" i nuovi messaggi
-    // Ora il sistema usa SOLO i dati già salvati in StateManager.getReservation()
     
     return null;
   },
@@ -521,14 +539,10 @@ const DateManager = {
       'july': 6, 'august': 7, 'september': 8, 'october': 9, 'november': 10, 'december': 11,
     };
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.9: Parsa prima il formato DD/MM o D/M (es. "3/2" = 3 febbraio)
-    // Deve venire PRIMA del parsing con mese testuale
-    // ═══════════════════════════════════════════════════════════════════════
     const slashMatch = text.match(/\b(\d{1,2})\/(\d{1,2})\b/);
     if (slashMatch) {
       const day = parseInt(slashMatch[1]);
-      const month = parseInt(slashMatch[2]) - 1; // 0-indexed
+      const month = parseInt(slashMatch[2]) - 1;
       
       if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
         let year = today.getFullYear();
@@ -565,9 +579,7 @@ const DateManager = {
   },
   
   _parseRelativeDate(text, today) {
-    // FIX v3.5: "day after tomorrow" PRIMA di "tomorrow" per evitare match parziale
     if (/dopodomani|dopo domani|day after tomorrow/.test(text)) return this.toISO(this.addDays(today, 2));
-    // "tomorrow" ma NON "day after tomorrow" (già gestito sopra)
     if (/\btomorrow\b/.test(text) || /\bdomani\b/.test(text)) return this.toISO(this.addDays(today, 1));
     if (/oggi|today|stasera|questa sera|tonight/.test(text)) return this.toISO(today);
     
@@ -578,7 +590,6 @@ const DateManager = {
   },
   
   _parseWeekdayDate(text, today) {
-    // FIX24a: Trova l'ULTIMO giorno menzionato
     const weekdays = [
       { patterns: ['domenica', 'sunday'], index: 0 },
       { patterns: ['lunedi', 'monday'], index: 1 },
@@ -605,15 +616,10 @@ const DateManager = {
     if (lastFoundIndex !== -1) {
       console.log(`📆 Ultimo giorno: ${this.DAYS_IT[lastFoundIndex]}`);
       
-      // ═══════════════════════════════════════════════════════════════════════
-      // FIX v3.9.9: Se c'è "prossimo/prossima/next", salta alla settimana dopo
-      // Es. oggi è sabato, "sabato prossimo" = +7 giorni, non oggi
-      // ═══════════════════════════════════════════════════════════════════════
       const hasNextModifier = /\b(prossim[ao]|next)\b/i.test(text);
       
       let result = this.getNextWeekday(today, lastFoundIndex);
       
-      // Se oggi È il giorno cercato E c'è "prossimo", aggiungi 7 giorni
       if (hasNextModifier && result.getDay() === today.getDay() && 
           result.getDate() === today.getDate() && 
           result.getMonth() === today.getMonth()) {
@@ -628,7 +634,7 @@ const DateManager = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 8: TIME MANAGER (copiato da v2)
+// SEZIONE 8: TIME MANAGER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TimeManager = {
@@ -639,15 +645,9 @@ const TimeManager = {
     if (/mezzogiorno|noon/.test(t)) return "12:00:00";
     if (/mezzanotte|midnight/.test(t)) return "00:00:00";
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.5: Raccoglie TUTTI gli orari con la loro POSIZIONE nel testo
-    // e prende l'ULTIMO (quello più a destra)
-    // Questo gestisce frasi come "aprite alle 12? Allora facciamo 12:30"
-    // ═══════════════════════════════════════════════════════════════════════
-    const allTimes = []; // Array di {position, time, pattern, match}
+    const allTimes = [];
     let match;
     
-    // Pattern 1: "alle 20", "alle 20:30", "ore 20", "per le 20"
     const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
     while ((match = pattern1.exec(t)) !== null) {
       let hour = parseInt(match[1]);
@@ -661,7 +661,6 @@ const TimeManager = {
       }
     }
     
-    // Pattern 2: "le 22", "le 8" (SENZA "alle" davanti)
     const pattern2 = /(?:^|[^l])\ble\s+(\d{1,2})(?::(\d{2}))?\b/gi;
     while ((match = pattern2.exec(t)) !== null) {
       let hour = parseInt(match[1]);
@@ -675,7 +674,6 @@ const TimeManager = {
       }
     }
     
-    // Pattern 3: "8pm", "8 pm", "8:30pm" (inglese)
     const pattern3 = /\b(\d{1,2})(?::(\d{2}))?\s*(pm|am)\b/gi;
     while ((match = pattern3.exec(t)) !== null) {
       let hour = parseInt(match[1]);
@@ -689,7 +687,6 @@ const TimeManager = {
       }
     }
     
-    // Pattern 4: "at 8", "at 8:30" (inglese)
     const pattern4 = /\bat\s+(\d{1,2})(?::(\d{2}))?\b/gi;
     while ((match = pattern4.exec(t)) !== null) {
       let hour = parseInt(match[1]);
@@ -703,22 +700,16 @@ const TimeManager = {
       }
     }
     
-    // Pattern 5: "12:30", "20:30" diretto (HH:MM)
-    // FIX v3.9.12: Se contesto serale E orario < 12, aggiungi 12 ore
-    // FIX v3.9.13: Se orario AM (1-11) è fuori fascia ma PM è dentro → usa PM
     const eveningContext = /tonight|dinner|evening|sera|cena|stasera/i.test(t);
     const pattern5 = /\b(\d{1,2}):(\d{2})\b/g;
     while ((match = pattern5.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = parseInt(match[2]);
       
-      // FIX v3.9.12: In contesto serale esplicito, orari 1-11 diventano PM
       if (eveningContext && hour >= 1 && hour <= 11) {
         console.log(`⏰ FIX v3.9.12: Contesto serale rilevato, ${hour}:${String(minutes).padStart(2,'0')} → ${hour+12}:${String(minutes).padStart(2,'0')}`);
         hour += 12;
       }
-      // FIX v3.9.13: Se ora ambigua (1-11) è fuori orario apertura ma +12 è dentro → usa +12
-      // Fasce orarie: Pranzo 12:00-15:00 (720-900min), Cena 19:00-22:30 (1140-1350min)
       else if (hour >= 1 && hour <= 11) {
         const amMinutes = hour * 60 + minutes;
         const pmMinutes = (hour + 12) * 60 + minutes;
@@ -733,7 +724,6 @@ const TimeManager = {
       
       if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
         const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
-        // Evita duplicati: controlla se esiste già un match alla stessa posizione
         const isDuplicate = allTimes.some(t => 
           Math.abs(t.position - match.index) < 5 && t.time === timeStr
         );
@@ -745,11 +735,9 @@ const TimeManager = {
     
     if (allTimes.length === 0) return null;
     
-    // Ordina per posizione e prendi l'ULTIMO
     allTimes.sort((a, b) => a.position - b.position);
     const lastTime = allTimes[allTimes.length - 1];
     
-    // Log tutti gli orari trovati e quale viene scelto
     if (allTimes.length > 1) {
       console.log(`⏰ TimeManager: trovati ${allTimes.length} orari: ${allTimes.map(t => `"${t.match}"→${t.time}`).join(', ')}`);
       console.log(`⏰ TimeManager: scelto ULTIMO → "${lastTime.match}" = ${lastTime.time}`);
@@ -775,7 +763,7 @@ const TimeManager = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 9: PEOPLE MANAGER (copiato da v2)
+// SEZIONE 9: PEOPLE MANAGER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const PeopleManager = {
@@ -783,17 +771,10 @@ const PeopleManager = {
     if (!text) return null;
     const t = text.toLowerCase().trim();
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.12: Pattern di correzione - quando l'utente si corregge,
-    // prendi l'ULTIMO numero menzionato, non il primo
-    // Es: "Siamo in 8... anzi no aspetta, facciamo 12" → 12 (non 8)
-    // ═══════════════════════════════════════════════════════════════════════
     const correctionPatterns = /anzi|no aspetta|aspetta|facciamo|meglio|diciamo|actually|no wait|wait|let's say|make it|changed to|now it's/i;
     if (correctionPatterns.test(t)) {
-      // Trova TUTTI i numeri nel testo
       const allNumbers = t.match(/\b(\d+)\b/g);
       if (allNumbers && allNumbers.length >= 2) {
-        // Prendi l'ultimo numero
         const lastNum = parseInt(allNumbers[allNumbers.length - 1]);
         if (lastNum > 0 && lastNum < 100) {
           console.log(`👥 FIX v3.9.12: Correzione rilevata! Numeri trovati: [${allNumbers.join(', ')}] → uso ULTIMO: ${lastNum}`);
@@ -803,14 +784,11 @@ const PeopleManager = {
     }
     
     const patterns = [
-      // Pattern specifici per modifiche
-      /(\d+)\s*in\s*totale/i,                          // "4 in totale"
-      /(\d+)\s*invece\s*di\s*\d+/i,                    // "5 invece di 4"
-      /diventat[io]\s*(\d+)/i,                         // "diventati 5"
-      /adesso\s*(?:siamo\s*)?(?:in\s*)?(\d+)/i,        // "adesso siamo in 5", "adesso 5"
-      /siamo\s*(?:in\s*)?(\d+)/i,                      // "siamo in 5", "siamo 5"
-      
-      // Pattern standard
+      /(\d+)\s*in\s*totale/i,
+      /(\d+)\s*invece\s*di\s*\d+/i,
+      /diventat[io]\s*(\d+)/i,
+      /adesso\s*(?:siamo\s*)?(?:in\s*)?(\d+)/i,
+      /siamo\s*(?:in\s*)?(\d+)/i,
       /(?:per|siamo|saremo|in)\s*(\d+)\s*(?:person[ae]|pax)?/i,
       /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
       /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
@@ -827,8 +805,6 @@ const PeopleManager = {
       }
     }
     
-    // Pattern per "aggiungere altre X" - richiede contesto (non gestibile qui)
-    
     const wordNumbers = {
       'due': 2, 'tre': 3, 'quattro': 4, 'cinque': 5, 'sei': 6,
       'sette': 7, 'otto': 8, 'nove': 9, 'dieci': 10,
@@ -843,8 +819,7 @@ const PeopleManager = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 9B: NAME MANAGER (FIX v3.9.14)
-// Estrae il nome SOLO da pattern espliciti per evitare false positive
+// SEZIONE 9B: NAME MANAGER (FIX v3.9.21)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const NameManager = {
@@ -852,34 +827,32 @@ const NameManager = {
     if (!text) return null;
     const t = text.trim();
     
-    // Lista di parole comuni da escludere (non sono nomi)
-    // FIX v3.9.15: Aggiunte parole italiane comuni
     const excludeWords = [
-      // Inglese
       'not', 'the', 'a', 'an', 'is', 'are', 'it', 'my', 'your', 'no', 'yes', 'ok', 'and', 'or',
-      // Italiano
-      'mio', 'mia', 'suo', 'sua', 'nostro', 'nostra', 'vostro', 'vostra', 'il', 'la', 'lo', 'un', 'una'
+      'mio', 'mia', 'suo', 'sua', 'nostro', 'nostra', 'vostro', 'vostra', 'il', 'la', 'lo', 'un', 'una',
+      'per', 'alle', 'ore', 'persone', 'pax', 'people', 'persons'
     ];
     
-    // Pattern MOLTO conservativi - solo frasi esplicite
     const patterns = [
-      // Inglese: "name is Brown", "name is Mary Jane"
       /\bname\s+is\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
-      // Inglese: "under the name Smith"
       /\bunder\s+(?:the\s+)?name\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
-      // Italiano: "a nome Rossi", "a nome di Rossi"
-      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
-      // Italiano: "nome Bianchi" (a inizio frase o dopo virgola)
-      /(?:^|,\s*)\s*nome\s+([A-Z][a-zA-Z]+)\b/i,
+      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\b/i,
+      // FIX v3.9.21 BUG-009: Pattern aggiuntivi
+      /,\s*nome\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\s*$/i,
+      /\b(?:in|per)\s+\d+\s*,\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\s*$/i,
+      /\d+\s*(?:person[ae]|pax|people)\s*,\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)\s*$/i,
+      /(?:^|[.!?]\s*)\s*nome\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/i,
     ];
     
     for (const pattern of patterns) {
       const match = t.match(pattern);
       if (match && match[1]) {
         const name = match[1].trim();
-        // Safeguard: almeno 2 caratteri e non parola comune
-        if (name.length >= 2 && !excludeWords.includes(name.toLowerCase())) {
-          console.log(`👤 FIX v3.9.14 NameManager: estratto "${name}" da "${t.substring(0,40)}..."`);
+        const nameWords = name.toLowerCase().split(/\s+/);
+        const isExcluded = nameWords.every(w => excludeWords.includes(w));
+        
+        if (name.length >= 2 && !isExcluded) {
+          console.log(`👤 FIX v3.9.21 NameManager: estratto "${name}" da "${t.substring(0,50)}..."`);
           return name;
         }
       }
@@ -889,9 +862,8 @@ const NameManager = {
   },
 };
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 10: CLOSURE CHECKER (copiato da v2)
+// SEZIONE 10: CLOSURE CHECKER
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ClosureChecker = {
@@ -900,7 +872,6 @@ const ClosureChecker = {
     
     console.log(`🔍 ClosureChecker: ${dateISO}...`);
     
-    // Check chiusura settimanale
     const dayOfWeek = DateManager.getDayOfWeek(dateISO);
     if (CONFIG.WEEKLY_CLOSING_DAYS.includes(dayOfWeek)) {
       const dayName = DateManager.getDayName(dateISO, "it-IT");
@@ -916,7 +887,6 @@ const ClosureChecker = {
       };
     }
     
-    // Check chiusure straordinarie
     try {
       const appsScriptUrl = Registry.getAppsScriptUrl(callId);
       const response = await fetch(appsScriptUrl, {
@@ -964,7 +934,7 @@ const ClosureChecker = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 11: CALENDAR SERVICE (copiato da v2)
+// SEZIONE 11: CALENDAR SERVICE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const CalendarService = {
@@ -1116,37 +1086,44 @@ const CalendarService = {
     }
   },
   
-  buildAlternativesMessage(alternatives, lang = "it-IT") {
+  // FIX v3.9.21 BUG-008: Nota PENDING per gruppi grandi
+  buildAlternativesMessage(alternatives, lang = "it-IT", isLargeGroup = false) {
     const { sameDay, nextDays } = alternatives;
+    
+    const pendingNote = isLargeGroup
+      ? (lang === "en-US" 
+          ? " The booking will be subject to restaurant confirmation."
+          : " La prenotazione sarà soggetta a conferma del ristorante.")
+      : "";
     
     if (sameDay?.length > 0) {
       const times = sameDay.map(s => s.time).slice(0, 3);
       if (lang === "en-US") {
         return times.length === 1
-          ? `I'm sorry, we're full. I have ${times[0]}. Would that work?`
-          : `I'm sorry, we're full. I have ${times.slice(0,-1).join(", ")} or ${times.slice(-1)}. Which do you prefer?`;
+          ? `I'm sorry, we're full. I have ${times[0]}. Would that work?${pendingNote}`
+          : `I'm sorry, we're full. I have ${times.slice(0,-1).join(", ")} or ${times.slice(-1)}. Which do you prefer?${pendingNote}`;
       }
       return times.length === 1
-        ? `Mi dispiace, siamo al completo. Ho le ${times[0]}. Può andare?`
-        : `Mi dispiace, siamo al completo. Ho le ${times.slice(0,-1).join(", ")} o le ${times.slice(-1)}. Quale preferisci?`;
+        ? `Mi dispiace, siamo al completo. Ho le ${times[0]}. Può andare?${pendingNote}`
+        : `Mi dispiace, siamo al completo. Ho le ${times.slice(0,-1).join(", ")} o le ${times.slice(-1)}. Quale preferisci?${pendingNote}`;
     }
     
     if (nextDays?.length > 0) {
       const firstDay = nextDays[0];
       const times = firstDay.slots?.map(s => s.time).slice(0, 2) || [];
       return lang === "en-US"
-        ? `I'm sorry, we're full today. Next availability is ${firstDay.dayName} at ${times.join(" or ")}. Would you like to book?`
-        : `Mi dispiace, oggi siamo al completo. Prima disponibilità ${firstDay.dayName} alle ${times.join(" o ")}. Vuoi prenotare?`;
+        ? `I'm sorry, we're full today. Next availability is ${firstDay.dayName} at ${times.join(" or ")}. Would you like to book?${pendingNote}`
+        : `Mi dispiace, oggi siamo al completo. Prima disponibilità ${firstDay.dayName} alle ${times.join(" o ")}. Vuoi prenotare?${pendingNote}`;
     }
     
     return lang === "en-US"
-      ? "I'm sorry, we're fully booked. Would you like a different day?"
-      : "Mi dispiace, siamo al completo. Vuoi provare un altro giorno?";
+      ? `I'm sorry, we're fully booked. Would you like a different day?${pendingNote}`
+      : `Mi dispiace, siamo al completo. Vuoi provare un altro giorno?${pendingNote}`;
   },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 12: CONTEXT SERVICE (copiato da v2)
+// SEZIONE 12: CONTEXT SERVICE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ContextService = {
@@ -1216,29 +1193,20 @@ const ContextService = {
   },
 };
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 13: RECAP MANAGER (v3.1 SEMPLIFICATO)
-// RECAP = solo trasparenza ("so chi sei dal numero")
-// Dopo RECAP → conversazione normale
+// SEZIONE 13: RECAP MANAGER (v3.9.21 - FIX BUG-001, BUG-010)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const RecapManager = {
-  // Costruisce RECAP integrato per MODIFY
-  // Include già la domanda su cosa vuole modificare
   buildModifyRecapMessage(existingRes, userText, lang = "it-IT") {
     const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
     const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
     const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
     
-    // Prova a capire cosa vuole modificare dal primo messaggio
     const modification = this.extractModification(userText, existingRes);
-    
-    // Conta quante modifiche
     const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
     
     if (modCount >= 2) {
-      // Modifiche multiple
       let changes = [];
       if (modification.newTime) changes.push(lang === "en-US" ? `time to ${TimeManager.formatForDisplay(modification.newTime)}` : `orario alle ${TimeManager.formatForDisplay(modification.newTime)}`);
       if (modification.newDate) changes.push(lang === "en-US" ? `date to ${DateManager.formatForDisplay(modification.newDate, lang)}` : `data a ${DateManager.formatForDisplay(modification.newDate, lang)}`);
@@ -1250,7 +1218,6 @@ const RecapManager = {
     }
     
     if (modification.newTime) {
-      // Ha già detto l'orario nuovo
       const newTimeDisplay = TimeManager.formatForDisplay(modification.newTime);
       return lang === "en-US"
         ? `Hi ${firstName}, I have your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. You want to move it to ${newTimeDisplay}, correct?`
@@ -1258,7 +1225,6 @@ const RecapManager = {
     }
     
     if (modification.newDate) {
-      // Ha già detto il giorno nuovo
       const newDateDisplay = DateManager.formatForDisplay(modification.newDate, lang);
       return lang === "en-US"
         ? `Hi ${firstName}, I have your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. You want to move it to ${newDateDisplay}, correct?`
@@ -1266,19 +1232,16 @@ const RecapManager = {
     }
     
     if (modification.newPeople) {
-      // Ha già detto le persone nuove
       return lang === "en-US"
         ? `Hi ${firstName}, I have your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. You want to change to ${modification.newPeople} people, correct?`
         : `Ciao ${firstName}, ho la tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay}. Vuoi cambiare a ${modification.newPeople} persone, giusto?`;
     }
     
-    // Non ha specificato cosa vuole modificare → chiedi
     return lang === "en-US"
       ? `Hi ${firstName}, I have your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. What would you like to change?`
       : `Ciao ${firstName}, ho la tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay}. Cosa vorresti modificare?`;
   },
   
-  // Costruisce RECAP per CANCEL (chiede sempre conferma esplicita)
   buildCancelRecapMessage(existingRes, lang = "it-IT") {
     const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
     const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
@@ -1289,15 +1252,12 @@ const RecapManager = {
       : `Ciao ${firstName}, ho la tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay}. Confermi di volerla cancellare?`;
   },
   
-  // Estrae la modifica richiesta dal testo - TUTTI i campi
   extractModification(text, existingRes) {
     const result = { newTime: null, newDate: null, newPeople: null };
     if (!text) return result;
     
-    // Estrai orario
     const time = TimeManager.parseFromText(text);
     if (time) {
-      // Normalizza il formato dell'orario esistente per confronto
       const existingTimeNorm = existingRes.time?.includes(':') 
         ? (existingRes.time.length === 5 ? existingRes.time + ':00' : existingRes.time)
         : existingRes.time + ':00:00';
@@ -1306,13 +1266,11 @@ const RecapManager = {
       }
     }
     
-    // Estrai data - usa tutto il testo della conversazione
     const date = DateManager.parseFromText(text);
     if (date && date !== existingRes.date) {
       result.newDate = date;
     }
     
-    // Estrai persone
     const people = PeopleManager.parseFromText(text);
     if (people && people !== existingRes.people) {
       result.newPeople = people;
@@ -1322,14 +1280,12 @@ const RecapManager = {
     return result;
   },
   
-  // Messaggio cancellazione completata
   buildCancellationDoneMessage(existingRes, lang = "it-IT") {
     return lang === "en-US"
       ? `Done! The reservation has been cancelled. We hope to see you again soon. Goodbye!`
       : `Fatto! La prenotazione è stata cancellata. Speriamo di rivederti presto. Buona giornata!`;
   },
   
-  // Messaggio modifica completata
   buildModificationDoneMessage(reservation, lang = "it-IT") {
     const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
     const timeDisplay = TimeManager.formatForDisplay(reservation.time);
@@ -1340,90 +1296,147 @@ const RecapManager = {
       : `Perfetto ${firstName}! Prenotazione aggiornata: ${reservation.people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`;
   },
   
-  // Messaggio se prenotazione non trovata
   buildNotFoundMessage(lang = "it-IT") {
     return lang === "en-US"
       ? `I couldn't find a reservation with your phone number. Would you like to make a new one?`
       : `Non ho trovato prenotazioni associate a questo numero. Vuoi fare una nuova prenotazione?`;
   },
   
-  // Messaggio per chiedere il nome (NUOVO!)
   buildAskNameMessage(lang = "it-IT") {
     return lang === "en-US"
       ? `Of course! What name is the reservation under?`
       : `Certo! A che nome è la prenotazione?`;
   },
   
-  // Messaggio se nome non corrisponde (NUOVO!)
-  buildNameMismatchMessage(saidName, lang = "it-IT") {
+  // FIX v3.9.21 BUG-010: Retry
+  buildNameMismatchMessage(saidName, lang = "it-IT", isRetry = false) {
+    if (isRetry) {
+      return lang === "en-US"
+        ? `I'm sorry, I still can't find a match. Please call from the phone number used to book, or contact the restaurant directly.`
+        : `Mi dispiace, ancora non trovo corrispondenza. Prova a chiamare dal numero usato per prenotare, o contatta direttamente il ristorante.`;
+    }
     return lang === "en-US"
-      ? `I'm sorry, I don't find a reservation under the name "${saidName}" with this phone number. Can you check the name or call from the number used to book?`
-      : `Mi dispiace, non trovo prenotazioni a nome "${saidName}" con questo numero. Può verificare il nome o chiamare dal numero usato per prenotare?`;
+      ? `I don't find a reservation under "${saidName}" with this number. Could you repeat the name on the reservation?`
+      : `Non trovo prenotazioni a nome "${saidName}" con questo numero. Puoi ripetere il nome della prenotazione?`;
   },
   
-  // Estrae il nome dal testo dell'utente (NUOVO!)
+  // FIX v3.9.21 BUG-001: Estrae SOLO il cognome/nome
   extractName(text) {
     if (!text) return null;
     const t = text.trim();
     
-    // Rimuovi prefissi comuni
-    const cleaned = t
-      .replace(/^(a nome|nome|sotto il nome|prenotazione|prenotato a nome|è|sono)\s*/i, '')
-      .replace(/^(under|name|it's|i'm)\s*/i, '')
-      .trim();
+    const explicitPatterns = [
+      /\bsono\s+([A-Z][a-zA-Z]+)/i,
+      /\bè\s+([A-Z][a-zA-Z]+)/i,
+      /\bname\s+is\s+([A-Z][a-zA-Z]+)/i,
+      /\bi'?m\s+([A-Z][a-zA-Z]+)/i,
+      /\bthis\s+is\s+([A-Z][a-zA-Z]+)/i,
+      /\ba\s+nome\s+([A-Z][a-zA-Z]+)/i,
+    ];
     
-    // Se resta solo una o due parole, probabilmente è il nome
-    const words = cleaned.split(/\s+/).filter(w => w.length > 1);
-    if (words.length >= 1 && words.length <= 4) {
-      // Capitalizza ogni parola
-      return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    for (const pattern of explicitPatterns) {
+      const match = t.match(pattern);
+      if (match && match[1]) {
+        const name = match[1].trim();
+        const commonWords = ['io', 'me', 'here', 'yes', 'si', 'no', 'quello', 'quella', 'esatto', 'confermo'];
+        if (!commonWords.includes(name.toLowerCase()) && name.length >= 2) {
+          console.log(`👤 FIX v3.9.21 extractName (explicit): "${name}"`);
+          return name;
+        }
+      }
+    }
+    
+    const words = t.split(/[\s,]+/);
+    const capitalizedWords = words.filter(w => {
+      if (w.length < 2) return false;
+      if (!/^[A-Z]/.test(w)) return false;
+      const lower = w.toLowerCase();
+      const exclude = ['sì', 'si', 'yes', 'no', 'ok', 'esatto', 'confermo', 'giusto', 'certo', 
+                       'quello', 'quella', 'here', 'that', 'right', 'correct', 'sono', 'io'];
+      return !exclude.includes(lower);
+    });
+    
+    if (capitalizedWords.length > 0) {
+      const lastName = capitalizedWords[capitalizedWords.length - 1];
+      console.log(`👤 FIX v3.9.21 extractName (lastCap): "${lastName}"`);
+      return lastName;
     }
     
     return null;
   },
   
-  // Confronta nome detto con nome in prenotazione (NUOVO!)
-  // Fuzzy match: "Rossi" deve matchare "Mario Rossi"
-  nameMatches(saidName, reservationName) {
-    if (!saidName || !reservationName) return false;
+  // FIX v3.9.21 BUG-001: Cerca nome ATTESO nella risposta + conferme implicite
+  nameMatches(userResponse, expectedName) {
+    if (!expectedName) return false;
+    if (!userResponse) return false;
     
-    const said = saidName.toLowerCase().trim();
-    const reserved = reservationName.toLowerCase().trim();
+    const responseLower = userResponse.toLowerCase().trim();
+    const expectedLower = expectedName.toLowerCase().trim();
     
-    // Match esatto
-    if (said === reserved) return true;
+    // STEP 1: Nome atteso contenuto nella risposta
+    if (responseLower.includes(expectedLower)) {
+      console.log(`✅ FIX v3.9.21 nameMatches: "${expectedLower}" trovato in "${responseLower}"`);
+      return true;
+    }
     
-    // Match parziale: "rossi" in "mario rossi"
-    if (reserved.includes(said)) return true;
-    
-    // Match per parola: "mario" o "rossi" matchano "mario rossi"
-    const reservedWords = reserved.split(/\s+/);
-    const saidWords = said.split(/\s+/);
-    
-    // Almeno una parola deve matchare
-    for (const saidWord of saidWords) {
-      if (saidWord.length < 2) continue; // Ignora parole troppo corte
-      for (const resWord of reservedWords) {
-        if (resWord === saidWord) return true;
-        // Match parziale per cognomi lunghi (es. "cancel" in "cancelleri" - NO!)
-        // Ma "cancelleri" in "cancelleri" - SI
-        if (resWord.startsWith(saidWord) && saidWord.length >= 4) return true;
+    const expectedWords = expectedLower.split(/\s+/).filter(w => w.length >= 2);
+    for (const word of expectedWords) {
+      const regex = new RegExp(`\\b${word}\\b`, 'i');
+      if (regex.test(responseLower)) {
+        console.log(`✅ FIX v3.9.21 nameMatches: parola "${word}" trovata`);
+        return true;
       }
     }
     
+    // STEP 2: Conferme implicite
+    const implicitConfirmPatterns = [
+      /^s[ìi]\s*$/,
+      /^s[ìi]\s+(esatto|confermo|quello|quella|giusto|certo|proprio)/i,
+      /^esatto\s*$/i,
+      /^confermo\s*$/i,
+      /^giusto\s*$/i,
+      /^quello\s*$/i,
+      /^quella\s*$/i,
+      /^yes\s*$/i,
+      /^yes\s+(that'?s?\s*)?(us|me|right|correct|it)/i,
+      /^that'?s?\s*(us|me|right|correct|it)/i,
+      /^correct\s*$/i,
+      /^right\s*$/i,
+    ];
+    
+    for (const pattern of implicitConfirmPatterns) {
+      if (pattern.test(responseLower)) {
+        console.log(`✅ FIX v3.9.21 nameMatches: conferma implicita "${responseLower}"`);
+        return true;
+      }
+    }
+    
+    // STEP 3: Selezione prenotazione
+    const selectionPatterns = [
+      /^quella?\s+(di\s+)?(luned|marted|mercoled|gioved|venerd|sabato|domenica)/i,
+      /^quella?\s+(di\s+)?(sera|pranzo|mattina)/i,
+      /^quella?\s+(delle?\s+)?\d{1,2}/i,
+      /^the\s+one\s+(on|at|for)/i,
+    ];
+    
+    for (const pattern of selectionPatterns) {
+      if (pattern.test(responseLower)) {
+        console.log(`✅ FIX v3.9.21 nameMatches: selezione "${responseLower}"`);
+        return true;
+      }
+    }
+    
+    console.log(`❌ FIX v3.9.21 nameMatches: nessun match per "${expectedLower}" in "${responseLower}"`);
     return false;
   },
   
-  // Verifica se utente sta confermando
   isConfirming(text) {
     const t = normalizeText(text || "");
-    // IMPORTANTE: \b per word boundary, altrimenti "siamo" matcha "si"
     if (/^(si\b|sii\b|yes\b|esatto|corretto|giusto|confermo|certo|ok\b|va bene|proprio|quella|perfetto)/.test(t)) return true;
     if (/\b(conferm|esatt|corrett|giust|perfett)\b/.test(t)) return true;
     return false;
   },
   
-  // Verifica se utente sta negando
   isDenying(text) {
     const t = normalizeText(text || "");
     if (/^(no[^n]|non |sbagliato|errato|altra|diversa)/.test(t)) return true;
@@ -1431,7 +1444,6 @@ const RecapManager = {
     return false;
   },
   
-  // Messaggio per chiedere cosa vuole modificare
   buildAskWhatToModify(existingRes, lang = "it-IT") {
     const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
     return lang === "en-US"
@@ -1441,15 +1453,10 @@ const RecapManager = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 14: VALIDATION PIPELINE (SEMPLIFICATO v3)
-// Solo per nuove prenotazioni - cancel/modify gestiti da RecapManager
+// SEZIONE 14: VALIDATION PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ValidationPipeline = {
-  // ═══════════════════════════════════════════════════════════════════════
-  // FIX v3.9.2: Validazione orari DETERMINISTICA con orario chiusura
-  // Il ristorante chiude alle 22:30 (ultima prenotazione), non 23:00
-  // ═══════════════════════════════════════════════════════════════════════
   isValidTime(time, context = null) {
     if (!time) return false;
     const [hourStr, minStr] = time.split(':');
@@ -1457,15 +1464,10 @@ const ValidationPipeline = {
     const minutes = parseInt(minStr || '0');
     const totalMinutes = hour * 60 + minutes;
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.4: Orari PRANZO + CENA
-    // Pranzo: 12:00 - 15:00 (ultima prenotazione pranzo)
-    // Cena:   19:00 - 22:30 (ultima prenotazione cena)
-    // ═══════════════════════════════════════════════════════════════════════
-    const lunchOpen = 12 * 60;         // 12:00
-    const lunchClose = 15 * 60;        // 15:00
-    const dinnerOpen = 19 * 60;        // 19:00
-    const dinnerClose = 22 * 60 + 30;  // 22:30
+    const lunchOpen = 12 * 60;
+    const lunchClose = 15 * 60;
+    const dinnerOpen = 19 * 60;
+    const dinnerClose = 22 * 60 + 30;
     
     const isLunch = totalMinutes >= lunchOpen && totalMinutes <= lunchClose;
     const isDinner = totalMinutes >= dinnerOpen && totalMinutes <= dinnerClose;
@@ -1477,17 +1479,11 @@ const ValidationPipeline = {
     return isValid;
   },
   
-  // ═══════════════════════════════════════════════════════════════════════
-  // FIX v3.9.9: Verifica coerenza giorno settimana + numero giorno
-  // Quando l'utente dice "sabato 7" senza mese, verifichiamo che la data
-  // calcolata sia effettivamente sabato E il giorno 7 del mese.
-  // ═══════════════════════════════════════════════════════════════════════
   checkDayWeekNumberMismatch(userText, calculatedDate, lang = "it-IT") {
     if (!userText || !calculatedDate) return { mismatch: false };
     
     const text = normalizeText(userText);
     
-    // Mappa giorni settimana (normalizzati senza accenti)
     const daysMap = {
       'domenica': 0, 'sunday': 0,
       'lunedi': 1, 'monday': 1,
@@ -1498,7 +1494,6 @@ const ValidationPipeline = {
       'sabato': 6, 'saturday': 6,
     };
     
-    // Nomi giorni per output
     const dayNamesIT = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
     const dayNamesEN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const monthNamesIT = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
@@ -1506,7 +1501,6 @@ const ValidationPipeline = {
     const monthNamesEN = ['January', 'February', 'March', 'April', 'May', 'June',
                           'July', 'August', 'September', 'October', 'November', 'December'];
     
-    // Cerca giorno della settimana menzionato
     let mentionedDayOfWeek = null;
     let mentionedDayName = null;
     for (const [dayName, dayIndex] of Object.entries(daysMap)) {
@@ -1517,57 +1511,26 @@ const ValidationPipeline = {
       }
     }
     
-    // Cerca numero giorno menzionato (solo se NON c'è un mese esplicito)
     const monthNames = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
                         'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
                         'january', 'february', 'march', 'april', 'may', 'june',
                         'july', 'august', 'september', 'october', 'november', 'december'];
     
     const hasExplicitMonth = monthNames.some(m => text.includes(m));
-    
-    // Se c'è un mese esplicito, non serve il check (la data è già precisa)
     if (hasExplicitMonth) return { mismatch: false };
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.20: PATTERN STRETTO PER GIORNO + NUMERO
-    // Cerca SOLO numeri ADIACENTI al giorno della settimana
-    // Es: "sabato 7", "venerdì il 4", "martedì 3", "the 5th", "friday the 6th"
-    // 
-    // NON cattura numeri separati come:
-    // - "sabato 21:00, 2 persone" (il 2 non è adiacente a "sabato")
-    // - "domenica per 2" (il 2 segue "per", non "domenica")
-    // - "venerdì pranzo, siamo in 4" (il 4 è numero persone, non giorno)
-    //
-    // Questo risolve i bug H3/H4/H5 dove numeri di persone venivano
-    // interpretati come giorni del mese
-    // ═══════════════════════════════════════════════════════════════════════
     const allDays = Object.keys(daysMap).join('|');
-    
-    // Pattern italiano: "sabato 7", "venerdì il 4", "martedì 3"
-    const italianPattern = new RegExp(
-      `\\b(${allDays})\\s+(?:il\\s+)?(\\d{1,2})\\b`, 'i'
-    );
-    
-    // Pattern inglese: "friday the 5th", "saturday 7", "sunday the 3rd"
-    const englishPattern = new RegExp(
-      `\\b(${allDays})\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'i'
-    );
-    
-    // Pattern inverso inglese: "the 5th of february" - ma questo ha mese esplicito, già gestito sopra
-    // Pattern inverso: "il 7 sabato" (raro ma possibile)
-    const inversePattern = new RegExp(
-      `\\b(?:il\\s+|the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(${allDays})\\b`, 'i'
-    );
+    const italianPattern = new RegExp(`\\b(${allDays})\\s+(?:il\\s+)?(\\d{1,2})\\b`, 'i');
+    const englishPattern = new RegExp(`\\b(${allDays})\\s+(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'i');
+    const inversePattern = new RegExp(`\\b(?:il\\s+|the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(${allDays})\\b`, 'i');
     
     let mentionedDayNumber = null;
     let adjacentDayMatch = text.match(italianPattern) || text.match(englishPattern);
     
     if (adjacentDayMatch) {
-      // Il numero è nel gruppo 2
       mentionedDayNumber = parseInt(adjacentDayMatch[2]);
       console.log(`📆 FIX v3.9.20: Pattern adiacente trovato: "${adjacentDayMatch[0]}" → giorno ${mentionedDayNumber}`);
     } else {
-      // Prova pattern inverso
       const inverseMatch = text.match(inversePattern);
       if (inverseMatch) {
         mentionedDayNumber = parseInt(inverseMatch[1]);
@@ -1575,27 +1538,17 @@ const ValidationPipeline = {
       }
     }
     
-    // Se non abbiamo trovato un numero ADIACENTE al giorno, non c'è ambiguità
-    if (mentionedDayNumber === null) {
-      return { mismatch: false };
-    }
+    if (mentionedDayNumber === null) return { mismatch: false };
+    if (mentionedDayOfWeek === null || mentionedDayNumber === null) return { mismatch: false };
     
-    // Se NON abbiamo sia giorno settimana CHE numero, non c'è ambiguità da verificare
-    if (mentionedDayOfWeek === null || mentionedDayNumber === null) {
-      return { mismatch: false };
-    }
-    
-    // Calcola giorno settimana e numero della data calcolata
     const [year, month, day] = calculatedDate.split('-').map(Number);
     const dateObj = new Date(year, month - 1, day);
     const actualDayOfWeek = dateObj.getDay();
     const actualDayNumber = dateObj.getDate();
     
-    // Verifica se combaciano
     if (mentionedDayOfWeek !== actualDayOfWeek || mentionedDayNumber !== actualDayNumber) {
       console.log(`📆 FIX v3.9.10: Mismatch! Utente dice "${mentionedDayName} ${mentionedDayNumber}", calcolato ${calculatedDate} (dow=${actualDayOfWeek}, day=${actualDayNumber})`);
       
-      // FIX v3.9.10: Cerca la data più vicina dove quel giorno cade su quel numero
       const suggestedDate = this._findNextMatchingDate(mentionedDayOfWeek, mentionedDayNumber);
       
       if (suggestedDate) {
@@ -1605,7 +1558,6 @@ const ValidationPipeline = {
         
         console.log(`📆 FIX v3.9.10: Data più vicina trovata: ${suggestedDateStr} (${suggestedDayName} ${mentionedDayNumber} ${suggestedMonthName})`);
         
-        // Costruisci messaggio con suggerimento
         const message = lang === "en-US"
           ? `Do you mean ${suggestedDayName} ${mentionedDayNumber} ${suggestedMonthName}?`
           : `Intendi ${suggestedDayName} ${mentionedDayNumber} ${suggestedMonthName}?`;
@@ -1619,7 +1571,6 @@ const ValidationPipeline = {
           message: message,
         };
       } else {
-        // Fallback: chiedi il mese se non troviamo una data valida
         const message = lang === "en-US"
           ? `You said ${mentionedDayName} the ${mentionedDayNumber}th, but I'm not sure which month you mean. Could you specify the month?`
           : `Hai detto ${mentionedDayName} ${mentionedDayNumber}, ma non ho capito il mese. Puoi specificare il mese?`;
@@ -1637,8 +1588,6 @@ const ValidationPipeline = {
     return { mismatch: false };
   },
   
-  // FIX v3.9.10/v3.9.20: Trova la data più vicina dove il giorno della settimana cade sul numero specificato
-  // FIX v3.9.20: Limite a 60 giorni (circa 2 mesi) per evitare suggerimenti troppo lontani
   _findNextMatchingDate(dayOfWeek, dayNumber, maxDays = 60) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1646,22 +1595,16 @@ const ValidationPipeline = {
     const maxDate = new Date(today);
     maxDate.setDate(maxDate.getDate() + maxDays);
     
-    // Cerca nei prossimi 2-3 mesi (per coprire il limite di 60 giorni)
     for (let monthOffset = 0; monthOffset < 3; monthOffset++) {
       const testYear = today.getFullYear() + Math.floor((today.getMonth() + monthOffset) / 12);
       const testMonth = (today.getMonth() + monthOffset) % 12;
       
       const testDate = new Date(testYear, testMonth, dayNumber);
       
-      // Verifica che il giorno esista in quel mese (es. 31 febbraio non esiste)
       if (testDate.getDate() !== dayNumber) continue;
-      
-      // Verifica che sia il giorno della settimana corretto
       if (testDate.getDay() !== dayOfWeek) continue;
       
-      // Verifica che sia nel futuro (o oggi)
       if (testDate >= today) {
-        // FIX v3.9.20: Verifica che sia entro il limite di maxDays
         if (testDate <= maxDate) {
           return testDate;
         } else {
@@ -1671,12 +1614,9 @@ const ValidationPipeline = {
       }
     }
     
-    return null; // Non trovato entro il limite
+    return null;
   },
   
-  // ═══════════════════════════════════════════════════════════════════════
-  // FIX v3.9.9: Pattern per rilevare false chiusure nella reply_text di GPT
-  // ═══════════════════════════════════════════════════════════════════════
   FALSE_CLOSURE_PATTERNS: [
     /è (un |il )?lunedì/i,
     /lunedì.*chius/i,
@@ -1694,10 +1634,6 @@ const ValidationPipeline = {
     /that day.*closed/i,
   ],
   
-  // ═══════════════════════════════════════════════════════════════════════
-  // FIX v3.9.15: Pattern per rilevare false "pieni" quando non abbiamo verificato
-  // GPT a volte inventa "siamo pieni" senza che noi abbiamo fatto check
-  // ═══════════════════════════════════════════════════════════════════════
   FALSE_FULLYBOOOKED_PATTERNS: [
     /fully booked/i,
     /we.?re full/i,
@@ -1719,53 +1655,26 @@ const ValidationPipeline = {
     let response = { ...gptResponse };
     let reservation = response.reservation || {};
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.6: Salva orario/data originali di GPT per correggere reply_text
-    // ═══════════════════════════════════════════════════════════════════════
     const gptOriginalTime = reservation.time;
     const gptOriginalDate = reservation.date;
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.2: CARICA DATI SALVATI PRIMA DI TUTTO
-    // Questo previene che GPT sovrascriva dati già confermati
-    // ═══════════════════════════════════════════════════════════════════════
     const savedReservation = StateManager.getReservation(callId);
     
-    // FIX v3.9.15/v3.9.16: Check "fully booked" spostato DOPO parsing data
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.2: STEP 1 - Gestione DATA con protezione
-    // Se il parser trova una data nel messaggio → override
-    // Se NON trova una data → mantieni quella salvata (NON quella di GPT!)
-    // ═══════════════════════════════════════════════════════════════════════
     let parsedDate = DateManager.parseFromText(userText, null);
     if (parsedDate) {
-      // Cliente ha detto una data → override
       if (reservation.date && reservation.date !== parsedDate) {
         console.log(`📆 FIX v3.9 OVERRIDE DATA: ${reservation.date} → ${parsedDate}`);
       }
       reservation.date = parsedDate;
       
-      // ═══════════════════════════════════════════════════════════════════════
-      // FIX v3.9.9/v3.9.11: SAFETY NET PER DATE CON GIORNO+NUMERO SENZA MESE
-      // Se l'utente dice "sabato 7" senza specificare il mese, verifichiamo
-      // che la data calcolata sia effettivamente sabato E il giorno 7.
-      // v3.9.11: Se troviamo una data suggerita, la USIAMO direttamente
-      // invece di chiedere conferma (pre-commit della data corretta)
-      // ═══════════════════════════════════════════════════════════════════════
       const dayWeekMismatch = this.checkDayWeekNumberMismatch(userText, parsedDate, lang);
       if (dayWeekMismatch.mismatch) {
         if (dayWeekMismatch.suggestedDate) {
-          // FIX v3.9.11: Usa la data suggerita come "pre-commit"
-          // Non blocchiamo il flusso, ma usiamo direttamente la data più vicina
           console.log(`⚠️ FIX v3.9.11: Mismatch rilevato! Uso data suggerita: ${dayWeekMismatch.suggestedDate}`);
           reservation.date = dayWeekMismatch.suggestedDate;
           parsedDate = dayWeekMismatch.suggestedDate;
-          // Segna che abbiamo fatto una correzione per poi aggiornare il messaggio
           response._dateWasCorrected = true;
           response._correctedDateMessage = dayWeekMismatch.message.replace('?', '.');
         } else {
-          // Fallback: chiedi il mese (caso raro dove non troviamo data nei 12 mesi)
           console.log(`⚠️ FIX v3.9.10: Mismatch rilevato! Chiedo il mese (no suggestedDate).`);
           response.reply_text = dayWeekMismatch.message;
           response.action = "ask_date";
@@ -1776,32 +1685,17 @@ const ValidationPipeline = {
         }
       }
     } else if (savedReservation.date) {
-      // Cliente NON ha detto una data → proteggi quella salvata
       if (reservation.date && reservation.date !== savedReservation.date) {
         console.log(`📆 FIX v3.9.2 PROTEZIONE DATA: GPT dice ${reservation.date}, mantengo ${savedReservation.date}`);
         
-        // ═══════════════════════════════════════════════════════════════════════
-        // FIX v3.9.19: CORREZIONE REPLY_TEXT PER DATA PROTETTA
-        // Se GPT ha menzionato la data sbagliata nel messaggio, correggiamola
-        // per evitare confusione UX (es. "17 gennaio" → "7 febbraio")
-        // ═══════════════════════════════════════════════════════════════════════
-        const wrongDate = reservation.date; // La data sbagliata che GPT voleva usare
-        const correctDate = savedReservation.date; // La data corretta salvata
-        
-        // Pattern per trovare date nel testo (italiano e inglese)
         const italianMonths = "gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre";
         const englishMonths = "January|February|March|April|May|June|July|August|September|October|November|December";
-        
-        // Pattern: "17 gennaio", "7 febbraio", etc.
         const italianDatePattern = new RegExp(`\\b(\\d{1,2})\\s+(${italianMonths})\\b`, 'gi');
-        // Pattern: "January 17", "February 7", etc.
         const englishDatePattern = new RegExp(`\\b(${englishMonths})\\s+(\\d{1,2})\\b`, 'gi');
         
-        const correctDateDisplay = DateManager.formatForDisplay(correctDate, lang);
+        const correctDateDisplay = DateManager.formatForDisplay(savedReservation.date, lang);
         
-        // Controlla se il reply_text contiene una data diversa da quella corretta
         if (italianDatePattern.test(response.reply_text) || englishDatePattern.test(response.reply_text)) {
-          // Sostituisci tutte le date con quella corretta
           let correctedReply = response.reply_text;
           correctedReply = correctedReply.replace(italianDatePattern, correctDateDisplay);
           correctedReply = correctedReply.replace(englishDatePattern, correctDateDisplay);
@@ -1815,7 +1709,6 @@ const ValidationPipeline = {
       reservation.date = savedReservation.date;
     }
     
-    // STEP 2: Check chiusura
     if (reservation.date) {
       const closureCheck = await ClosureChecker.isOpen(reservation.date, callId);
       if (!closureCheck.open) {
@@ -1828,15 +1721,9 @@ const ValidationPipeline = {
         return response;
       }
       
-      // ═══════════════════════════════════════════════════════════════════════
-      // FIX v3.9.9: CORREZIONE REPLY_TEXT PER FALSE CHIUSURE
-      // Se GPT ha detto "chiuso/lunedì/closed" ma il giorno è APERTO,
-      // correggiamo la reply_text per evitare informazioni false al cliente
-      // ═══════════════════════════════════════════════════════════════════════
       if (this.FALSE_CLOSURE_PATTERNS.some(p => p.test(response.reply_text))) {
         console.log(`📝 FIX v3.9.9: GPT dice "chiuso" ma ${reservation.date} è APERTO - correggo reply_text`);
         
-        // Costruisci risposta corretta
         const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
         
         if (lang === "en-US") {
@@ -1848,12 +1735,6 @@ const ValidationPipeline = {
         console.log(`📝 FIX v3.9.9: Nuova reply: "${response.reply_text}"`);
       }
       
-      // ═══════════════════════════════════════════════════════════════════════
-      // FIX v3.9.16: CORREZIONE "FULLY BOOKED" FALSO (spostato qui da v3.9.15)
-      // Se GPT dice "siamo pieni/fully booked" ma NON abbiamo ancora fatto
-      // un check reale (mancano orario o persone), correggi il messaggio
-      // ORA la data è già stata parsata, quindi possiamo usarla nel messaggio
-      // ═══════════════════════════════════════════════════════════════════════
       const earlyTimeCheck = reservation.time || savedReservation.time;
       const earlyPeopleCheck = reservation.people || savedReservation.people;
       const gptSaysFullyBooked = this.FALSE_FULLYBOOOKED_PATTERNS.some(p => p.test(response.reply_text));
@@ -1861,7 +1742,6 @@ const ValidationPipeline = {
       if (gptSaysFullyBooked && (!earlyTimeCheck || !earlyPeopleCheck)) {
         console.log(`📝 FIX v3.9.16: GPT dice "pieni/fully booked" ma non abbiamo verificato - correggo`);
         
-        // Usa la data PARSATA (ora disponibile!) per costruire il messaggio
         const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
         
         if (!earlyTimeCheck) {
@@ -1877,24 +1757,14 @@ const ValidationPipeline = {
         }
         console.log(`📝 FIX v3.9.16: Nuova reply: "${response.reply_text}"`);
       }
-      
-      // FIX v3.9.11: La correzione messaggio per _dateWasCorrected avviene alla FINE del pipeline,
-      // dopo che tutti i campi (time, people, name) sono stati estratti
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.17: ANTI-ALLUCINAZIONE DATA
-    // Se GPT chiede ask_date ma abbiamo GIÀ una data valida salvata,
-    // override action al prossimo step logico
-    // ═══════════════════════════════════════════════════════════════════════
     const effectiveDate = reservation.date || savedReservation.date;
     if (response.action === "ask_date" && effectiveDate) {
       console.log(`⚠️ FIX v3.9.17: GPT chiede data ma abbiamo già ${effectiveDate} → skip`);
       
-      // Assicurati che la data sia nel reservation object
       reservation.date = effectiveDate;
       
-      // Determina il prossimo step basato su cosa manca
       const hasTime = reservation.time || savedReservation.time;
       const hasPeople = reservation.people || savedReservation.people;
       const hasName = reservation.name || savedReservation.name;
@@ -1915,7 +1785,6 @@ const ValidationPipeline = {
           ? "What name for the reservation?"
           : "A che nome la prenotazione?";
       } else {
-        // Abbiamo tutto tranne email → ask_email o create_reservation
         response.action = "ask_email";
         response.reply_text = lang === "en-US"
           ? "Would you like to provide an email for confirmation?"
@@ -1924,26 +1793,18 @@ const ValidationPipeline = {
       console.log(`⚠️ FIX v3.9.17: Nuovo action: ${response.action}`);
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.2: STEP 3 - Gestione ORARIO con protezione
-    // Se il parser trova un orario nel messaggio → override
-    // Se NON trova un orario → mantieni quello salvato (NON quello di GPT!)
-    // ═══════════════════════════════════════════════════════════════════════
     const parsedTime = TimeManager.parseFromText(userText);
     if (parsedTime) {
-      // Cliente ha detto un orario → override
       if (reservation.time && reservation.time !== parsedTime) {
         console.log(`⏰ FIX v3.9 OVERRIDE ORARIO: ${reservation.time} → ${parsedTime}`);
       }
       reservation.time = parsedTime;
     } else if (savedReservation.time) {
-      // Cliente NON ha detto un orario → proteggi quello salvato
       if (reservation.time && reservation.time !== savedReservation.time) {
         console.log(`⏰ FIX v3.9.2 PROTEZIONE ORARIO: GPT dice ${reservation.time}, mantengo ${savedReservation.time}`);
       }
       reservation.time = savedReservation.time;
     } else if (!reservation.time) {
-      // Nessun orario nel messaggio E nessuno salvato → prova inferire da "cena/pranzo"
       const defaultTime = TimeManager.inferDefault(userText);
       if (defaultTime) {
         console.log(`⏰ FIX v3.9: Orario inferito da "${userText.substring(0,20)}": ${defaultTime}`);
@@ -1951,39 +1812,27 @@ const ValidationPipeline = {
       }
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.3/v3.9.4: VERIFICA ORARIO INVALIDO - SEMPRE!
-    // Se abbiamo un orario che è FUORI RANGE, dobbiamo chiedere un orario valido.
-    // FIX v3.9.4: Messaggio include sia PRANZO (12:00-15:00) che CENA (19:00-22:30)
-    // ═══════════════════════════════════════════════════════════════════════
     if (reservation.time && !this.isValidTime(reservation.time)) {
-      // Rileva se il cliente sta CHIEDENDO info sugli orari
       const isAskingAboutTime = /\b(ultimo|prima|quale|quali|orari|apertura|chiusura|when|what time|available|hours)\b/i.test(userText);
       
       if (isAskingAboutTime) {
-        // Cliente chiede info → lascia rispondere GPT ma resetta orario invalido
         console.log(`ℹ️ FIX v3.9.3: Orario ${reservation.time} invalido + cliente chiede info → resetto`);
         reservation.time = null;
       } else {
-        // Orario invalido e cliente NON chiede info → forza ask_time con messaggio
         console.log(`⏰ FIX v3.9.4: Orario ${reservation.time} INVALIDO → forzo ask_time`);
         response.action = "ask_time";
         response.reply_text = lang === "en-US"
           ? "I'm sorry, that time is outside our opening hours. We're open for lunch 12:00-15:00 and dinner 19:00-22:30. What time works for you?"
           : "Mi dispiace, quell'orario è fuori dai nostri orari di apertura. Siamo aperti a pranzo 12:00-15:00 e a cena 19:00-22:30. A che ora preferisci?";
-        reservation.time = null;  // Resetta così il cliente può dare un nuovo orario
+        reservation.time = null;
       }
     }
-    // Se orario è VALIDO, verifica anti-allucinazione (GPT che chiede orario inutilmente)
     else if (response.action === "ask_time" && reservation.time) {
-      // Rileva se il cliente sta CHIEDENDO info sugli orari (non dando un orario)
       const isAskingAboutTime = /\b(ultimo|prima|quale|quali|orari|apertura|chiusura|when|what time|available|hours)\b/i.test(userText);
       
       if (isAskingAboutTime) {
-        // Il cliente sta chiedendo INFO → lascia che GPT risponda
         console.log(`ℹ️ FIX v3.9: Cliente chiede info orari, lascio risposta GPT`);
       } else if (this.isValidTime(reservation.time)) {
-        // Abbiamo un orario VALIDO e cliente NON sta chiedendo info → skip
         console.log(`⚠️ FIX v3.9: GPT chiede orario ma abbiamo già ${reservation.time} valido → skip`);
         
         const hasPeople = savedReservation.people || reservation.people;
@@ -2007,11 +1856,6 @@ const ValidationPipeline = {
       }
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.2: STEP 4 - Gestione PERSONE con protezione
-    // Se il parser trova un numero nel messaggio → override
-    // Se NON trova un numero → mantieni quello salvato (NON quello di GPT!)
-    // ═══════════════════════════════════════════════════════════════════════
     const parsedPeople = PeopleManager.parseFromText(userText);
     if (parsedPeople) {
       if (reservation.people && reservation.people !== parsedPeople) {
@@ -2019,28 +1863,21 @@ const ValidationPipeline = {
       }
       reservation.people = parsedPeople;
     } else if (savedReservation.people) {
-      // Cliente NON ha detto un numero → proteggi quello salvato
       if (reservation.people && reservation.people !== savedReservation.people) {
         console.log(`👥 FIX v3.9.2 PROTEZIONE PERSONE: GPT dice ${reservation.people}, mantengo ${savedReservation.people}`);
       }
       reservation.people = savedReservation.people;
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.14: STEP 4B - Gestione NOME con estrazione conservativa
-    // Estrae il nome SOLO da pattern espliciti come "name is Brown", "a nome Rossi"
-    // ═══════════════════════════════════════════════════════════════════════
     const parsedName = NameManager.parseFromText(userText);
     if (parsedName) {
       if (!reservation.name) {
         reservation.name = parsedName;
       }
     } else if (savedReservation.name && !reservation.name) {
-      // Proteggi nome salvato
       reservation.name = savedReservation.name;
     }
     
-    // STEP 5: Gestione eventi grandi (≥45)
     if (reservation.people >= CONFIG.EVENT_THRESHOLD) {
       const email = ContextService.getRestaurantEmail(callId);
       response.action = "none";
@@ -2051,15 +1888,10 @@ const ValidationPipeline = {
       return response;
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.2: CHECK DISPONIBILITÀ ANTICIPATO (usa dati GIÀ CORRETTI)
-    // Usa `reservation` (già aggiornato con override/protezioni) NON StateManager
-    // ═══════════════════════════════════════════════════════════════════════
     const hasDateForCheck = reservation.date;
     const hasTimeForCheck = reservation.time;
     const hasPeopleForCheck = reservation.people;
     
-    // Se abbiamo tutti e 3 i dati essenziali E GPT vuole procedere con nome/email
     if (hasDateForCheck && hasTimeForCheck && hasPeopleForCheck) {
       if (response.action === "ask_name" || response.action === "ask_email" || response.action === "create_reservation") {
         
@@ -2067,7 +1899,6 @@ const ValidationPipeline = {
         const timeToCheck = reservation.time;
         const peopleToCheck = reservation.people;
         
-        // Verifica disponibilità
         console.log(`🔍 FIX P1: Check anticipato ${dateToCheck} ${timeToCheck} per ${peopleToCheck} pax`);
         const availability = await CalendarService.checkAvailability(
           dateToCheck, timeToCheck, peopleToCheck, callId
@@ -2081,17 +1912,15 @@ const ValidationPipeline = {
               ? "I'm sorry, we're closed that day. Would you like another day?"
               : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
             response.action = "ask_date";
-            // Reset data
             reservation.date = null;
             StateManager.mergeReservation(callId, { date: null });
           } else {
-            // Slot pieno - cerca alternative
             const alternatives = await CalendarService.findAlternatives(
               dateToCheck, timeToCheck, peopleToCheck, callId
             );
-            response.reply_text = CalendarService.buildAlternativesMessage(alternatives, lang);
+            const isLargeGroup = peopleToCheck > CONFIG.LARGE_GROUP_THRESHOLD;
+            response.reply_text = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
             response.action = "ask_time";
-            // Reset orario (mantieni data e persone)
             reservation.time = null;
             StateManager.mergeReservation(callId, { time: null });
           }
@@ -2105,17 +1934,14 @@ const ValidationPipeline = {
       }
     }
     
-    // STEP 6: Estrai email
     if (!reservation.customerEmail) {
       const email = extractEmailFromText(userText);
       if (email) reservation.customerEmail = sanitizeEmail(email);
     }
     
-    // STEP 7: Merge e fix action
     const merged = StateManager.mergeReservation(callId, reservation);
     response.reservation = merged;
     
-    // Safety net: create_reservation senza dati minimi
     if (response.action === "create_reservation") {
       if (!merged.date) response.action = "ask_date";
       else if (!merged.time) response.action = "ask_time";
@@ -2123,16 +1949,10 @@ const ValidationPipeline = {
       else if (!merged.name) response.action = "ask_name";
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.6: CORREGGI reply_text SE ORARIO/DATA SONO STATI MODIFICATI
-    // Quando facciamo override, GPT ha risposto con dati sbagliati.
-    // Dobbiamo correggere il testo per evitare confusione al cliente.
-    // ═══════════════════════════════════════════════════════════════════════
     if (response.reply_text && merged.time && gptOriginalTime && gptOriginalTime !== merged.time) {
-      const oldTimeDisplay = TimeManager.formatForDisplay(gptOriginalTime); // "21:30"
-      const newTimeDisplay = TimeManager.formatForDisplay(merged.time);     // "22:00"
+      const oldTimeDisplay = TimeManager.formatForDisplay(gptOriginalTime);
+      const newTimeDisplay = TimeManager.formatForDisplay(merged.time);
       
-      // Sostituisci tutte le varianti dell'orario sbagliato
       const oldHour = parseInt(gptOriginalTime.split(':')[0]);
       const oldMin = parseInt(gptOriginalTime.split(':')[1]);
       const newHour = parseInt(merged.time.split(':')[0]);
@@ -2140,15 +1960,10 @@ const ValidationPipeline = {
       
       let fixedText = response.reply_text;
       
-      // Pattern da sostituire: "21:30", "21.30", "alle 21:30", "alle 21", "ore 21:30", "ore 21"
-      // Solo se i minuti sono diversi o l'ora è diversa
       if (oldHour !== newHour || oldMin !== newMin) {
-        // Formato HH:MM
         fixedText = fixedText.replace(new RegExp(oldTimeDisplay.replace(':', '[:\\.]'), 'g'), newTimeDisplay);
         
-        // Formato "alle X" o "ore X" (senza minuti) - solo se l'ora è diversa
         if (oldHour !== newHour) {
-          // "alle 21" → "alle 22" (ma non "alle 21:30" che è già gestito sopra)
           fixedText = fixedText.replace(
             new RegExp(`(alle|ore)\\s+${oldHour}(?!:\\d|\\d)`, 'gi'),
             `$1 ${newHour}`
@@ -2162,19 +1977,11 @@ const ValidationPipeline = {
       }
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.11: CORREZIONE REPLY_TEXT PER DATA CORRETTA (PRE-COMMIT)
-    // Se abbiamo corretto la data con suggestedDate, aggiorniamo il messaggio
-    // per confermare la data e continuare il flusso (ask_time, ask_people, etc.)
-    // POSIZIONE: Alla FINE del pipeline, dopo che time/people/name sono estratti
-    // ═══════════════════════════════════════════════════════════════════════
     if (response._dateWasCorrected) {
       console.log(`📝 FIX v3.9.11: Data corretta a ${merged.date} - costruisco messaggio appropriato`);
       
       const dateDisplay = DateManager.formatForDisplay(merged.date, lang);
       
-      // Determina cosa chiedere dopo in base a cosa manca VERAMENTE
-      // A questo punto time, people, name sono già stati estratti dal messaggio utente
       if (!merged.time) {
         if (lang === "en-US") {
           response.reply_text = `OK, ${dateDisplay}. What time would you like to book?`;
@@ -2197,7 +2004,6 @@ const ValidationPipeline = {
         }
         response.action = "ask_name";
       } else {
-        // Ha già tutto! Chiedi solo email
         if (lang === "en-US") {
           response.reply_text = `OK, ${dateDisplay} at ${TimeManager.formatForDisplay(merged.time)} for ${merged.people} people, name ${merged.name}. Would you like to provide an email for confirmation?`;
         } else {
@@ -2211,12 +2017,6 @@ const ValidationPipeline = {
       delete response._correctedDateMessage;
     }
     
-    // ═══════════════════════════════════════════════════════════════════════
-    // FIX v3.9.18: GESTIONE RIFIUTO EMAIL
-    // Se GPT chiede email ma il cliente rifiuta ("no grazie", "no thanks")
-    // E abbiamo tutti i dati essenziali → forza create_reservation
-    // GPT a volte insiste sull'email anche se è opzionale
-    // ═══════════════════════════════════════════════════════════════════════
     const emailRefusalPatterns = /\b(no thanks|no thank you|no grazie|no email|non ho email|niente email|skip|don'?t have|not necessary|call me|chiamami|chiamatemi)\b/i;
     
     if (response.action === "ask_email" && emailRefusalPatterns.test(userText)) {
@@ -2244,10 +2044,8 @@ const ValidationPipeline = {
   },
 };
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 15: GPT SERVICE (SEMPLIFICATO v3)
-// System prompt snello - cancel/modify gestiti altrove
+// SEZIONE 15: GPT SERVICE (FIX v3.9.21 BUG-003/004 - Soglia gruppi)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const GPTService = {
@@ -2268,7 +2066,6 @@ const GPTService = {
     const now = DateManager.getNow();
     const todayISO = DateManager.toISO(now);
     
-    // Stato prenotazione
     let stateText = "";
     if (reservation && (reservation.date || reservation.time || reservation.people || reservation.name)) {
       stateText = `
@@ -2282,7 +2079,6 @@ ${reservation.customerEmail ? `- Email: ${reservation.customerEmail}` : ""}
 Se l'utente conferma, usa action="create_reservation" con questi dati!`;
     }
 
-    // FIX v3.6: Istruzione lingua ESPLICITA
     const langInstruction = lang === "en-US"
       ? `⚠️ LANGUAGE: This conversation is in ENGLISH. You MUST reply ONLY in English!`
       : `⚠️ LINGUA: Questa conversazione è in ITALIANO. Rispondi SOLO in italiano!`;
@@ -2316,7 +2112,8 @@ ORDINE DOMANDE:
 4. Nome
 5. Email (opzionale, DOPO il nome)
 
-Per gruppi >${largeGroupThreshold}: "prenotazione soggetta a conferma"
+IMPORTANTE GRUPPI: Solo per 11 o più persone dire "prenotazione soggetta a conferma del ristoratore".
+Per gruppi fino a 10 persone: prenotazione NORMALE, NON dire "soggetta a conferma".
 
 ORARI: "alle 8" senza specificare = 20:00 (sera)
 ORARI APERTURA: Pranzo 12:00-15:00, Cena 19:00-22:30. Ultima prenotazione alle 22:30.
@@ -2401,7 +2198,6 @@ RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
     convo.messages.push({ role: "assistant", content });
     StateManager.setConversation(callId, convo);
     
-    // Validation Pipeline
     parsed = await ValidationPipeline.validate(parsed, userText, callId);
     
     return parsed;
@@ -2446,62 +2242,39 @@ RISPOSTA FINALE: conferma e "Ti aspettiamo, buona serata."`;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TwilioHelpers = {
-  // FIX P3: Language detection migliorata
   detectLanguageSwitch(text) {
     const t = (text || "").toLowerCase();
-    // Richiesta esplicita
     if (t.includes("speak english") || t.includes("in english")) return "en-US";
     if (t.includes("parla italiano") || t.includes("in italiano")) return "it-IT";
     return null;
   },
   
-  // FIX P3 v3.5: Rileva se il testo è in inglese - pattern migliorati
   detectLanguageFromContent(text) {
     const t = (text || "").toLowerCase();
     
-    // Pattern comuni inglesi (non presenti in italiano)
     const englishPatterns = [
-      // Saluti e cortesie
-      /^hi\b|^hello\b|^hey\b/,                    // Inizio con saluto
-      /\b(hi|hello|hey)\b.*\b(like|want|need)\b/, // "Hi, I'd like..."
+      /^hi\b|^hello\b|^hey\b/,
+      /\b(hi|hello|hey)\b.*\b(like|want|need)\b/,
       /\bplease\b|\bthank you\b|\bthanks\b/,
-      
-      // Pronomi e verbi inglesi
-      /\bi('d| would| want| need| have| am)\b/,   // I'd, I would, I want, I need, I have, I am
-      /\bwe (need|want|are|have)\b/,              // We need, We want, We are
-      /\b(can|could|may|would) (i|we|you)\b/,     // Can I, Could we, May I
-      
-      // Prenotazioni
+      /\bi('d| would| want| need| have| am)\b/,
+      /\bwe (need|want|are|have)\b/,
+      /\b(can|could|may|would) (i|we|you)\b/,
       /\b(book|booking|reservation)\b/,
-      /\btable\b/,                                 // "table" da solo
-      /\bfor (dinner|lunch|breakfast)\b/,         // for dinner, for lunch
-      /\bat (dinner|lunch|breakfast)\b/,          // at dinner, at lunch
-      
-      // Tempo
+      /\btable\b/,
+      /\bfor (dinner|lunch|breakfast)\b/,
+      /\bat (dinner|lunch|breakfast)\b/,
       /\b(tonight|tomorrow|today)\b/,
       /\bday after tomorrow\b/,
       /\b(this|next) (week|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/,
-      
-      // Giorni in inglese (senza "on")
       /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/,
-      
-      // Orari
-      /\b\d{1,2}\s*(pm|am)\b/,                    // 8pm, 8 pm
-      /\bat \d{1,2}(:\d{2})?\b/,                  // at 8, at 8:30
-      
-      // Numeri di persone
-      /\bfor \d+ (people|persons|guests)\b/,      // for 4 people
-      /\b\d+ (people|persons|guests)\b/,          // 4 people
-      /\bparty of \d+\b/,                         // party of 4
-      
-      // Nome
+      /\b\d{1,2}\s*(pm|am)\b/,
+      /\bat \d{1,2}(:\d{2})?\b/,
+      /\bfor \d+ (people|persons|guests)\b/,
+      /\b\d+ (people|persons|guests)\b/,
+      /\bparty of \d+\b/,
       /\b(the name is|my name is|name is|under the name|under)\b/,
-      
-      // Domande
       /\bdo you have\b|\bis there\b|\bare there\b/,
       /\bwhat time\b|\bwhat day\b/,
-      
-      // Cancellazioni/Modifiche
       /\b(cancel|change|modify|reschedule)\b/,
       /\bi need to\b|\bi want to\b|\bi have to\b/,
     ];
@@ -2554,7 +2327,6 @@ const TwilioHelpers = {
   },
 };
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // SEZIONE 17: EXPRESS MIDDLEWARE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2568,7 +2340,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/", (req, res) => {
-  res.status(200).send("✅ Prenow Gateway v3.9.20 attivo!");
+  res.status(200).send("✅ Prenow Gateway v3.9.21 attivo!");
 });
 
 app.post("/calendar", async (req, res) => {
@@ -2640,20 +2412,14 @@ app.post("/twilio", async (req, res) => {
   // FLUSSO PRINCIPALE
   // ═══════════════════════════════════════════════════════════════════════════
   try {
-    // Multi-tenant
     if (isDebug && To) await Registry.getConfigForCall(callId, To);
     
-    // Salva testo e gestisci lingua
     StateManager.appendUserText(callId, userText);
     
-    // FIX P3: Language detection migliorata
-    // Prima: richiesta esplicita ("speak english")
     const langSwitch = TwilioHelpers.detectLanguageSwitch(userText);
     if (langSwitch) StateManager.setLanguage(callId, langSwitch);
-    // Twilio language header
     if (Language?.startsWith("en")) StateManager.setLanguage(callId, "en-US");
     if (Language?.startsWith("it")) StateManager.setLanguage(callId, "it-IT");
-    // FIX P3: Rileva lingua dal contenuto (solo se non già impostata o default italiano)
     if (StateManager.getLanguage(callId) === "it-IT") {
       const detectedLang = TwilioHelpers.detectLanguageFromContent(userText);
       if (detectedLang) {
@@ -2673,13 +2439,12 @@ app.post("/twilio", async (req, res) => {
       const detectedIntent = IntentDetector.detectIntent(userText);
       StateManager.setInitialIntent(callId, detectedIntent);
       
-      // Se cancel/modify, cerca prenotazione esistente
       if ((detectedIntent === 'cancel' || detectedIntent === 'modify') && From) {
         try {
           const existing = await CalendarService.findExistingReservation(From, null, callId);
           if (existing) {
             StateManager.setExistingReservation(callId, existing);
-            StateManager.setPhase(callId, 'awaiting_name'); // NUOVO: prima chiedi nome!
+            StateManager.setPhase(callId, 'awaiting_name');
           }
         } catch (err) {
           console.log(`⚠️ Errore ricerca:`, err.message);
@@ -2716,7 +2481,6 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.5: CANCEL/MODIFY senza prenotazione trovata
-    // Se l'utente vuole cancellare/modificare ma non abbiamo trovato prenotazioni
     // ═══════════════════════════════════════════════════════════════════════
     if ((initialIntent === 'cancel' || initialIntent === 'modify') && !existingRes && phase === 'initial') {
       console.log(`⚠️ Intent ${initialIntent} ma nessuna prenotazione trovata per ${From}`);
@@ -2725,7 +2489,6 @@ app.post("/twilio", async (req, res) => {
         ? "I'm sorry, I couldn't find a reservation under your phone number. Could you please provide the name on the reservation, or would you like to make a new booking?"
         : "Mi dispiace, non ho trovato prenotazioni con questo numero di telefono. Puoi dirmi il nome della prenotazione, oppure vuoi fare una nuova prenotazione?";
       
-      // Cambia fase per evitare loop
       StateManager.setPhase(callId, 'no_reservation_found');
       
       if (isDebug) {
@@ -2747,13 +2510,10 @@ app.post("/twilio", async (req, res) => {
     if (phase === 'pending_large_group') {
       console.log(`📍 Fase pending_large_group: cliente ha risposto dopo prenotazione PENDING`);
       
-      // Il cliente ha risposto dopo che gli abbiamo detto "il ristoratore confermerà"
-      // Non deve poter "confermare" da solo!
       const replyText = lang === "en-US"
         ? "Your request has been registered. The restaurant will contact you to confirm the reservation. Is there anything else I can help you with?"
         : "La tua richiesta è stata registrata. Il ristorante ti contatterà per confermare la prenotazione. Posso aiutarti con altro?";
       
-      // Dopo questa risposta, resetta la fase
       StateManager.setPhase(callId, 'completed');
       
       if (isDebug) {
@@ -2771,53 +2531,51 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // v3.2: FLUSSO CON VERIFICA NOME per CANCEL/MODIFY
-    // 1. Chiedi nome → 2. Verifica match → 3. RECAP → 4. Esegui
+    // FIX v3.9.21: BUG-001 verifica nome, BUG-010 retry
     // ═══════════════════════════════════════════════════════════════════════
     if (existingRes && (initialIntent === 'cancel' || initialIntent === 'modify')) {
       let replyText = "";
       let action = "none";
       let shouldHangup = false;
       
-      // ═══════════════════════════════════════════════════════════════════
-      // FASE COMUNE: AWAITING_NAME - Chiedi nome per double-check
-      // ═══════════════════════════════════════════════════════════════════
+      // FASE COMUNE: AWAITING_NAME
       if (phase === 'awaiting_name') {
-        // Primo messaggio: chiedi nome
         replyText = RecapManager.buildAskNameMessage(lang);
         StateManager.setPhase(callId, 'verifying_name');
         console.log(`📍 Chiedo nome per verifica`);
       }
       else if (phase === 'verifying_name') {
-        // Utente ha detto il nome, verifichiamo
+        // FIX v3.9.21 BUG-001: Verifica con risposta completa + retry
         const saidName = RecapManager.extractName(userText);
-        console.log(`📍 Nome detto: "${saidName}", Nome prenotazione: "${existingRes.name}"`);
+        console.log(`📍 Nome detto: "${userText}", Estratto: "${saidName}", Atteso: "${existingRes.name}"`);
         
-        if (saidName && RecapManager.nameMatches(saidName, existingRes.name)) {
-          // MATCH! Procedi con RECAP
-          console.log(`✅ Nome verificato! Match confermato.`);
+        if (RecapManager.nameMatches(userText, existingRes.name)) {
+          console.log(`✅ Nome verificato!`);
           
           if (initialIntent === 'cancel') {
             replyText = RecapManager.buildCancelRecapMessage(existingRes, lang);
             StateManager.setPhase(callId, 'awaiting_cancel_confirm');
           } else {
-            // Modify: mostra RECAP e chiedi cosa vuole modificare
             replyText = RecapManager.buildModifyRecapMessage(existingRes, "", lang);
             StateManager.setPhase(callId, 'awaiting_modify_details');
           }
         } else {
-          // NO MATCH!
-          console.log(`❌ Nome non corrisponde!`);
-          replyText = RecapManager.buildNameMismatchMessage(saidName || userText, lang);
-          StateManager.setPhase(callId, 'completed'); // Termina flusso
+          // FIX v3.9.21 BUG-010: Retry
+          const retries = StateManager.incrementNameVerificationRetries(callId);
+          console.log(`❌ Nome non corrisponde! Tentativo ${retries}/2`);
+          
+          if (retries >= 2) {
+            replyText = RecapManager.buildNameMismatchMessage(saidName || userText, lang, true);
+            StateManager.setPhase(callId, 'completed');
+          } else {
+            replyText = RecapManager.buildNameMismatchMessage(saidName || userText, lang, false);
+          }
         }
       }
       
-      // ═══════════════════════════════════════════════════════════════════
-      // CANCELLAZIONE: Conferma esplicita (azione irreversibile)
-      // ═══════════════════════════════════════════════════════════════════
+      // CANCELLAZIONE: Conferma esplicita
       else if (initialIntent === 'cancel' && phase === 'awaiting_cancel_confirm') {
         if (RecapManager.isConfirming(userText)) {
-          // Conferma ricevuta → esegui cancellazione
           console.log(`🗑️ Eseguo cancellazione...`);
           const result = await CalendarService.cancelReservation({
             source: isDebug ? "debug" : "twilio",
@@ -2846,41 +2604,32 @@ app.post("/twilio", async (req, res) => {
           }
         }
         else if (RecapManager.isDenying(userText)) {
-          // Non vuole più cancellare
           replyText = lang === "en-US"
             ? "No problem, the reservation stays confirmed. Anything else I can help with?"
             : "Nessun problema, la prenotazione resta confermata. Posso aiutarti con altro?";
           StateManager.setPhase(callId, 'completed');
         }
         else {
-          // Non ho capito, richiedi conferma
           replyText = lang === "en-US"
             ? "Do you confirm the cancellation? Say yes or no."
             : "Confermi la cancellazione? Dimmi sì o no.";
         }
       }
       
-      // ═══════════════════════════════════════════════════════════════════
       // MODIFICA: Raccolta dettagli e conferma
-      // ═══════════════════════════════════════════════════════════════════
       else if (initialIntent === 'modify') {
         
         if (phase === 'awaiting_modify_details') {
-          // Attendiamo che ci dica cosa vuole modificare
           const modification = RecapManager.extractModification(userText, existingRes);
           
           if (modification.newTime || modification.newDate || modification.newPeople) {
-            // Ha detto cosa vuole → salva e chiedi conferma
             STATE.pendingModifications = STATE.pendingModifications || new Map();
             STATE.pendingModifications.set(callId, modification);
             
             const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
-            
-            // Conta modifiche
             const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
             
             if (modCount >= 2) {
-              // Modifiche multiple
               let changes = [];
               if (modification.newTime) changes.push(lang === "en-US" ? `${TimeManager.formatForDisplay(modification.newTime)}` : `alle ${TimeManager.formatForDisplay(modification.newTime)}`);
               if (modification.newDate) changes.push(lang === "en-US" ? `${DateManager.formatForDisplay(modification.newDate, lang)}` : `${DateManager.formatForDisplay(modification.newDate, lang)}`);
@@ -2908,14 +2657,11 @@ app.post("/twilio", async (req, res) => {
             console.log(`📍 MODIFY: dettagli ricevuti, attendo conferma`);
           }
           else {
-            // Non ha specificato → chiedi di nuovo
             replyText = RecapManager.buildAskWhatToModify(existingRes, lang);
           }
         }
         else if (phase === 'awaiting_modify_confirm') {
-          // Abbiamo proposto una modifica, attendiamo conferma
           if (RecapManager.isConfirming(userText)) {
-            // Conferma → esegui la modifica pendente
             const pending = STATE.pendingModifications?.get(callId) || {};
             const updatedRes = { ...existingRes };
             
@@ -2923,7 +2669,6 @@ app.post("/twilio", async (req, res) => {
             if (pending.newDate) updatedRes.date = pending.newDate;
             if (pending.newPeople) updatedRes.people = pending.newPeople;
             
-            // Verifica chiusura se cambia data
             if (pending.newDate) {
               const closureCheck = await ClosureChecker.isOpen(pending.newDate, callId);
               if (!closureCheck.open) {
@@ -2944,7 +2689,6 @@ app.post("/twilio", async (req, res) => {
               }
             }
             
-            // Esegui modifica
             console.log(`📝 Eseguo modifica:`, pending);
             const result = await CalendarService.createReservation({
               source: isDebug ? "debug" : "twilio",
@@ -2965,7 +2709,8 @@ app.post("/twilio", async (req, res) => {
               const alternatives = await CalendarService.findAlternatives(
                 updatedRes.date, updatedRes.time, updatedRes.people, callId
               );
-              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+              const isLargeGroup = updatedRes.people > CONFIG.LARGE_GROUP_THRESHOLD;
+              replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
               StateManager.setPhase(callId, 'awaiting_modify_details');
             } else {
               replyText = lang === "en-US"
@@ -2982,19 +2727,14 @@ app.post("/twilio", async (req, res) => {
             }
           }
           else if (RecapManager.isDenying(userText)) {
-            // Non vuole quella modifica → chiedi cosa vuole
             replyText = RecapManager.buildAskWhatToModify(existingRes, lang);
             StateManager.setPhase(callId, 'awaiting_modify_details');
           }
           else {
-            // Potrebbe aver detto una nuova modifica
             const newMod = RecapManager.extractModification(userText, existingRes);
             if (newMod.newTime || newMod.newDate || newMod.newPeople) {
-              // Nuova modifica → aggiorna pending e chiedi conferma
               STATE.pendingModifications.set(callId, newMod);
               const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
-              
-              // Conta modifiche
               const modCount = (newMod.newTime ? 1 : 0) + (newMod.newDate ? 1 : 0) + (newMod.newPeople ? 1 : 0);
               
               if (modCount >= 2) {
@@ -3021,7 +2761,6 @@ app.post("/twilio", async (req, res) => {
                   : `Ok ${firstName}, cambio a ${newMod.newPeople} persone. Confermi?`;
               }
             } else {
-              // Non capito → richiedi
               replyText = lang === "en-US"
                 ? "Sorry, I didn't catch that. Do you confirm the change?"
                 : "Scusa, non ho capito. Confermi la modifica?";
@@ -3029,17 +2768,14 @@ app.post("/twilio", async (req, res) => {
           }
         }
         else if (phase === 'completed') {
-          // Fall through to GPT
           console.log(`📍 MODIFY completed, passo a GPT`);
         }
       }
       
-      // Se phase === 'completed' per cancel, passa a GPT
       if (initialIntent === 'cancel' && phase === 'completed') {
         console.log(`📍 CANCEL completed, passo a GPT`);
       }
       
-      // Se abbiamo una risposta dal flusso deterministico, ritornala
       if (replyText && phase !== 'completed') {
         if (isDebug) {
           return res.status(200).json({ 
@@ -3091,7 +2827,6 @@ app.post("/twilio", async (req, res) => {
       const people = reservation.people || 2;
       const isLargeGroup = people > thresholds.largeGroup;
       
-      // Evento gigante
       if (people >= thresholds.event) {
         const email = ContextService.getRestaurantEmail(callId);
         replyText = lang === "en-US"
@@ -3099,7 +2834,6 @@ app.post("/twilio", async (req, res) => {
           : `Per gruppi oltre ${thresholds.event} persone, scrivi a ${email}.`;
         action = "none";
       }
-      // Gruppo grande (>10 <45)
       else if (isLargeGroup) {
         const availability = await CalendarService.checkAvailability(
           reservation.date, reservation.time, people, callId
@@ -3115,7 +2849,7 @@ app.post("/twilio", async (req, res) => {
             const alternatives = await CalendarService.findAlternatives(
               reservation.date, reservation.time, people, callId
             );
-            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+            replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
             action = "ask_time";
           }
         } else {
@@ -3137,7 +2871,6 @@ app.post("/twilio", async (req, res) => {
               ? `Thank you ${firstName}! Request registered for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant will confirm shortly.`
               : `Grazie ${firstName}! Richiesta registrata per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore confermerà a breve.`;
             
-            // FIX v3.7: Salva stato PENDING per intercettare risposte successive
             StateManager.setPhase(callId, 'pending_large_group');
             
             if (isDebug) gptResponse.calendarResult = calResult;
@@ -3149,7 +2882,6 @@ app.post("/twilio", async (req, res) => {
           }
         }
       }
-      // Prenotazione normale
       else {
         const availability = await CalendarService.checkAvailability(
           reservation.date, reservation.time, people, callId
@@ -3341,10 +3073,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.20 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.21 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: Pattern stretto giorno+numero, limite 60gg            ║
+║  ✨ FIX: BUG-001/002/009 verifica nome, intent Cancelleri     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
