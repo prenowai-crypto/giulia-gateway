@@ -1,20 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.23
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.24
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.23 - CRITICAL FIXES:
+// FIX v3.9.24 - HOTFIX:
 //
-// BUG-022 (P0 REGRESSION): "sono Nome" non più interpretato come negazione
-//   - Aggiunto \b word boundary a pattern negazione (no→\bno\b)
+// BUG-020 COMPLETO: Skip check availability anche nel flusso principale
+//   - ValidationPipeline skippava, ma flusso principale rifaceva check
+//   - Aggiunto skip eventId a check gruppi grandi (riga ~2950) e normali (riga ~3030)
 //
-// BUG-019 (P0): "altra prenotazione" ora riconosciuto come intent CREATE
-//   - Aggiunto CREATE_OVERRIDE_PATTERNS con priorità su MODIFY
-//
-// BUG-020 (P0): FIX P1 non blocca più update email su prenotazione appena creata
-//   - Aggiunto tracking eventId per callId
-//   - Skip check P1 se eventId esiste già (è un update, non nuova prenotazione)
-//
-// BUG-021 (P1): reply_text sincronizzato con data corretta anche al primo messaggio
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.23 (ereditati):
+// - BUG-022: "sono Nome" non più interpretato come negazione (\b word boundary)
+// - BUG-019: "altra prenotazione" riconosciuto come CREATE
+// - BUG-020: Skip check P1 in ValidationPipeline se eventId esiste
+// - BUG-021: reply_text sincronizzato con data corretta anche al primo messaggio
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX v3.9.22 (ereditati):
@@ -2945,24 +2944,11 @@ app.post("/twilio", async (req, res) => {
         action = "none";
       }
       else if (isLargeGroup) {
-        const availability = await CalendarService.checkAvailability(
-          reservation.date, reservation.time, people, callId
-        );
-        
-        if (!availability.available) {
-          if (availability.reason === "day_closed") {
-            replyText = lang === "en-US"
-              ? "We're closed that day. Would you like another day?"
-              : "Quel giorno siamo chiusi. Vuoi provare un altro giorno?";
-            action = "ask_date";
-          } else {
-            const alternatives = await CalendarService.findAlternatives(
-              reservation.date, reservation.time, people, callId
-            );
-            replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
-            action = "ask_time";
-          }
-        } else {
+        // FIX v3.9.24: Skip check se prenotazione già creata (è un update)
+        const existingEventId = StateManager.getCreatedEventId(callId);
+        if (existingEventId) {
+          console.log(`⏭️ FIX v3.9.24: Skip check flusso principale, prenotazione già creata (eventId: ${existingEventId})`);
+          // Procedi direttamente con update (non serve rifare check)
           const calResult = await CalendarService.createReservation({
             source: isDebug ? "debug" : "twilio",
             name: reservation.name,
@@ -2974,48 +2960,74 @@ app.post("/twilio", async (req, res) => {
           }, callId);
           
           if (calResult?.success) {
-            // FIX v3.9.23 BUG-020: Salva eventId per evitare falsi "al completo" su update
-            if (calResult.eventId) {
-              StateManager.setCreatedEventId(callId, calResult.eventId);
-            }
-            
             const firstName = reservation.name.split(' ')[0];
             const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
             const timeDisplay = reservation.time.substring(0, 5);
             replyText = lang === "en-US"
-              ? `Thank you ${firstName}! Request registered for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant will confirm shortly.`
-              : `Grazie ${firstName}! Richiesta registrata per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore confermerà a breve.`;
-            
-            StateManager.setPhase(callId, 'pending_large_group');
-            
+              ? `Updated! Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}.`
+              : `Aggiornato! La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}.`;
             if (isDebug) gptResponse.calendarResult = calResult;
+          }
+        } else {
+          const availability = await CalendarService.checkAvailability(
+            reservation.date, reservation.time, people, callId
+          );
+          
+          if (!availability.available) {
+            if (availability.reason === "day_closed") {
+              replyText = lang === "en-US"
+                ? "We're closed that day. Would you like another day?"
+                : "Quel giorno siamo chiusi. Vuoi provare un altro giorno?";
+              action = "ask_date";
+            } else {
+              const alternatives = await CalendarService.findAlternatives(
+                reservation.date, reservation.time, people, callId
+              );
+              replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
+              action = "ask_time";
+            }
           } else {
-            replyText = lang === "en-US"
-              ? "Sorry, technical problem. Please try again."
-              : "Mi dispiace, problema tecnico. Riprova.";
-            action = "none";
+            const calResult = await CalendarService.createReservation({
+              source: isDebug ? "debug" : "twilio",
+              name: reservation.name,
+              people,
+              date: reservation.date,
+              time: reservation.time,
+              phone: From || "unknown",
+              customerEmail: reservation.customerEmail,
+            }, callId);
+            
+            if (calResult?.success) {
+              // FIX v3.9.23 BUG-020: Salva eventId per evitare falsi "al completo" su update
+              if (calResult.eventId) {
+                StateManager.setCreatedEventId(callId, calResult.eventId);
+              }
+              
+              const firstName = reservation.name.split(' ')[0];
+              const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+              const timeDisplay = reservation.time.substring(0, 5);
+              replyText = lang === "en-US"
+                ? `Thank you ${firstName}! Request registered for ${people} people on ${dateDisplay} at ${timeDisplay}. The restaurant will confirm shortly.`
+                : `Grazie ${firstName}! Richiesta registrata per ${people} persone ${dateDisplay} alle ${timeDisplay}. Il ristoratore confermerà a breve.`;
+              
+              StateManager.setPhase(callId, 'pending_large_group');
+              
+              if (isDebug) gptResponse.calendarResult = calResult;
+            } else {
+              replyText = lang === "en-US"
+                ? "Sorry, technical problem. Please try again."
+                : "Mi dispiace, problema tecnico. Riprova.";
+              action = "none";
+            }
           }
         }
       }
       else {
-        const availability = await CalendarService.checkAvailability(
-          reservation.date, reservation.time, people, callId
-        );
-        
-        if (!availability.available) {
-          if (availability.reason === "day_closed") {
-            replyText = lang === "en-US"
-              ? "We're closed that day. Another day?"
-              : "Quel giorno siamo chiusi. Un altro giorno?";
-            action = "ask_date";
-          } else {
-            const alternatives = await CalendarService.findAlternatives(
-              reservation.date, reservation.time, people, callId
-            );
-            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
-            action = "ask_time";
-          }
-        } else {
+        // FIX v3.9.24: Skip check se prenotazione già creata (è un update)
+        const existingEventId = StateManager.getCreatedEventId(callId);
+        if (existingEventId) {
+          console.log(`⏭️ FIX v3.9.24: Skip check flusso normale, prenotazione già creata (eventId: ${existingEventId})`);
+          // Procedi direttamente con update
           const calResult = await CalendarService.createReservation({
             source: isDebug ? "debug" : "twilio",
             name: reservation.name,
@@ -3027,30 +3039,69 @@ app.post("/twilio", async (req, res) => {
           }, callId);
           
           if (calResult?.success) {
-            // FIX v3.9.23 BUG-020: Salva eventId per evitare falsi "al completo" su update
-            if (calResult.eventId) {
-              StateManager.setCreatedEventId(callId, calResult.eventId);
-            }
-            
             const firstName = reservation.name.split(' ')[0];
             const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
             const timeDisplay = reservation.time.substring(0, 5);
             replyText = lang === "en-US"
               ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. See you soon!`
               : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo!`;
-            
             if (isDebug) gptResponse.calendarResult = calResult;
-          } else if (calResult?.reason === "slot_full") {
-            const alternatives = await CalendarService.findAlternatives(
-              reservation.date, reservation.time, people, callId
-            );
-            replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
-            action = "ask_time";
+          }
+        } else {
+          const availability = await CalendarService.checkAvailability(
+            reservation.date, reservation.time, people, callId
+          );
+          
+          if (!availability.available) {
+            if (availability.reason === "day_closed") {
+              replyText = lang === "en-US"
+                ? "We're closed that day. Another day?"
+                : "Quel giorno siamo chiusi. Un altro giorno?";
+              action = "ask_date";
+            } else {
+              const alternatives = await CalendarService.findAlternatives(
+                reservation.date, reservation.time, people, callId
+              );
+              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+              action = "ask_time";
+            }
           } else {
-            replyText = lang === "en-US"
-              ? "Sorry, problem occurred. Try another time?"
-              : "Mi dispiace, c'è stato un problema. Prova un altro orario?";
-            action = "ask_time";
+            const calResult = await CalendarService.createReservation({
+              source: isDebug ? "debug" : "twilio",
+              name: reservation.name,
+              people,
+              date: reservation.date,
+              time: reservation.time,
+              phone: From || "unknown",
+              customerEmail: reservation.customerEmail,
+            }, callId);
+            
+            if (calResult?.success) {
+              // FIX v3.9.23 BUG-020: Salva eventId per evitare falsi "al completo" su update
+              if (calResult.eventId) {
+                StateManager.setCreatedEventId(callId, calResult.eventId);
+              }
+              
+              const firstName = reservation.name.split(' ')[0];
+              const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+              const timeDisplay = reservation.time.substring(0, 5);
+              replyText = lang === "en-US"
+                ? `Your reservation for ${people} people on ${dateDisplay} at ${timeDisplay} is confirmed, ${firstName}. See you soon!`
+                : `La prenotazione per ${people} persone ${dateDisplay} alle ${timeDisplay} è confermata, ${firstName}. Ti aspettiamo!`;
+              
+              if (isDebug) gptResponse.calendarResult = calResult;
+            } else if (calResult?.reason === "slot_full") {
+              const alternatives = await CalendarService.findAlternatives(
+                reservation.date, reservation.time, people, callId
+              );
+              replyText = CalendarService.buildAlternativesMessage(alternatives, lang);
+              action = "ask_time";
+            } else {
+              replyText = lang === "en-US"
+                ? "Sorry, problem occurred. Try another time?"
+                : "Mi dispiace, c'è stato un problema. Prova un altro orario?";
+              action = "ask_time";
+            }
           }
         }
       }
@@ -3193,10 +3244,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.23 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.24 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: BUG-022/019/020/021 regression + intent + P1 update  ║
+║  ✨ FIX: BUG-020 completo (skip check flusso principale)      ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
