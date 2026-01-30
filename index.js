@@ -1,16 +1,25 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.22
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.23
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.22 - POST-TEST BATCH:
+// FIX v3.9.23 - CRITICAL FIXES:
 //
-// BUG-017 (P0): "annullarla/cancellarla" ora riconosciuti come intent cancel
-//   - Aggiunte forme con pronomi cliticizzati (la, lo, li, le)
+// BUG-022 (P0 REGRESSION): "sono Nome" non più interpretato come negazione
+//   - Aggiunto \b word boundary a pattern negazione (no→\bno\b)
 //
-// BUG-013 (P1): nameMatches non fa più falsi positivi su negazioni
-//   - "io sono Rossi, non Martini" → NON matcha più "Martini"
+// BUG-019 (P0): "altra prenotazione" ora riconosciuto come intent CREATE
+//   - Aggiunto CREATE_OVERRIDE_PATTERNS con priorità su MODIFY
 //
-// UX-G6: extractName pulisce prefissi comuni ("sempre Barbieri" → "Barbieri")
+// BUG-020 (P0): FIX P1 non blocca più update email su prenotazione appena creata
+//   - Aggiunto tracking eventId per callId
+//   - Skip check P1 se eventId esiste già (è un update, non nuova prenotazione)
+//
+// BUG-021 (P1): reply_text sincronizzato con data corretta anche al primo messaggio
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.22 (ereditati):
+// - BUG-017: "annullarla/cancellarla" riconosciuti come intent cancel
+// - UX-G6: extractName pulisce prefissi comuni
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX v3.9.21 (ereditati):
@@ -84,6 +93,9 @@ const STATE = {
   
   // FIX v3.9.21 BUG-010: Contatore retry verifica nome
   nameVerificationRetries: new Map(),
+  
+  // FIX v3.9.23 BUG-020: Traccia eventId creati per evitare falsi "al completo"
+  createdEventIds: new Map(),
   
   // Registry cache
   registryCache: null,
@@ -161,6 +173,16 @@ const IntentDetector = {
     'i have a booking', 'my booking',
   ],
   
+  // FIX v3.9.23 BUG-019: Pattern che forzano CREATE anche se ci sono keyword MODIFY
+  // Esempio: "vorrei aggiungere un'altra prenotazione" → CREATE (non MODIFY)
+  CREATE_OVERRIDE_PATTERNS: [
+    /\b(altra|nuova|seconda)\s+prenotazione/i,
+    /\b(un'?\s*altra|una\s+nuova)\s+prenotazione/i,
+    /\bprenotazione\s+(nuova|altra)/i,
+    /\b(another|new|second)\s+(reservation|booking)/i,
+    /\b(make|add|create)\s+(a\s+)?(new|another)\s+(reservation|booking)/i,
+  ],
+  
   // ═══════════════════════════════════════════════════════════════════════════
   // FIX v3.9.21 BUG-002: Pre-processing per proteggere cognomi
   // ═══════════════════════════════════════════════════════════════════════════
@@ -180,6 +202,15 @@ const IntentDetector = {
     
     const t = this._preprocessText(text);
     const tOriginal = text.toLowerCase();
+    
+    // FIX v3.9.23 BUG-019: Check CREATE_OVERRIDE_PATTERNS PRIMA di tutto
+    // "altra prenotazione" deve essere CREATE anche se c'è "aggiungere"
+    for (const pattern of this.CREATE_OVERRIDE_PATTERNS) {
+      if (pattern.test(tOriginal)) {
+        console.log(`🎯 FIX v3.9.23: Intent CREATE forzato da pattern override`);
+        return 'create';
+      }
+    }
     
     // FIX v3.9.21: Word boundary per evitare match parziali
     for (const kw of this.CANCEL_KEYWORDS) {
@@ -319,6 +350,17 @@ const StateManager = {
     return current + 1;
   },
   
+  // FIX v3.9.23 BUG-020: Traccia eventId per evitare check P1 su update
+  getCreatedEventId(callId) {
+    return STATE.createdEventIds.get(callId) || null;
+  },
+  setCreatedEventId(callId, eventId) {
+    if (callId && eventId) {
+      STATE.createdEventIds.set(callId, eventId);
+      console.log(`📋 FIX v3.9.23: EventId salvato per callId ${callId}: ${eventId}`);
+    }
+  },
+  
   // Cleanup
   clearCall(callId) {
     STATE.conversations.delete(callId);
@@ -332,6 +374,7 @@ const StateManager = {
     STATE.conversationPhases.delete(callId);
     STATE.pendingModifications.delete(callId);
     STATE.nameVerificationRetries.delete(callId);
+    STATE.createdEventIds.delete(callId);  // FIX v3.9.23
   },
 };
 
@@ -1391,17 +1434,19 @@ const RecapManager = {
     const expectedLower = expectedName.toLowerCase().trim();
     
     // FIX v3.9.22 BUG-013: Check negazione PRIMA di cercare il nome
+    // FIX v3.9.23 BUG-022: Aggiunto \b word boundary per evitare match "sono" → "no"
     // Se il nome atteso è in un contesto di negazione, non è un match
     const negationPatterns = [
-      new RegExp(`non\\s+(sono|mi\\s+chiamo|è|e')\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
-      new RegExp(`(non|no)\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
-      new RegExp(`${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(no|non|sbagliato|errato)`, 'i'),
-      new RegExp(`(sbagliato|errato|errore|non\\s+è).*${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`\\bnon\\s+(sono|mi\\s+chiamo|è|e')\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`\\b(non|no)\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),  // FIX v3.9.23: \b aggiunto
+      new RegExp(`${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\b(no|non|sbagliato|errato)\\b`, 'i'),
+      new RegExp(`\\b(sbagliato|errato|errore)\\b.*${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`\\bnon\\s+è\\s+${expectedLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
     ];
     
     for (const pattern of negationPatterns) {
       if (pattern.test(responseLower)) {
-        console.log(`❌ FIX v3.9.22 nameMatches: "${expectedLower}" in contesto NEGAZIONE, ignoro`);
+        console.log(`❌ FIX v3.9.23 nameMatches: "${expectedLower}" in contesto NEGAZIONE, ignoro`);
         return false;
       }
     }
@@ -1697,6 +1742,32 @@ const ValidationPipeline = {
       if (reservation.date && reservation.date !== parsedDate) {
         console.log(`📆 FIX v3.9 OVERRIDE DATA: ${reservation.date} → ${parsedDate}`);
       }
+      
+      // FIX v3.9.23 BUG-021: Correggi reply_text se GPT usa data diversa da quella calcolata
+      // Questo fix si applica anche al PRIMO messaggio (quando savedReservation è vuoto)
+      if (gptOriginalDate && gptOriginalDate !== parsedDate) {
+        const italianMonths = "gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre";
+        const englishMonths = "January|February|March|April|May|June|July|August|September|October|November|December";
+        const italianDatePattern = new RegExp(`\\b(\\d{1,2})\\s+(${italianMonths})\\b`, 'gi');
+        const englishDatePattern = new RegExp(`\\b(${englishMonths})\\s+(\\d{1,2})\\b`, 'gi');
+        
+        const correctDateDisplay = DateManager.formatForDisplay(parsedDate, lang);
+        
+        if (response.reply_text && (italianDatePattern.test(response.reply_text) || englishDatePattern.test(response.reply_text))) {
+          let correctedReply = response.reply_text;
+          // Reset regex lastIndex
+          italianDatePattern.lastIndex = 0;
+          englishDatePattern.lastIndex = 0;
+          correctedReply = correctedReply.replace(italianDatePattern, correctDateDisplay);
+          correctedReply = correctedReply.replace(englishDatePattern, correctDateDisplay);
+          
+          if (correctedReply !== response.reply_text) {
+            console.log(`📝 FIX v3.9.23 BUG-021: Corretto reply_text con data calcolata: "${correctDateDisplay}"`);
+            response.reply_text = correctedReply;
+          }
+        }
+      }
+      
       reservation.date = parsedDate;
       
       const dayWeekMismatch = this.checkDayWeekNumberMismatch(userText, parsedDate, lang);
@@ -1928,41 +1999,47 @@ const ValidationPipeline = {
     if (hasDateForCheck && hasTimeForCheck && hasPeopleForCheck) {
       if (response.action === "ask_name" || response.action === "ask_email" || response.action === "create_reservation") {
         
-        const dateToCheck = reservation.date;
-        const timeToCheck = reservation.time;
-        const peopleToCheck = reservation.people;
-        
-        console.log(`🔍 FIX P1: Check anticipato ${dateToCheck} ${timeToCheck} per ${peopleToCheck} pax`);
-        const availability = await CalendarService.checkAvailability(
-          dateToCheck, timeToCheck, peopleToCheck, callId
-        );
-        
-        if (!availability.available) {
-          console.log(`⚠️ FIX P1: Slot NON disponibile! Propongo alternative.`);
-          
-          if (availability.reason === "day_closed") {
-            response.reply_text = lang === "en-US"
-              ? "I'm sorry, we're closed that day. Would you like another day?"
-              : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
-            response.action = "ask_date";
-            reservation.date = null;
-            StateManager.mergeReservation(callId, { date: null });
-          } else {
-            const alternatives = await CalendarService.findAlternatives(
-              dateToCheck, timeToCheck, peopleToCheck, callId
-            );
-            const isLargeGroup = peopleToCheck > CONFIG.LARGE_GROUP_THRESHOLD;
-            response.reply_text = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
-            response.action = "ask_time";
-            reservation.time = null;
-            StateManager.mergeReservation(callId, { time: null });
-          }
-          
-          response.reservation = reservation;
-          console.log("✅ ValidationPipeline completato (con redirect P1)");
-          return response;
+        // FIX v3.9.23 BUG-020: Skip check P1 se prenotazione già creata (è un update, non nuova)
+        const existingEventId = StateManager.getCreatedEventId(callId);
+        if (existingEventId) {
+          console.log(`⏭️ FIX v3.9.23: Skip check P1, prenotazione già creata (eventId: ${existingEventId})`);
         } else {
-          console.log(`✅ FIX P1: Slot disponibile, procedo normalmente`);
+          const dateToCheck = reservation.date;
+          const timeToCheck = reservation.time;
+          const peopleToCheck = reservation.people;
+          
+          console.log(`🔍 FIX P1: Check anticipato ${dateToCheck} ${timeToCheck} per ${peopleToCheck} pax`);
+          const availability = await CalendarService.checkAvailability(
+            dateToCheck, timeToCheck, peopleToCheck, callId
+          );
+          
+          if (!availability.available) {
+            console.log(`⚠️ FIX P1: Slot NON disponibile! Propongo alternative.`);
+            
+            if (availability.reason === "day_closed") {
+              response.reply_text = lang === "en-US"
+                ? "I'm sorry, we're closed that day. Would you like another day?"
+                : "Mi dispiace, quel giorno siamo chiusi. Vuoi provare un altro giorno?";
+              response.action = "ask_date";
+              reservation.date = null;
+              StateManager.mergeReservation(callId, { date: null });
+            } else {
+              const alternatives = await CalendarService.findAlternatives(
+                dateToCheck, timeToCheck, peopleToCheck, callId
+              );
+              const isLargeGroup = peopleToCheck > CONFIG.LARGE_GROUP_THRESHOLD;
+              response.reply_text = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
+              response.action = "ask_time";
+              reservation.time = null;
+              StateManager.mergeReservation(callId, { time: null });
+            }
+            
+            response.reservation = reservation;
+            console.log("✅ ValidationPipeline completato (con redirect P1)");
+            return response;
+          } else {
+            console.log(`✅ FIX P1: Slot disponibile, procedo normalmente`);
+          }
         }
       }
     }
@@ -2897,6 +2974,11 @@ app.post("/twilio", async (req, res) => {
           }, callId);
           
           if (calResult?.success) {
+            // FIX v3.9.23 BUG-020: Salva eventId per evitare falsi "al completo" su update
+            if (calResult.eventId) {
+              StateManager.setCreatedEventId(callId, calResult.eventId);
+            }
+            
             const firstName = reservation.name.split(' ')[0];
             const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
             const timeDisplay = reservation.time.substring(0, 5);
@@ -2945,6 +3027,11 @@ app.post("/twilio", async (req, res) => {
           }, callId);
           
           if (calResult?.success) {
+            // FIX v3.9.23 BUG-020: Salva eventId per evitare falsi "al completo" su update
+            if (calResult.eventId) {
+              StateManager.setCreatedEventId(callId, calResult.eventId);
+            }
+            
             const firstName = reservation.name.split(' ')[0];
             const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
             const timeDisplay = reservation.time.substring(0, 5);
@@ -3106,10 +3193,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.21 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.23 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: BUG-001/002/009 verifica nome, intent Cancelleri     ║
+║  ✨ FIX: BUG-022/019/020/021 regression + intent + P1 update  ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
