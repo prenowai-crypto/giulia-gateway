@@ -1,12 +1,33 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.24
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.25
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.24 - HOTFIX:
+// FIX v3.9.25 - CRITICAL FIXES:
 //
-// BUG-020 COMPLETO: Skip check availability anche nel flusso principale
-//   - ValidationPipeline skippava, ma flusso principale rifaceva check
-//   - Aggiunto skip eventId a check gruppi grandi (riga ~2950) e normali (riga ~3030)
+// BUG-023 (F1/F7): "confermo la cancellazione" ora riconosciuto nella stessa frase del nome
+//   - Aggiunta isConfirmingCancellation() che riconosce pattern espliciti
+//   - Se nome verificato + conferma nella stessa frase → cancella direttamente
+//
+// E7: "martedì 10" ora usa il 10 come giorno del mese
+//   - Aggiunta _parseWeekdayWithDayNumber() che riconosce "giorno + numero"
+//   - Il numero ha priorità sul giorno della settimana calcolato
+//
+// E10: Nel MODIFY, date prima della prenotazione originale vengono corrette
+//   - Se data calcolata < data prenotazione → +7 giorni
+//
+// E3/E5/E9: Check disponibilità PRIMA di chiedere conferma nel MODIFY
+//   - Quando cliente fornisce nuovi dettagli (orario/data/persone)
+//   - Sistema verifica PRIMA se disponibile
+//   - Se slot pieno → propone alternative invece di chiedere conferma
+//
+// E4: Proattività quando numero ha già prenotazione
+//   - Se intent=CREATE ma numero ha prenotazione esistente
+//   - Sistema chiede: "Vuoi modificare quella prenotazione o farne una nuova?"
+//   - Gestisce risposta e indirizza al flusso corretto
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.24 (ereditati):
+// - BUG-020 COMPLETO: Skip check availability anche nel flusso principale
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX v3.9.23 (ereditati):
@@ -329,6 +350,11 @@ const StateManager = {
     STATE.existingReservations.set(callId, reservation);
     console.log(`📋 Prenotazione esistente salvata:`, reservation);
   },
+  // FIX v3.9.25 E4: Pulisce prenotazione esistente per nuova prenotazione
+  clearExistingReservation(callId) {
+    STATE.existingReservations.delete(callId);
+    console.log(`📋 FIX v3.9.25: Prenotazione esistente rimossa per nuova prenotazione`);
+  },
   
   // v3: Fase conversazione
   getPhase(callId) {
@@ -575,12 +601,61 @@ const DateManager = {
       return relativeDate;
     }
     
+    // FIX v3.9.25 E7: Pattern "giorno settimana + numero" (es. "martedì 10")
+    // Il numero indica il giorno del mese, non è da ignorare!
+    const weekdayWithDay = this._parseWeekdayWithDayNumber(t, today);
+    if (weekdayWithDay) {
+      console.log(`📆 FIX v3.9.25: Giorno settimana + numero trovato: ${weekdayWithDay}`);
+      return weekdayWithDay;
+    }
+    
     const weekdayDate = this._parseWeekdayDate(t, today);
     if (weekdayDate) {
       console.log(`📆 FIX v3.9: Giorno settimana trovato: ${weekdayDate}`);
       return weekdayDate;
     }
     
+    return null;
+  },
+  
+  // FIX v3.9.25 E7: Parsa "martedì 10" → 10 del mese corrente/prossimo
+  _parseWeekdayWithDayNumber(text, today) {
+    const weekdayPatterns = [
+      { pattern: /\b(?:domenica|sunday)\s+(\d{1,2})\b/i, index: 0 },
+      { pattern: /\b(?:lunedi|monday)\s+(\d{1,2})\b/i, index: 1 },
+      { pattern: /\b(?:martedi|tuesday)\s+(\d{1,2})\b/i, index: 2 },
+      { pattern: /\b(?:mercoledi|wednesday)\s+(\d{1,2})\b/i, index: 3 },
+      { pattern: /\b(?:giovedi|thursday)\s+(\d{1,2})\b/i, index: 4 },
+      { pattern: /\b(?:venerdi|friday)\s+(\d{1,2})\b/i, index: 5 },
+      { pattern: /\b(?:sabato|saturday)\s+(\d{1,2})\b/i, index: 6 },
+    ];
+    
+    for (const wp of weekdayPatterns) {
+      const match = text.match(wp.pattern);
+      if (match) {
+        const dayNum = parseInt(match[1]);
+        if (dayNum >= 1 && dayNum <= 31) {
+          // Prova mese corrente
+          let candidate = new Date(today.getFullYear(), today.getMonth(), dayNum);
+          
+          // Se è nel passato, prova mese prossimo
+          if (candidate < today) {
+            candidate = new Date(today.getFullYear(), today.getMonth() + 1, dayNum);
+          }
+          
+          // Verifica che il giorno della settimana corrisponda
+          if (candidate.getDay() === wp.index) {
+            console.log(`📆 FIX v3.9.25: "${this.DAYS_IT[wp.index]} ${dayNum}" → ${this.toISO(candidate)}`);
+            return this.toISO(candidate);
+          } else {
+            // Se non corrisponde, l'utente potrebbe essersi sbagliato sul giorno settimana
+            // Usiamo comunque il numero come priorità (l'utente ha detto "10")
+            console.log(`⚠️ FIX v3.9.25: "${this.DAYS_IT[wp.index]} ${dayNum}" ma ${dayNum} non è ${this.DAYS_IT[wp.index]}, uso comunque giorno ${dayNum}`);
+            return this.toISO(candidate);
+          }
+        }
+      }
+    }
     return null;
   },
   
@@ -1319,8 +1394,24 @@ const RecapManager = {
       }
     }
     
-    const date = DateManager.parseFromText(text);
+    let date = DateManager.parseFromText(text);
     if (date && date !== existingRes.date) {
+      // FIX v3.9.25 E10: Se la data calcolata è PRIMA della prenotazione originale,
+      // non ha senso "spostare" indietro - aggiungi 7 giorni
+      if (existingRes.date && date < existingRes.date) {
+        const originalDate = new Date(existingRes.date);
+        const parsedDate = new Date(date);
+        const daysDiff = Math.round((originalDate - parsedDate) / (1000 * 60 * 60 * 24));
+        
+        // Se è entro 7 giorni prima, probabilmente intende la settimana dopo
+        if (daysDiff <= 7 && daysDiff > 0) {
+          const correctedDate = new Date(parsedDate);
+          correctedDate.setDate(correctedDate.getDate() + 7);
+          const correctedISO = DateManager.toISO(correctedDate);
+          console.log(`⚠️ FIX v3.9.25 E10: Data ${date} è PRIMA di prenotazione ${existingRes.date}, correggo a ${correctedISO}`);
+          date = correctedISO;
+        }
+      }
       result.newDate = date;
     }
     
@@ -1511,6 +1602,22 @@ const RecapManager = {
     const t = normalizeText(text || "");
     if (/^(si\b|sii\b|yes\b|esatto|corretto|giusto|confermo|certo|ok\b|va bene|proprio|quella|perfetto)/.test(t)) return true;
     if (/\b(conferm|esatt|corrett|giust|perfett)\b/.test(t)) return true;
+    return false;
+  },
+  
+  // FIX v3.9.25 BUG-023: Riconosce conferma cancellazione esplicita
+  isConfirmingCancellation(text) {
+    const t = normalizeText(text || "");
+    // Pattern italiani
+    if (/conferm\w*\s+(la\s+)?cancellazion/i.test(t)) return true;
+    if (/cancella(te)?\s+pure/i.test(t)) return true;
+    if (/procedi\s+(con\s+)?(la\s+)?cancellazion/i.test(t)) return true;
+    if (/si\s*,?\s*cancella/i.test(t)) return true;
+    // Pattern inglesi
+    if (/confirm\w*\s+(the\s+)?cancellation/i.test(t)) return true;
+    if (/please\s+cancel/i.test(t)) return true;
+    if (/go\s+ahead\s+(and\s+)?cancel/i.test(t)) return true;
+    if (/yes\s*,?\s*cancel/i.test(t)) return true;
     return false;
   },
   
@@ -2543,17 +2650,22 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // RILEVA INTENT E CERCA PRENOTAZIONE (solo primo messaggio)
+    // FIX v3.9.25 E4: Cerca prenotazione anche per intent CREATE
     // ═══════════════════════════════════════════════════════════════════════
     if (!StateManager.getInitialIntent(callId)) {
       const detectedIntent = IntentDetector.detectIntent(userText);
       StateManager.setInitialIntent(callId, detectedIntent);
       
-      if ((detectedIntent === 'cancel' || detectedIntent === 'modify') && From) {
+      // FIX v3.9.25 E4: Cerca prenotazione per TUTTI gli intent (non solo cancel/modify)
+      if (From) {
         try {
           const existing = await CalendarService.findExistingReservation(From, null, callId);
           if (existing) {
             StateManager.setExistingReservation(callId, existing);
-            StateManager.setPhase(callId, 'awaiting_name');
+            if (detectedIntent === 'cancel' || detectedIntent === 'modify') {
+              StateManager.setPhase(callId, 'awaiting_name');
+            }
+            // Per intent CREATE, lascia phase=initial, gestiremo dopo
           }
         } catch (err) {
           console.log(`⚠️ Errore ricerca:`, err.message);
@@ -2564,6 +2676,85 @@ app.post("/twilio", async (req, res) => {
     const initialIntent = StateManager.getInitialIntent(callId);
     const existingRes = StateManager.getExistingReservation(callId);
     const phase = StateManager.getPhase(callId);
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.25 E4: PROATTIVITÀ - Intent CREATE ma cliente ha già prenotazione
+    // ═══════════════════════════════════════════════════════════════════════
+    if (initialIntent === 'create' && existingRes && phase === 'initial') {
+      console.log(`📋 FIX v3.9.25 E4: Intent CREATE ma cliente ha prenotazione esistente`);
+      
+      const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
+      const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
+      
+      const replyText = lang === "en-US"
+        ? `I see you already have a reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay}. Would you like to modify that reservation, or make a new one?`
+        : `Vedo che hai già una prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay}. Vuoi modificare quella prenotazione, o farne una nuova?`;
+      
+      StateManager.setPhase(callId, 'awaiting_create_or_modify');
+      
+      if (isDebug) {
+        return res.status(200).json({ reply_text: replyText, action: "ask_create_or_modify", reservation: existingRes });
+      }
+      const twiml = `
+        <Response>
+          <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+            <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+          </Gather>
+        </Response>
+      `.trim();
+      return res.status(200).type("text/xml").send(twiml);
+    }
+    
+    // FIX v3.9.25 E4: Gestione risposta a "modificare o nuova?"
+    if (phase === 'awaiting_create_or_modify') {
+      const wantsModify = /modific|cambi|spostar|quella|esistente|modify|change|that one|existing/i.test(userText);
+      const wantsNew = /nuov|altra|second|new|another|different/i.test(userText);
+      
+      if (wantsModify) {
+        console.log(`📋 FIX v3.9.25 E4: Cliente vuole modificare`);
+        StateManager.setInitialIntent(callId, 'modify');
+        StateManager.setPhase(callId, 'awaiting_name');
+        
+        const replyText = RecapManager.buildAskNameMessage(lang);
+        
+        if (isDebug) {
+          return res.status(200).json({ reply_text: replyText, action: "verify_name", reservation: existingRes });
+        }
+        const twiml = `
+          <Response>
+            <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+              <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+            </Gather>
+          </Response>
+        `.trim();
+        return res.status(200).type("text/xml").send(twiml);
+      }
+      else if (wantsNew) {
+        console.log(`📋 FIX v3.9.25 E4: Cliente vuole nuova prenotazione`);
+        // Resetta lo stato per procedere con nuova prenotazione
+        StateManager.clearExistingReservation(callId);
+        StateManager.setPhase(callId, 'initial');
+        // Continua con il flusso CREATE normale (va a GPT)
+      }
+      else {
+        // Non chiaro, richiedi
+        const replyText = lang === "en-US"
+          ? "Would you like to modify your existing reservation, or make a completely new one?"
+          : "Vuoi modificare la prenotazione esistente, oppure farne una completamente nuova?";
+        
+        if (isDebug) {
+          return res.status(200).json({ reply_text: replyText, action: "ask_create_or_modify", reservation: existingRes });
+        }
+        const twiml = `
+          <Response>
+            <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+              <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+            </Gather>
+          </Response>
+        `.trim();
+        return res.status(200).type("text/xml").send(twiml);
+      }
+    }
     
     // ═══════════════════════════════════════════════════════════════════════
     // SHORTCUT: Email ristorante
@@ -2662,8 +2853,33 @@ app.post("/twilio", async (req, res) => {
           console.log(`✅ Nome verificato!`);
           
           if (initialIntent === 'cancel') {
-            replyText = RecapManager.buildCancelRecapMessage(existingRes, lang);
-            StateManager.setPhase(callId, 'awaiting_cancel_confirm');
+            // FIX v3.9.25 BUG-023: Controlla se il cliente ha già confermato nella stessa frase
+            const alsoConfirmed = RecapManager.isConfirmingCancellation(userText);
+            if (alsoConfirmed) {
+              console.log(`✅ FIX v3.9.25: Cliente ha anche confermato cancellazione nella stessa frase`);
+              console.log(`🗑️ Eseguo cancellazione diretta...`);
+              const result = await CalendarService.cancelReservation({
+                source: isDebug ? "debug" : "twilio",
+                name: existingRes.name,
+                date: existingRes.date,
+                time: existingRes.time,
+                phone: From,
+              }, callId);
+              
+              if (result?.success) {
+                replyText = RecapManager.buildCancellationDoneMessage(existingRes, lang);
+                action = "cancel_reservation";
+                shouldHangup = true;
+                StateManager.setPhase(callId, 'completed');
+              } else {
+                replyText = lang === "en-US"
+                  ? "I'm sorry, there was a problem. Please contact the restaurant directly."
+                  : "Mi dispiace, c'è stato un problema. Contatta direttamente il ristorante.";
+              }
+            } else {
+              replyText = RecapManager.buildCancelRecapMessage(existingRes, lang);
+              StateManager.setPhase(callId, 'awaiting_cancel_confirm');
+            }
           } else {
             replyText = RecapManager.buildModifyRecapMessage(existingRes, "", lang);
             StateManager.setPhase(callId, 'awaiting_modify_details');
@@ -2736,6 +2952,61 @@ app.post("/twilio", async (req, res) => {
             STATE.pendingModifications.set(callId, modification);
             
             const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
+            
+            // FIX v3.9.25 E3/E5/E9: Check disponibilità PRIMA di chiedere conferma
+            const checkDate = modification.newDate || existingRes.date;
+            const checkTime = modification.newTime || existingRes.time;
+            const checkPeople = modification.newPeople || existingRes.people;
+            
+            // Prima controlla se il giorno è chiuso
+            if (modification.newDate) {
+              const closureCheck = await ClosureChecker.isOpen(modification.newDate, callId);
+              if (!closureCheck.open) {
+                console.log(`⚠️ FIX v3.9.25: Check preventivo MODIFY - giorno chiuso`);
+                replyText = ClosureChecker.buildClosedMessage(modification.newDate, closureCheck, lang);
+                // Non cambiamo fase, resta in awaiting_modify_details
+                
+                if (isDebug) {
+                  return res.status(200).json({ reply_text: replyText, action: "ask_date", phase: 'awaiting_modify_details' });
+                }
+                const twiml = `
+                  <Response>
+                    <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                      <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+                    </Gather>
+                  </Response>
+                `.trim();
+                return res.status(200).type("text/xml").send(twiml);
+              }
+            }
+            
+            // Poi controlla disponibilità slot
+            console.log(`🔍 FIX v3.9.25: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax`);
+            const availability = await CalendarService.checkAvailability(checkDate, checkTime, checkPeople, callId);
+            
+            if (!availability.available && availability.reason !== "day_closed") {
+              console.log(`⚠️ FIX v3.9.25: Check preventivo MODIFY - slot pieno, propongo alternative`);
+              const alternatives = await CalendarService.findAlternatives(checkDate, checkTime, checkPeople, callId);
+              const isLargeGroup = checkPeople > CONFIG.LARGE_GROUP_THRESHOLD;
+              replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
+              // Non cambiamo fase, resta in awaiting_modify_details
+              
+              if (isDebug) {
+                return res.status(200).json({ reply_text: replyText, action: "ask_time", phase: 'awaiting_modify_details' });
+              }
+              const twiml = `
+                <Response>
+                  <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                    <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+                  </Gather>
+                </Response>
+              `.trim();
+              return res.status(200).type("text/xml").send(twiml);
+            }
+            
+            console.log(`✅ FIX v3.9.25: Check preventivo MODIFY - disponibile, chiedo conferma`);
+            
+            // Disponibile! Chiedi conferma
             const modCount = (modification.newTime ? 1 : 0) + (modification.newDate ? 1 : 0) + (modification.newPeople ? 1 : 0);
             
             if (modCount >= 2) {
@@ -3244,10 +3515,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.24 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.25 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: BUG-020 completo (skip check flusso principale)      ║
+║  ✨ FIX: BUG-023, E3-E10, check MODIFY, proattività numero    ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
