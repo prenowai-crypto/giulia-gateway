@@ -2878,7 +2878,7 @@ app.post("/twilio", async (req, res) => {
       }
       const twiml = `
         <Response>
-    ;
+    
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.26 F4-UX: Riconosce chiusura conversazione quando nessuna prenotazione
     // ═══════════════════════════════════════════════════════════════════════
