@@ -1,29 +1,38 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.25
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.26
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.25 - CRITICAL FIXES:
+// FIX v3.9.26 - MINI BUG FIXES:
+//
+// ZF9B: Skip proattività se cliente dice esplicitamente "altra/nuova prenotazione"
+//   - Pattern: /\b(altra|nuova|second\w*)\s+(prenotazion|reservation)/i
+//   - Se match, procede direttamente con CREATE senza chiedere
+//
+// ZG-NOME: Override ask_name → ask_email se ValidationPipeline ha estratto nome
+//   - Se GPT dice ask_name ma NameManager ha estratto un nome valido
+//   - Cambia action a ask_email per evitare richiesta ridondante
+//
+// E4-FLUSSO: Dopo switch a MODIFY, verifica nome nella risposta
+//   - Se cliente dice "Sì sono X" e X corrisponde, passa direttamente a awaiting_modify_details
+//   - Evita passaggio inutile per awaiting_name
+//
+// F6-RIPENSAMENTO: isDenying esteso per riconoscere ripensamenti
+//   - Nuovi pattern: "teniamo/mantieni/lascia stare/lascia perdere/non cancellare"
+//
+// E10-UX: Riconosce "lascia perdere, va bene così" come annullamento modifica
+//   - In awaiting_modify_details, pattern per mantenere originale
+//
+// F4-UX: Riconosce chiusura conversazione
+//   - "va bene grazie/ok grazie" quando nessuna prenotazione trovata → chiude
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.25 (ereditati):
 //
 // BUG-023 (F1/F7): "confermo la cancellazione" ora riconosciuto nella stessa frase del nome
-//   - Aggiunta isConfirmingCancellation() che riconosce pattern espliciti
-//   - Se nome verificato + conferma nella stessa frase → cancella direttamente
-//
 // E7: "martedì 10" ora usa il 10 come giorno del mese
-//   - Aggiunta _parseWeekdayWithDayNumber() che riconosce "giorno + numero"
-//   - Il numero ha priorità sul giorno della settimana calcolato
-//
 // E10: Nel MODIFY, date prima della prenotazione originale vengono corrette
-//   - Se data calcolata < data prenotazione → +7 giorni
-//
 // E3/E5/E9: Check disponibilità PRIMA di chiedere conferma nel MODIFY
-//   - Quando cliente fornisce nuovi dettagli (orario/data/persone)
-//   - Sistema verifica PRIMA se disponibile
-//   - Se slot pieno → propone alternative invece di chiedere conferma
-//
 // E4: Proattività quando numero ha già prenotazione
-//   - Se intent=CREATE ma numero ha prenotazione esistente
-//   - Sistema chiede: "Vuoi modificare quella prenotazione o farne una nuova?"
-//   - Gestisce risposta e indirizza al flusso corretto
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX v3.9.24 (ereditati):
@@ -1625,6 +1634,10 @@ const RecapManager = {
     const t = normalizeText(text || "");
     if (/^(no[^n]|non |sbagliato|errato|altra|diversa)/.test(t)) return true;
     if (/\b(sbagliat|errat|non e quella)\b/.test(t)) return true;
+    // FIX v3.9.26 F6: Riconosce ripensamenti sulla cancellazione
+    if (/\b(teniamo|mantieni|manteniamo|lascia stare|lascia perdere|non cancell|non la cancell)\b/i.test(t)) return true;
+    // Pattern inglesi per ripensamento
+    if (/\b(keep it|don't cancel|never\s*mind|forget it)\b/i.test(t)) return true;
     return false;
   },
   
@@ -2083,6 +2096,14 @@ const ValidationPipeline = {
     if (parsedName) {
       if (!reservation.name) {
         reservation.name = parsedName;
+      }
+      // FIX v3.9.26 ZG-NOME: Se abbiamo estratto nome e GPT chiede nome, passa a email
+      if (response.action === "ask_name" && parsedName) {
+        console.log(`📤 FIX v3.9.26 ZG-NOME: Nome "${parsedName}" estratto, override ask_name → ask_email`);
+        response.action = "ask_email";
+        response.reply_text = lang === "en-US"
+          ? "Do you have an email for the confirmation? It's optional."
+          : "Hai un'email per la conferma? È opzionale.";
       }
     } else if (savedReservation.name && !reservation.name) {
       reservation.name = savedReservation.name;
@@ -2679,9 +2700,17 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.25 E4: PROATTIVITÀ - Intent CREATE ma cliente ha già prenotazione
+    // FIX v3.9.26 ZF9B: Skip se cliente dice esplicitamente "altra/nuova prenotazione"
     // ═══════════════════════════════════════════════════════════════════════
     if (initialIntent === 'create' && existingRes && phase === 'initial') {
-      console.log(`📋 FIX v3.9.25 E4: Intent CREATE ma cliente ha prenotazione esistente`);
+      // FIX v3.9.26 ZF9B: Se cliente dice "altra/nuova prenotazione", skip proattività
+      const wantsExplicitlyNew = /\b(altra|nuova|second\w*)\s+(prenotazion|reservation)/i.test(userText);
+      
+      if (wantsExplicitlyNew) {
+        console.log(`📋 FIX v3.9.26 ZF9B: Cliente dice esplicitamente "altra/nuova prenotazione", skip proattività`);
+        // Non facciamo nulla qui, il flusso continuerà normalmente verso GPT per CREATE
+      } else {
+        console.log(`📋 FIX v3.9.25 E4: Intent CREATE ma cliente ha prenotazione esistente`);
       
       const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
       const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
@@ -2703,6 +2732,7 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
       return res.status(200).type("text/xml").send(twiml);
+      } // Fine else di FIX v3.9.26 ZF9B
     }
     
     // FIX v3.9.25 E4: Gestione risposta a "modificare o nuova?"
@@ -2713,6 +2743,33 @@ app.post("/twilio", async (req, res) => {
       if (wantsModify) {
         console.log(`📋 FIX v3.9.25 E4: Cliente vuole modificare`);
         StateManager.setInitialIntent(callId, 'modify');
+        
+        // FIX v3.9.26 E4-FLUSSO: Verifica se il nome è già stato detto nella risposta
+        const saidName = NameManager.extractName(userText);
+        const nameMatches = saidName && existingRes?.name && 
+          RecapManager.nameMatches(userText, existingRes.name);
+        
+        if (nameMatches) {
+          console.log(`📋 FIX v3.9.26 E4-FLUSSO: Nome "${saidName}" corrisponde, skip verifica nome`);
+          StateManager.setPhase(callId, 'awaiting_modify_details');
+          
+          const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
+          const replyText = RecapManager.buildAskWhatToModify(existingRes, lang);
+          
+          if (isDebug) {
+            return res.status(200).json({ reply_text: replyText, action: "ask_modify_details", reservation: existingRes });
+          }
+          const twiml = `
+            <Response>
+              <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+              </Gather>
+            </Response>
+          `.trim();
+          return res.status(200).type("text/xml").send(twiml);
+        }
+        
+        // Nome non verificato, chiedi conferma nome
         StateManager.setPhase(callId, 'awaiting_name');
         
         const replyText = RecapManager.buildAskNameMessage(lang);
@@ -2821,6 +2878,35 @@ app.post("/twilio", async (req, res) => {
       }
       const twiml = `
         <Response>
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX v3.9.26 F4-UX: Riconosce chiusura conversazione quando nessuna prenotazione
+    // ═══════════════════════════════════════════════════════════════════════
+    if (phase === 'no_reservation_found') {
+      const wantsToClose = /\b(va bene grazie|ok grazie|grazie lo stesso|thanks anyway|never\s*mind|that's ok|no worries)\b/i.test(userText);
+      
+      if (wantsToClose) {
+        console.log(`📋 FIX v3.9.26 F4-UX: Cliente chiude conversazione senza prenotazione`);
+        
+        const replyText = lang === "en-US"
+          ? "No problem! If you need anything else, feel free to call back. Have a great day!"
+          : "Nessun problema! Se hai bisogno di altro, richiamaci pure. Buona giornata!";
+        
+        StateManager.setPhase(callId, 'completed');
+        
+        if (isDebug) {
+          return res.status(200).json({ reply_text: replyText, action: "none", reservation: null });
+        }
+        const twiml = `
+          <Response>
+            <Say language="${lang}">${escapeXml(replyText)}</Say>
+            <Hangup/>
+          </Response>
+        `.trim();
+        return res.status(200).type("text/xml").send(twiml);
+      }
+      // Se non vuole chiudere, continua con GPT
+    }
           <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
             <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
           </Gather>
@@ -2945,6 +3031,33 @@ app.post("/twilio", async (req, res) => {
       else if (initialIntent === 'modify') {
         
         if (phase === 'awaiting_modify_details') {
+          // FIX v3.9.26 E10-UX: Riconosce "lascia perdere, va bene così" come annullamento
+          const wantsToKeepOriginal = /\b(lascia perdere|lascia stare|va bene cos[iì]|non importa|forget it|never\s*mind|keep it as is)\b/i.test(userText);
+          
+          if (wantsToKeepOriginal) {
+            console.log(`📋 FIX v3.9.26 E10-UX: Cliente vuole mantenere prenotazione originale`);
+            const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
+            const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
+            
+            replyText = lang === "en-US"
+              ? `No problem! Your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay} stays confirmed. See you then!`
+              : `Nessun problema! La tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay} resta confermata. A presto!`;
+            
+            StateManager.setPhase(callId, 'completed');
+            shouldHangup = true;
+            
+            if (isDebug) {
+              return res.status(200).json({ reply_text: replyText, action: "keep_reservation", reservation: existingRes });
+            }
+            const twiml = `
+              <Response>
+                <Say language="${lang}">${escapeXml(replyText)}</Say>
+                <Hangup/>
+              </Response>
+            `.trim();
+            return res.status(200).type("text/xml").send(twiml);
+          }
+          
           const modification = RecapManager.extractModification(userText, existingRes);
           
           if (modification.newTime || modification.newDate || modification.newPeople) {
