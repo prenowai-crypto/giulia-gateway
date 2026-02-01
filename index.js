@@ -357,12 +357,12 @@ const StateManager = {
   },
   setExistingReservation(callId, reservation) {
     STATE.existingReservations.set(callId, reservation);
-    console.log(`📋 Prenotazione esistente salvata:`, reservation);
+    console.log(`[INFO] Prenotazione esistente salvata:`, reservation);
   },
   // FIX v3.9.25 E4: Pulisce prenotazione esistente per nuova prenotazione
   clearExistingReservation(callId) {
     STATE.existingReservations.delete(callId);
-    console.log(`📋 FIX v3.9.25: Prenotazione esistente rimossa per nuova prenotazione`);
+    console.log(`[INFO] FIX v3.9.25: Prenotazione esistente rimossa per nuova prenotazione`);
   },
   
   // v3: Fase conversazione
@@ -391,7 +391,7 @@ const StateManager = {
   setCreatedEventId(callId, eventId) {
     if (callId && eventId) {
       STATE.createdEventIds.set(callId, eventId);
-      console.log(`📋 FIX v3.9.23: EventId salvato per callId ${callId}: ${eventId}`);
+      console.log(`[INFO] FIX v3.9.23: EventId salvato per callId ${callId}: ${eventId}`);
     }
   },
   
@@ -1149,7 +1149,7 @@ const CalendarService = {
         console.log(`✅ Prenotazione trovata:`, result.reservation);
         return result.reservation;
       }
-      console.log(`📋 Nessuna prenotazione per ${phone}`);
+      console.log(`[INFO] Nessuna prenotazione per ${phone}`);
       return null;
     } catch (err) {
       console.error("❌ Errore ricerca:", err);
@@ -2099,7 +2099,7 @@ const ValidationPipeline = {
       }
       // FIX v3.9.26 ZG-NOME: Se abbiamo estratto nome e GPT chiede nome, passa a email
       if (response.action === "ask_name" && parsedName) {
-        console.log(`📤 FIX v3.9.26 ZG-NOME: Nome "${parsedName}" estratto, override ask_name → ask_email`);
+        console.log(`[OUT] FIX v3.9.26 ZG-NOME: Nome "${parsedName}" estratto, override ask_name → ask_email`);
         response.action = "ask_email";
         response.reply_text = lang === "en-US"
           ? "Do you have an email for the confirmation? It's optional."
@@ -2707,10 +2707,10 @@ app.post("/twilio", async (req, res) => {
       const wantsExplicitlyNew = /\b(altra|nuova|second\w*)\s+(prenotazion|reservation)/i.test(userText);
       
       if (wantsExplicitlyNew) {
-        console.log(`📋 FIX v3.9.26 ZF9B: Cliente dice esplicitamente "altra/nuova prenotazione", skip proattività`);
+        console.log(`[INFO] FIX v3.9.26 ZF9B: Cliente dice esplicitamente "altra/nuova prenotazione", skip proattività`);
         // Non facciamo nulla qui, il flusso continuerà normalmente verso GPT per CREATE
       } else {
-        console.log(`📋 FIX v3.9.25 E4: Intent CREATE ma cliente ha prenotazione esistente`);
+        console.log(`[INFO] FIX v3.9.25 E4: Intent CREATE ma cliente ha prenotazione esistente`);
       
       const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
       const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
@@ -2741,7 +2741,7 @@ app.post("/twilio", async (req, res) => {
       const wantsNew = /nuov|altra|second|new|another|different/i.test(userText);
       
       if (wantsModify) {
-        console.log(`📋 FIX v3.9.25 E4: Cliente vuole modificare`);
+        console.log(`[INFO] FIX v3.9.25 E4: Cliente vuole modificare`);
         StateManager.setInitialIntent(callId, 'modify');
         
         // FIX v3.9.26 E4-FLUSSO: Verifica se il nome è già stato detto nella risposta
@@ -2750,7 +2750,7 @@ app.post("/twilio", async (req, res) => {
           RecapManager.nameMatches(userText, existingRes.name);
         
         if (nameMatches) {
-          console.log(`📋 FIX v3.9.26 E4-FLUSSO: Nome "${saidName}" corrisponde, skip verifica nome`);
+          console.log(`[INFO] FIX v3.9.26 E4-FLUSSO: Nome "${saidName}" corrisponde, skip verifica nome`);
           StateManager.setPhase(callId, 'awaiting_modify_details');
           
           const firstName = existingRes.name?.split(' ')[0] || existingRes.name;
@@ -2787,7 +2787,7 @@ app.post("/twilio", async (req, res) => {
         return res.status(200).type("text/xml").send(twiml);
       }
       else if (wantsNew) {
-        console.log(`📋 FIX v3.9.25 E4: Cliente vuole nuova prenotazione`);
+        console.log(`[INFO] FIX v3.9.25 E4: Cliente vuole nuova prenotazione`);
         // Resetta lo stato per procedere con nuova prenotazione
         StateManager.clearExistingReservation(callId);
         StateManager.setPhase(callId, 'initial');
@@ -2878,6 +2878,13 @@ app.post("/twilio", async (req, res) => {
       }
       const twiml = `
         <Response>
+          <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+            <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+          </Gather>
+        </Response>
+      `.trim();
+      return res.status(200).type("text/xml").send(twiml);
+    }
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.26 F4-UX: Riconosce chiusura conversazione quando nessuna prenotazione
@@ -2906,13 +2913,6 @@ app.post("/twilio", async (req, res) => {
         return res.status(200).type("text/xml").send(twiml);
       }
       // Se non vuole chiudere, continua con GPT
-    }
-          <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
-            <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
-          </Gather>
-        </Response>
-      `.trim();
-      return res.status(200).type("text/xml").send(twiml);
     }
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -3035,7 +3035,7 @@ app.post("/twilio", async (req, res) => {
           const wantsToKeepOriginal = /\b(lascia perdere|lascia stare|va bene cos[iì]|non importa|forget it|never\s*mind|keep it as is)\b/i.test(userText);
           
           if (wantsToKeepOriginal) {
-            console.log(`📋 FIX v3.9.26 E10-UX: Cliente vuole mantenere prenotazione originale`);
+            console.log(`[INFO] FIX v3.9.26 E10-UX: Cliente vuole mantenere prenotazione originale`);
             const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
             const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
             
@@ -3310,7 +3310,7 @@ app.post("/twilio", async (req, res) => {
     let action = gptResponse.action;
     const reservation = gptResponse.reservation;
     
-    console.log(`📤 GPT: action=${action}, reply="${replyText.substring(0, 60)}..."`);
+    console.log(`[OUT] GPT: action=${action}, reply="${replyText.substring(0, 60)}..."`);
     
     // ═══════════════════════════════════════════════════════════════════════
     // GESTIONE CREATE_RESERVATION
