@@ -126,6 +126,9 @@ const STATE = {
   // FIX v3.9.23 BUG-020: Traccia eventId creati per evitare falsi "al completo"
   createdEventIds: new Map(),
   
+  // FIX v3.9.27 ZF9B: Flag per cliente che vuole NUOVA prenotazione (skip proattività)
+  wantsNewReservations: new Map(),
+  
   // Registry cache
   registryCache: null,
   registryCacheTime: 0,
@@ -363,6 +366,17 @@ const StateManager = {
   clearExistingReservation(callId) {
     STATE.existingReservations.delete(callId);
     console.log(`[INFO] FIX v3.9.25: Prenotazione esistente rimossa per nuova prenotazione`);
+  },
+  
+  // FIX v3.9.27 ZF9B: Flag per cliente che vuole NUOVA prenotazione
+  getWantsNewReservation(callId) {
+    return STATE.wantsNewReservations.get(callId) || false;
+  },
+  setWantsNewReservation(callId, value) {
+    STATE.wantsNewReservations.set(callId, value);
+    if (value) {
+      console.log(`[INFO] FIX v3.9.27 ZF9B: Flag wantsNewReservation=true per ${callId}`);
+    }
   },
   
   // v3: Fase conversazione
@@ -2097,16 +2111,18 @@ const ValidationPipeline = {
       if (!reservation.name) {
         reservation.name = parsedName;
       }
-      // FIX v3.9.26 ZG-NOME: Se abbiamo estratto nome e GPT chiede nome, passa a email
-      if (response.action === "ask_name" && parsedName) {
-        console.log(`[OUT] FIX v3.9.26 ZG-NOME: Nome "${parsedName}" estratto, override ask_name → ask_email`);
-        response.action = "ask_email";
-        response.reply_text = lang === "en-US"
-          ? "Do you have an email for the confirmation? It's optional."
-          : "Hai un'email per la conferma? È opzionale.";
-      }
     } else if (savedReservation.name && !reservation.name) {
       reservation.name = savedReservation.name;
+    }
+    
+    // FIX v3.9.27 ZG-NOME: Se GPT chiede nome ma abbiamo già un nome (da questo turn O da turn precedenti), skip
+    const knownName = reservation.name || savedReservation.name;
+    if (response.action === "ask_name" && knownName) {
+      console.log(`[OUT] FIX v3.9.27 ZG-NOME: Nome "${knownName}" già noto, override ask_name → ask_email`);
+      response.action = "ask_email";
+      response.reply_text = lang === "en-US"
+        ? "Do you have an email for the confirmation? It's optional."
+        : "Hai un'email per la conferma? È opzionale.";
     }
     
     if (reservation.people >= CONFIG.EVENT_THRESHOLD) {
@@ -2700,14 +2716,23 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.25 E4: PROATTIVITÀ - Intent CREATE ma cliente ha già prenotazione
-    // FIX v3.9.26 ZF9B: Skip se cliente dice esplicitamente "altra/nuova prenotazione"
+    // FIX v3.9.27 ZF9B: Skip se cliente dice esplicitamente "altra/nuova prenotazione"
+    //                   Salva flag per TUTTI i turn successivi
     // ═══════════════════════════════════════════════════════════════════════
+    
+    // FIX v3.9.27 ZF9B: Controlla pattern "altra/nuova prenotazione" nel messaggio corrente
+    const wantsExplicitlyNew = /\b(altra|nuova|second\w*|aggiung\w*)\s+(prenotazion|reservation)/i.test(userText) ||
+                               /\bvorrei\s+(anche\s+)?(fare|prenotare|aggiungere)/i.test(userText);
+    if (wantsExplicitlyNew) {
+      StateManager.setWantsNewReservation(callId, true);
+    }
+    
+    // FIX v3.9.27 ZF9B: Se flag è già settato, skip proattività E4
+    const hasWantsNewFlag = StateManager.getWantsNewReservation(callId);
+    
     if (initialIntent === 'create' && existingRes && phase === 'initial') {
-      // FIX v3.9.26 ZF9B: Se cliente dice "altra/nuova prenotazione", skip proattività
-      const wantsExplicitlyNew = /\b(altra|nuova|second\w*)\s+(prenotazion|reservation)/i.test(userText);
-      
-      if (wantsExplicitlyNew) {
-        console.log(`[INFO] FIX v3.9.26 ZF9B: Cliente dice esplicitamente "altra/nuova prenotazione", skip proattività`);
+      if (hasWantsNewFlag) {
+        console.log(`[INFO] FIX v3.9.27 ZF9B: Flag wantsNewReservation attivo, skip proattività`);
         // Non facciamo nulla qui, il flusso continuerà normalmente verso GPT per CREATE
       } else {
         console.log(`[INFO] FIX v3.9.25 E4: Intent CREATE ma cliente ha prenotazione esistente`);
@@ -2732,7 +2757,7 @@ app.post("/twilio", async (req, res) => {
         </Response>
       `.trim();
       return res.status(200).type("text/xml").send(twiml);
-      } // Fine else di FIX v3.9.26 ZF9B
+      } // Fine else di FIX v3.9.27 ZF9B
     }
     
     // FIX v3.9.25 E4: Gestione risposta a "modificare o nuova?"
@@ -2745,7 +2770,7 @@ app.post("/twilio", async (req, res) => {
         StateManager.setInitialIntent(callId, 'modify');
         
         // FIX v3.9.26 E4-FLUSSO: Verifica se il nome è già stato detto nella risposta
-        const saidName = NameManager.extractName(userText);
+        const saidName = RecapManager.extractName(userText);
         const nameMatches = saidName && existingRes?.name && 
           RecapManager.nameMatches(userText, existingRes.name);
         
@@ -2788,6 +2813,8 @@ app.post("/twilio", async (req, res) => {
       }
       else if (wantsNew) {
         console.log(`[INFO] FIX v3.9.25 E4: Cliente vuole nuova prenotazione`);
+        // FIX v3.9.27 ZF9B: Salva flag per tutti i turn successivi
+        StateManager.setWantsNewReservation(callId, true);
         // Resetta lo stato per procedere con nuova prenotazione
         StateManager.clearExistingReservation(callId);
         StateManager.setPhase(callId, 'initial');
@@ -2888,9 +2915,13 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.9.26 F4-UX: Riconosce chiusura conversazione quando nessuna prenotazione
+    // FIX v3.9.27 F4-UX: Gestisce anche confusione/sorpresa del cliente
     // ═══════════════════════════════════════════════════════════════════════
     if (phase === 'no_reservation_found') {
       const wantsToClose = /\b(va bene grazie|ok grazie|grazie lo stesso|thanks anyway|never\s*mind|that's ok|no worries)\b/i.test(userText);
+      
+      // FIX v3.9.27 F4-UX: Rileva confusione/sorpresa ("ma come?", "ero sicuro", "impossibile")
+      const isConfused = /\b(ma come|ero sicur|impossibile|strano|how come|i'm sure|that's strange|impossible)\b/i.test(userText);
       
       if (wantsToClose) {
         console.log(`📋 FIX v3.9.26 F4-UX: Cliente chiude conversazione senza prenotazione`);
@@ -2912,7 +2943,29 @@ app.post("/twilio", async (req, res) => {
         `.trim();
         return res.status(200).type("text/xml").send(twiml);
       }
-      // Se non vuole chiudere, continua con GPT
+      
+      if (isConfused) {
+        console.log(`📋 FIX v3.9.27 F4-UX: Cliente confuso, suggerisco alternative`);
+        
+        const replyText = lang === "en-US"
+          ? "I'm sorry, I really can't find any reservation with this phone number. Maybe it was booked with a different number? Or would you like to make a new reservation?"
+          : "Mi dispiace, non trovo davvero prenotazioni con questo numero. Forse è stata fatta con un altro numero? Oppure vuoi fare una nuova prenotazione?";
+        
+        // Resta in fase no_reservation_found per gestire la risposta
+        
+        if (isDebug) {
+          return res.status(200).json({ reply_text: replyText, action: "offer_alternatives", reservation: null });
+        }
+        const twiml = `
+          <Response>
+            <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+              <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+            </Gather>
+          </Response>
+        `.trim();
+        return res.status(200).type("text/xml").send(twiml);
+      }
+      // Se non vuole chiudere e non è confuso, continua con GPT
     }
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -2923,6 +2976,34 @@ app.post("/twilio", async (req, res) => {
       let replyText = "";
       let action = "none";
       let shouldHangup = false;
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // FIX v3.9.27 F5-UX: Se cliente dice un nome sbagliato, suggerisci quello corretto
+      // ═══════════════════════════════════════════════════════════════════════
+      if (phase === 'initial') {
+        const saidName = RecapManager.extractName(userText);
+        if (saidName && !RecapManager.nameMatches(userText, existingRes.name)) {
+          console.log(`📋 FIX v3.9.27 F5-UX: Cliente ha detto "${saidName}" ma prenotazione è "${existingRes.name}"`);
+          
+          replyText = lang === "en-US"
+            ? `I don't find a reservation under "${saidName}", but I see one under "${existingRes.name}". Is that the one?`
+            : `Non trovo prenotazioni a nome "${saidName}", ma ne vedo una a nome "${existingRes.name}". È quella?`;
+          
+          StateManager.setPhase(callId, 'verifying_name');
+          
+          if (isDebug) {
+            return res.status(200).json({ reply_text: replyText, action: "clarify_name", reservation: existingRes });
+          }
+          const twiml = `
+            <Response>
+              <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+              </Gather>
+            </Response>
+          `.trim();
+          return res.status(200).type("text/xml").send(twiml);
+        }
+      }
       
       // FASE COMUNE: AWAITING_NAME
       if (phase === 'awaiting_name') {
