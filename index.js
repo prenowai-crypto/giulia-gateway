@@ -353,6 +353,12 @@ const StateManager = {
       console.log(`🎯 Intent iniziale: ${intent}`);
     }
   },
+  // FIX v3.9.27 E4: Forza cambio intent (per quando cliente cambia idea)
+  forceInitialIntent(callId, intent) {
+    const oldIntent = STATE.initialIntents.get(callId);
+    STATE.initialIntents.set(callId, intent);
+    console.log(`🎯 FIX v3.9.27: Intent cambiato da "${oldIntent}" a "${intent}"`);
+  },
   
   // Prenotazione esistente
   getExistingReservation(callId) {
@@ -2115,14 +2121,33 @@ const ValidationPipeline = {
       reservation.name = savedReservation.name;
     }
     
+    // FIX v3.9.27: Estrai email dal messaggio corrente PRIMA del check ZG-NOME
+    if (!reservation.customerEmail) {
+      const emailFromText = extractEmailFromText(userText);
+      if (emailFromText) {
+        reservation.customerEmail = sanitizeEmail(emailFromText);
+        console.log(`📧 FIX v3.9.27: Email "${reservation.customerEmail}" estratta dal messaggio`);
+      }
+    }
+    
     // FIX v3.9.27 ZG-NOME: Se GPT chiede nome ma abbiamo già un nome (da questo turn O da turn precedenti), skip
     const knownName = reservation.name || savedReservation.name;
+    const knownEmail = reservation.customerEmail || savedReservation.customerEmail;
+    
     if (response.action === "ask_name" && knownName) {
-      console.log(`[OUT] FIX v3.9.27 ZG-NOME: Nome "${knownName}" già noto, override ask_name → ask_email`);
-      response.action = "ask_email";
-      response.reply_text = lang === "en-US"
-        ? "Do you have an email for the confirmation? It's optional."
-        : "Hai un'email per la conferma? È opzionale.";
+      // Se abbiamo anche l'email, procedi direttamente con la prenotazione
+      if (knownEmail) {
+        console.log(`[OUT] FIX v3.9.27 ZG-NOME: Nome "${knownName}" e email "${knownEmail}" già noti, override ask_name → create_reservation`);
+        response.action = "create_reservation";
+        // Il sistema gestirà automaticamente PENDING_OWNER per gruppi >10
+      } else {
+        // Solo nome noto, chiedi email
+        console.log(`[OUT] FIX v3.9.27 ZG-NOME: Nome "${knownName}" già noto, override ask_name → ask_email`);
+        response.action = "ask_email";
+        response.reply_text = lang === "en-US"
+          ? "Do you have an email for the confirmation? It's optional."
+          : "Hai un'email per la conferma? È opzionale.";
+      }
     }
     
     if (reservation.people >= CONFIG.EVENT_THRESHOLD) {
@@ -2767,7 +2792,8 @@ app.post("/twilio", async (req, res) => {
       
       if (wantsModify) {
         console.log(`[INFO] FIX v3.9.25 E4: Cliente vuole modificare`);
-        StateManager.setInitialIntent(callId, 'modify');
+        // FIX v3.9.27 E4: Usa forceInitialIntent per sovrascrivere intent "create"
+        StateManager.forceInitialIntent(callId, 'modify');
         
         // FIX v3.9.26 E4-FLUSSO: Verifica se il nome è già stato detto nella risposta
         const saidName = RecapManager.extractName(userText);
@@ -3113,7 +3139,8 @@ app.post("/twilio", async (req, res) => {
         
         if (phase === 'awaiting_modify_details') {
           // FIX v3.9.26 E10-UX: Riconosce "lascia perdere, va bene così" come annullamento
-          const wantsToKeepOriginal = /\b(lascia perdere|lascia stare|va bene cos[iì]|non importa|forget it|never\s*mind|keep it as is)\b/i.test(userText);
+          // FIX v3.9.27: Aggiunto pattern "va bene come"
+          const wantsToKeepOriginal = /\b(lascia perdere|lascia stare|va bene cos[iì]|non importa|forget it|never\s*mind|keep it as is|va bene.*come)\b/i.test(userText);
           
           if (wantsToKeepOriginal) {
             console.log(`[INFO] FIX v3.9.26 E10-UX: Cliente vuole mantenere prenotazione originale`);
@@ -3235,6 +3262,33 @@ app.post("/twilio", async (req, res) => {
           }
         }
         else if (phase === 'awaiting_modify_confirm') {
+          // FIX v3.9.27 E10-UX: Riconosce "lascia perdere" anche in fase conferma
+          const wantsToKeepOriginal = /\b(lascia perdere|lascia stare|va bene cos[iì]|non importa|forget it|never\s*mind|keep it as is|va bene.*come)\b/i.test(userText);
+          
+          if (wantsToKeepOriginal) {
+            console.log(`[INFO] FIX v3.9.27 E10-UX: Cliente annulla modifica in corso, mantiene originale`);
+            const dateDisplay = DateManager.formatForDisplay(existingRes.date, lang);
+            const timeDisplay = TimeManager.formatForDisplay(existingRes.time);
+            
+            replyText = lang === "en-US"
+              ? `No problem! Your reservation for ${existingRes.people} people on ${dateDisplay} at ${timeDisplay} stays confirmed. See you then!`
+              : `Nessun problema! La tua prenotazione per ${existingRes.people} persone ${dateDisplay} alle ${timeDisplay} resta confermata. A presto!`;
+            
+            StateManager.setPhase(callId, 'completed');
+            shouldHangup = true;
+            
+            if (isDebug) {
+              return res.status(200).json({ reply_text: replyText, action: "keep_reservation", reservation: existingRes });
+            }
+            const twiml = `
+              <Response>
+                <Say language="${lang}">${escapeXml(replyText)}</Say>
+                <Hangup/>
+              </Response>
+            `.trim();
+            return res.status(200).type("text/xml").send(twiml);
+          }
+          
           if (RecapManager.isConfirming(userText)) {
             const pending = STATE.pendingModifications?.get(callId) || {};
             const updatedRes = { ...existingRes };
