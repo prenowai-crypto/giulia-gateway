@@ -132,6 +132,12 @@ const STATE = {
   // FIX v3.9.27 ZG3C/ZG6C: Salva data corretta dopo redirect P1 (slot pieno)
   pendingCorrectDates: new Map(),
   
+  // 🆕 FIX F9: Tutte le prenotazioni di un cliente (per multi-prenotazione)
+  allReservations: new Map(),
+  
+  // 🆕 FIX F9: Flag per tracciare se abbiamo già chiesto quale prenotazione
+  askedWhichReservation: new Map(),
+  
   // Registry cache
   registryCache: null,
   registryCacheTime: 0,
@@ -166,6 +172,65 @@ function extractEmailFromText(text) {
   if (!text || typeof text !== "string") return null;
   const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   return match ? match[0] : null;
+}
+
+// 🆕 FIX F9: Trova quale prenotazione ha scelto il cliente tra più opzioni
+function findChosenReservation(userText, reservations, lang) {
+  if (!userText || !reservations || reservations.length === 0) return null;
+  
+  const text = userText.toLowerCase();
+  
+  // Prova a matchare per numero (1, 2, prima, seconda, etc)
+  const numberMatch = text.match(/\b(1|2|3|prima|prima prenotazione|seconda|seconda prenotazione|terza|uno|due|tre|first|second|third)\b/i);
+  if (numberMatch) {
+    const numStr = numberMatch[1].toLowerCase();
+    let index = -1;
+    if (numStr === '1' || numStr === 'prima' || numStr === 'uno' || numStr === 'first' || numStr === 'prima prenotazione') index = 0;
+    else if (numStr === '2' || numStr === 'seconda' || numStr === 'due' || numStr === 'second' || numStr === 'seconda prenotazione') index = 1;
+    else if (numStr === '3' || numStr === 'terza' || numStr === 'tre' || numStr === 'third') index = 2;
+    
+    if (index >= 0 && index < reservations.length) {
+      return reservations[index];
+    }
+  }
+  
+  // Prova a matchare per giorno della settimana
+  const daysIT = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+  const daysEN = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  
+  for (const res of reservations) {
+    const resDate = new Date(res.date);
+    const dayOfWeek = resDate.getDay();
+    const dayNameIT = daysIT[dayOfWeek];
+    const dayNameEN = daysEN[dayOfWeek];
+    
+    if (text.includes(dayNameIT) || text.includes(dayNameEN)) {
+      return res;
+    }
+  }
+  
+  // Prova a matchare per data specifica (es: "8 febbraio", "il 10")
+  for (const res of reservations) {
+    const resDate = new Date(res.date);
+    const day = resDate.getDate();
+    
+    // Match "il 10", "8 febbraio", etc
+    if (text.includes(String(day)) || text.includes(`il ${day}`)) {
+      return res;
+    }
+  }
+  
+  // Prova a matchare per orario
+  for (const res of reservations) {
+    const timeShort = res.time.substring(0, 5); // "20:00"
+    const timeNoColon = res.time.replace(':', ''); // "2000"
+    
+    if (text.includes(timeShort) || text.includes(timeNoColon.substring(0, 2))) {
+      return res;
+    }
+  }
+  
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -400,6 +465,28 @@ const StateManager = {
   },
   clearPendingCorrectDate(callId) {
     STATE.pendingCorrectDates.delete(callId);
+  },
+  
+  // 🆕 FIX F9: Tutte le prenotazioni di un cliente
+  getAllReservations(callId) {
+    return STATE.allReservations.get(callId) || [];
+  },
+  setAllReservations(callId, reservations) {
+    if (reservations && Array.isArray(reservations)) {
+      STATE.allReservations.set(callId, reservations);
+      console.log(`📋 FIX F9: Salvate ${reservations.length} prenotazioni per ${callId}`);
+    }
+  },
+  clearAllReservations(callId) {
+    STATE.allReservations.delete(callId);
+  },
+  
+  // 🆕 FIX F9: Flag per tracciare se abbiamo chiesto quale prenotazione
+  getAskedWhichReservation(callId) {
+    return STATE.askedWhichReservation.get(callId) || false;
+  },
+  setAskedWhichReservation(callId, value) {
+    STATE.askedWhichReservation.set(callId, value);
   },
   
   // v3: Fase conversazione
@@ -1116,6 +1203,12 @@ const CalendarService = {
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
     console.log("📅 Calendar: creazione", data);
     
+    // 🆕 FIX ZF9B: Se forceNew=true, Apps Script crea NUOVA prenotazione
+    const forceNew = data.forceNew === true;
+    if (forceNew) {
+      console.log("🆕 FIX ZF9B: forceNew=true, forzo creazione nuova prenotazione");
+    }
+    
     const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1127,6 +1220,7 @@ const CalendarService = {
         ora: data.time,
         telefono: data.phone || "",
         email: data.customerEmail || "",
+        forceNew: forceNew,  // 🆕 FIX ZF9B
       }),
     });
     
@@ -1191,6 +1285,44 @@ const CalendarService = {
     } catch (err) {
       console.error("❌ Errore ricerca:", err);
       return null;
+    }
+  },
+  
+  // 🆕 FIX F9: Trova TUTTE le prenotazioni per un telefono
+  async findAllReservations(phone, callId = null) {
+    if (!phone) return { found: false, count: 0, reservations: [] };
+    
+    const appsScriptUrl = Registry.getAppsScriptUrl(callId);
+    console.log(`🔍 FIX F9: Ricerca TUTTE le prenotazioni per ${phone}`);
+    
+    try {
+      const response = await fetch(appsScriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "find_all_reservations",
+          telefono: phone,
+        }),
+      });
+      
+      const text = await response.text();
+      let result;
+      try { result = JSON.parse(text); } catch (e) { return { found: false, count: 0, reservations: [] }; }
+      
+      if (result.found && result.reservations) {
+        console.log(`✅ FIX F9: Trovate ${result.count} prenotazioni:`, result.reservations);
+        return {
+          found: true,
+          count: result.count,
+          reservation: result.reservation,  // Prima prenotazione (retrocompatibile)
+          reservations: result.reservations  // Tutte le prenotazioni
+        };
+      }
+      console.log(`[INFO] FIX F9: Nessuna prenotazione per ${phone}`);
+      return { found: false, count: 0, reservations: [] };
+    } catch (err) {
+      console.error("❌ FIX F9: Errore ricerca:", err);
+      return { found: false, count: 0, reservations: [] };
     }
   },
   
@@ -2785,13 +2917,27 @@ app.post("/twilio", async (req, res) => {
       StateManager.setInitialIntent(callId, detectedIntent);
       
       // FIX v3.9.25 E4: Cerca prenotazione per TUTTI gli intent (non solo cancel/modify)
+      // 🆕 FIX F9: Usa findAllReservations per gestire multi-prenotazioni
       if (From) {
         try {
-          const existing = await CalendarService.findExistingReservation(From, null, callId);
-          if (existing) {
-            StateManager.setExistingReservation(callId, existing);
+          const allRes = await CalendarService.findAllReservations(From, callId);
+          if (allRes.found && allRes.count > 0) {
+            // Salva la prima prenotazione per retrocompatibilità
+            StateManager.setExistingReservation(callId, allRes.reservation);
+            
+            // 🆕 FIX F9: Salva TUTTE le prenotazioni
+            if (allRes.count > 1) {
+              StateManager.setAllReservations(callId, allRes.reservations);
+              console.log(`📋 FIX F9: Cliente ha ${allRes.count} prenotazioni`);
+            }
+            
             if (detectedIntent === 'cancel' || detectedIntent === 'modify') {
-              StateManager.setPhase(callId, 'awaiting_name');
+              // 🆕 FIX F9: Se più prenotazioni, chiedi quale
+              if (allRes.count > 1) {
+                StateManager.setPhase(callId, 'awaiting_which_reservation');
+              } else {
+                StateManager.setPhase(callId, 'awaiting_name');
+              }
             }
             // Per intent CREATE, lascia phase=initial, gestiremo dopo
           }
@@ -3097,8 +3243,52 @@ app.post("/twilio", async (req, res) => {
         }
       }
       
+      // 🆕 FIX F9: FASE MULTI-PRENOTAZIONE - Chiedi quale prenotazione
+      if (phase === 'awaiting_which_reservation') {
+        const allRes = StateManager.getAllReservations(callId);
+        
+        // Prima volta: mostra le prenotazioni e chiedi quale
+        if (!StateManager.getAskedWhichReservation(callId)) {
+          StateManager.setAskedWhichReservation(callId, true);
+          
+          // Costruisci messaggio con tutte le prenotazioni
+          const resDescriptions = allRes.map((r, i) => {
+            const dateDisplay = DateManager.formatForDisplay(r.date, lang);
+            const timeDisplay = TimeManager.formatForDisplay(r.time);
+            return lang === "en-US"
+              ? `${i + 1}) ${r.people} people on ${dateDisplay} at ${timeDisplay}`
+              : `${i + 1}) ${r.people} persone ${dateDisplay} alle ${timeDisplay}`;
+          }).join("; ");
+          
+          replyText = lang === "en-US"
+            ? `I see you have ${allRes.length} reservations: ${resDescriptions}. Which one would you like to ${initialIntent}?`
+            : `Vedo che hai ${allRes.length} prenotazioni: ${resDescriptions}. Quale vuoi ${initialIntent === 'cancel' ? 'cancellare' : 'modificare'}?`;
+          
+          console.log(`📋 FIX F9: Chiedo quale delle ${allRes.length} prenotazioni`);
+        } else {
+          // Cliente ha risposto, trova quale prenotazione ha scelto
+          const chosen = findChosenReservation(userText, allRes, lang);
+          
+          if (chosen) {
+            console.log(`✅ FIX F9: Cliente ha scelto prenotazione:`, chosen);
+            StateManager.setExistingReservation(callId, chosen);
+            StateManager.setPhase(callId, 'awaiting_name');
+            replyText = RecapManager.buildAskNameMessage(lang);
+          } else {
+            // Non capito, richiedi
+            const resDescriptions = allRes.map((r, i) => {
+              const dateDisplay = DateManager.formatForDisplay(r.date, lang);
+              return lang === "en-US" ? `${dateDisplay}` : `${dateDisplay}`;
+            }).join(", ");
+            
+            replyText = lang === "en-US"
+              ? `Sorry, I didn't understand. You have reservations for: ${resDescriptions}. Which date?`
+              : `Scusa, non ho capito. Hai prenotazioni per: ${resDescriptions}. Quale data?`;
+          }
+        }
+      }
       // FASE COMUNE: AWAITING_NAME
-      if (phase === 'awaiting_name') {
+      else if (phase === 'awaiting_name') {
         replyText = RecapManager.buildAskNameMessage(lang);
         StateManager.setPhase(callId, 'verifying_name');
         console.log(`📍 Chiedo nome per verifica`);
@@ -3552,6 +3742,7 @@ app.post("/twilio", async (req, res) => {
             time: reservation.time,
             phone: From || "unknown",
             customerEmail: reservation.customerEmail,
+            forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
           }, callId);
           
           if (calResult?.success) {
@@ -3590,6 +3781,7 @@ app.post("/twilio", async (req, res) => {
               time: reservation.time,
               phone: From || "unknown",
               customerEmail: reservation.customerEmail,
+              forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
             }, callId);
             
             if (calResult?.success) {
@@ -3631,6 +3823,7 @@ app.post("/twilio", async (req, res) => {
             time: reservation.time,
             phone: From || "unknown",
             customerEmail: reservation.customerEmail,
+            forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
           }, callId);
           
           if (calResult?.success) {
@@ -3669,6 +3862,7 @@ app.post("/twilio", async (req, res) => {
               time: reservation.time,
               phone: From || "unknown",
               customerEmail: reservation.customerEmail,
+              forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
             }, callId);
             
             if (calResult?.success) {
