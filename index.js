@@ -129,6 +129,9 @@ const STATE = {
   // FIX v3.9.27 ZF9B: Flag per cliente che vuole NUOVA prenotazione (skip proattività)
   wantsNewReservations: new Map(),
   
+  // FIX v3.9.27 ZG3C/ZG6C: Salva data corretta dopo redirect P1 (slot pieno)
+  pendingCorrectDates: new Map(),
+  
   // Registry cache
   registryCache: null,
   registryCacheTime: 0,
@@ -383,6 +386,20 @@ const StateManager = {
     if (value) {
       console.log(`[INFO] FIX v3.9.27 ZF9B: Flag wantsNewReservation=true per ${callId}`);
     }
+  },
+  
+  // FIX v3.9.27 ZG3C/ZG6C: Salva data corretta dopo redirect P1
+  getPendingCorrectDate(callId) {
+    return STATE.pendingCorrectDates.get(callId) || null;
+  },
+  setPendingCorrectDate(callId, date) {
+    if (date) {
+      STATE.pendingCorrectDates.set(callId, date);
+      console.log(`[INFO] FIX v3.9.27 ZG6C: Data corretta salvata: ${date} per ${callId}`);
+    }
+  },
+  clearPendingCorrectDate(callId) {
+    STATE.pendingCorrectDates.delete(callId);
   },
   
   // v3: Fase conversazione
@@ -1872,6 +1889,52 @@ const ValidationPipeline = {
     let response = { ...gptResponse };
     let reservation = response.reservation || {};
     
+    // FIX v3.9.27 ZG6C: Se c'è una data pendente (dopo redirect P1), forza quella data
+    const pendingDate = StateManager.getPendingCorrectDate(callId);
+    if (pendingDate) {
+      if (reservation.date && reservation.date !== pendingDate) {
+        console.log(`📆 FIX v3.9.27 ZG6C: GPT dice "${reservation.date}" ma data corretta è "${pendingDate}" - OVERRIDE`);
+        reservation.date = pendingDate;
+      } else if (!reservation.date) {
+        console.log(`📆 FIX v3.9.27 ZG6C: GPT non ha data, uso data pendente "${pendingDate}"`);
+        reservation.date = pendingDate;
+      }
+      
+      // FIX v3.9.27 ZG3C: Se c'è data pendente ma cliente non ha scelto orario, chiedi ancora
+      const parsedTimeFromText = TimeManager.parseFromText(userText);
+      if (!parsedTimeFromText && !reservation.time) {
+        console.log(`⚠️ FIX v3.9.27 ZG3C: Data pendente ma nessun orario scelto - chiedo ancora`);
+        
+        // Salva email se presente nel messaggio (non perderla!)
+        const emailFromText = extractEmailFromText(userText);
+        if (emailFromText) {
+          reservation.customerEmail = sanitizeEmail(emailFromText);
+          console.log(`📧 FIX v3.9.27 ZG3C: Salvata email "${reservation.customerEmail}" per dopo`);
+        }
+        
+        // Salva anche il nome se presente
+        const savedRes = StateManager.getReservation(callId);
+        if (savedRes.name) reservation.name = savedRes.name;
+        if (savedRes.people) reservation.people = savedRes.people;
+        
+        // Merge per salvare tutto
+        StateManager.mergeReservation(callId, reservation);
+        
+        response.action = "ask_time";
+        response.reply_text = lang === "en-US"
+          ? "Which time would you prefer among the alternatives I proposed?"
+          : "Quale orario preferisci tra le alternative che ti ho proposto?";
+        response.reservation = reservation;
+        // NON pulisco la data pendente, serve ancora
+        return response;
+      }
+      
+      // Pulisci la data pendente se stiamo creando la prenotazione
+      if (response.action === "create_reservation") {
+        StateManager.clearPendingCorrectDate(callId);
+      }
+    }
+    
     const gptOriginalTime = reservation.time;
     const gptOriginalDate = reservation.date;
     const savedReservation = StateManager.getReservation(callId);
@@ -2200,6 +2263,9 @@ const ValidationPipeline = {
               response.action = "ask_time";
               reservation.time = null;
               StateManager.mergeReservation(callId, { time: null });
+              
+              // FIX v3.9.27 ZG6C: Salva data corretta per il turn successivo
+              StateManager.setPendingCorrectDate(callId, dateToCheck);
             }
             
             response.reservation = reservation;
@@ -3179,6 +3245,11 @@ app.post("/twilio", async (req, res) => {
             const checkTime = modification.newTime || existingRes.time;
             const checkPeople = modification.newPeople || existingRes.people;
             
+            // FIX v3.9.27 E4: Skip check SOLO se stesso slot E persone diminuiscono o uguali
+            const isSameSlot = !modification.newDate && !modification.newTime;
+            const isPeopleDecreaseOrSame = modification.newPeople && modification.newPeople <= existingRes.people;
+            const canSkipCheck = isSameSlot && isPeopleDecreaseOrSame;
+            
             // Prima controlla se il giorno è chiuso
             if (modification.newDate) {
               const closureCheck = await ClosureChecker.isOpen(modification.newDate, callId);
@@ -3202,27 +3273,32 @@ app.post("/twilio", async (req, res) => {
             }
             
             // Poi controlla disponibilità slot
-            console.log(`🔍 FIX v3.9.25: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax`);
-            const availability = await CalendarService.checkAvailability(checkDate, checkTime, checkPeople, callId);
-            
-            if (!availability.available && availability.reason !== "day_closed") {
-              console.log(`⚠️ FIX v3.9.25: Check preventivo MODIFY - slot pieno, propongo alternative`);
-              const alternatives = await CalendarService.findAlternatives(checkDate, checkTime, checkPeople, callId);
-              const isLargeGroup = checkPeople > CONFIG.LARGE_GROUP_THRESHOLD;
-              replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
-              // Non cambiamo fase, resta in awaiting_modify_details
+            // FIX v3.9.27 E4: Skip check se stesso slot E persone diminuiscono (no rischio overbooking)
+            if (canSkipCheck) {
+              console.log(`⏭️ FIX v3.9.27 E4: Skip check - stesso slot, persone ${existingRes.people}→${modification.newPeople} (diminuzione)`);
+            } else {
+              console.log(`🔍 FIX v3.9.25: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax`);
+              const availability = await CalendarService.checkAvailability(checkDate, checkTime, checkPeople, callId);
               
-              if (isDebug) {
-                return res.status(200).json({ reply_text: replyText, action: "ask_time", phase: 'awaiting_modify_details' });
+              if (!availability.available && availability.reason !== "day_closed") {
+                console.log(`⚠️ FIX v3.9.25: Check preventivo MODIFY - slot pieno, propongo alternative`);
+                const alternatives = await CalendarService.findAlternatives(checkDate, checkTime, checkPeople, callId);
+                const isLargeGroup = checkPeople > CONFIG.LARGE_GROUP_THRESHOLD;
+                replyText = CalendarService.buildAlternativesMessage(alternatives, lang, isLargeGroup);
+                // Non cambiamo fase, resta in awaiting_modify_details
+                
+                if (isDebug) {
+                  return res.status(200).json({ reply_text: replyText, action: "ask_time", phase: 'awaiting_modify_details' });
+                }
+                const twiml = `
+                  <Response>
+                    <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
+                      <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
+                    </Gather>
+                  </Response>
+                `.trim();
+                return res.status(200).type("text/xml").send(twiml);
               }
-              const twiml = `
-                <Response>
-                  <Gather input="speech" language="${lang}" action="${CONFIG.BASE_URL}/twilio" method="POST" timeout="5" speechTimeout="auto">
-                    <Say language="${lang}" bargeIn="true">${escapeXml(replyText)}</Say>
-                  </Gather>
-                </Response>
-              `.trim();
-              return res.status(200).type("text/xml").send(twiml);
             }
             
             console.log(`✅ FIX v3.9.25: Check preventivo MODIFY - disponibile, chiedo conferma`);
