@@ -1,8 +1,28 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.26
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.29
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.26 - MINI BUG FIXES:
+// FIX v3.9.29 - CRITICAL CAPACITY FIXES (E3, E4, E9, F9):
+//
+// E4 (P0 CRITICO): Check capacità MODIFY ora esclude pax esistenti
+//   - Quando cliente diminuisce pax (8→5), Gateway salta il check
+//   - Quando cliente aumenta pax (4→7), verifica solo pax AGGIUNTIVI (+3)
+//   - Passa existingPeople ad Apps Script per conteggio corretto
+//
+// E3/E9 (P1): Check preventivo MODIFY corretto
+//   - checkAvailability ora accetta parametro existingPeople
+//   - Apps Script esclude pax esistenti dal conteggio capacità
+//   - E3: aumento 4→7 verifica solo +3 pax aggiuntivi
+//   - E9: cambio orario considera che slot originale si libera
+//
+// F9 (P1): Flusso multi-prenotazione corretto
+//   - Dopo selezione in awaiting_which_reservation
+//   - Skip awaiting_name → procede direttamente a conferma
+//   - Se cancel: chiede conferma cancellazione
+//   - Se modify: chiede cosa vuole modificare
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.26 - MINI BUG FIXES (ereditati):
 //
 // ZF9B: Skip proattività se cliente dice esplicitamente "altra/nuova prenotazione"
 //   - Pattern: /\b(altra|nuova|second\w*)\s+(prenotazion|reservation)/i
@@ -1326,11 +1346,18 @@ const CalendarService = {
     }
   },
   
-  async checkAvailability(date, time, people, callId = null) {
+  // 🆕 FIX v3.9.29 E3/E9: Aggiunto parametro existingPeople per escludere pax esistenti dal check
+  async checkAvailability(date, time, people, callId = null, existingPeople = 0) {
     if (!date || !time || !people) return { available: true };
     
     const appsScriptUrl = Registry.getAppsScriptUrl(callId);
-    console.log(`🔍 Check slot ${date} ${time} per ${people} pax`);
+    
+    // FIX v3.9.29: Log dettagliato per debug
+    if (existingPeople > 0) {
+      console.log(`🔍 Check slot ${date} ${time} per ${people} pax (esistenti: ${existingPeople}, verifica +${people - existingPeople} aggiuntivi)`);
+    } else {
+      console.log(`🔍 Check slot ${date} ${time} per ${people} pax`);
+    }
     
     try {
       const response = await fetch(appsScriptUrl, {
@@ -1341,6 +1368,7 @@ const CalendarService = {
           data: date,
           ora: time,
           persone: people,
+          existingPeople: existingPeople, // 🆕 FIX v3.9.29: Apps Script escluderà questi dal conteggio
         }),
       });
       
@@ -3272,8 +3300,28 @@ app.post("/twilio", async (req, res) => {
           if (chosen) {
             console.log(`✅ FIX F9: Cliente ha scelto prenotazione:`, chosen);
             StateManager.setExistingReservation(callId, chosen);
-            StateManager.setPhase(callId, 'awaiting_name');
-            replyText = RecapManager.buildAskNameMessage(lang);
+            
+            // 🆕 FIX v3.9.29 F9: Skip awaiting_name, procedi direttamente
+            // Il cliente ha già identificato quale prenotazione vuole, non serve chiedere nome
+            const firstName = chosen.name?.split(' ')[0] || chosen.name || "Cliente";
+            const dateDisplay = DateManager.formatForDisplay(chosen.date, lang);
+            const timeDisplay = TimeManager.formatForDisplay(chosen.time);
+            
+            if (initialIntent === 'cancel') {
+              // Chiedi conferma cancellazione diretta
+              StateManager.setPhase(callId, 'awaiting_cancel_confirm');
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, so I'm cancelling your reservation for ${chosen.people} people on ${dateDisplay} at ${timeDisplay}. Do you confirm?`
+                : `Ok ${firstName}, cancello la prenotazione per ${chosen.people} persone ${dateDisplay} alle ${timeDisplay}. Confermi?`;
+              console.log(`🆕 FIX v3.9.29 F9: Skip verifica nome, chiedo conferma cancellazione`);
+            } else {
+              // Chiedi cosa vuole modificare
+              StateManager.setPhase(callId, 'awaiting_modify_details');
+              replyText = lang === "en-US"
+                ? `Okay ${firstName}, what would you like to change about your reservation for ${dateDisplay} at ${timeDisplay}?`
+                : `Ok ${firstName}, cosa vuoi modificare della prenotazione ${dateDisplay} alle ${timeDisplay}?`;
+              console.log(`🆕 FIX v3.9.29 F9: Skip verifica nome, chiedo dettagli modifica`);
+            }
           } else {
             // Non capito, richiedi
             const resDescriptions = allRes.map((r, i) => {
@@ -3467,8 +3515,11 @@ app.post("/twilio", async (req, res) => {
             if (canSkipCheck) {
               console.log(`⏭️ FIX v3.9.27 E4: Skip check - stesso slot, persone ${existingRes.people}→${modification.newPeople} (diminuzione)`);
             } else {
-              console.log(`🔍 FIX v3.9.25: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax`);
-              const availability = await CalendarService.checkAvailability(checkDate, checkTime, checkPeople, callId);
+              // 🆕 FIX v3.9.29 E3/E9: Se stesso slot e aumento pax, passa existingPeople per escluderli dal conteggio
+              // Se cambio slot, non passo existingPeople perché il nuovo slot non ha i miei pax
+              const existingPeopleForCheck = isSameSlot ? existingRes.people : 0;
+              console.log(`🔍 FIX v3.9.29 E3/E9: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax (esistenti da escludere: ${existingPeopleForCheck})`);
+              const availability = await CalendarService.checkAvailability(checkDate, checkTime, checkPeople, callId, existingPeopleForCheck);
               
               if (!availability.available && availability.reason !== "day_closed") {
                 console.log(`⚠️ FIX v3.9.25: Check preventivo MODIFY - slot pieno, propongo alternative`);
@@ -4039,4 +4090,4 @@ app.listen(CONFIG.PORT, () => {
 ║  ✨ FIX: BUG-023, E3-E10, check MODIFY, proattività numero    ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
-});
+});      
