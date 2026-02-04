@@ -3515,10 +3515,12 @@ app.post("/twilio", async (req, res) => {
             if (canSkipCheck) {
               console.log(`⏭️ FIX v3.9.27 E4: Skip check - stesso slot, persone ${existingRes.people}→${modification.newPeople} (diminuzione)`);
             } else {
-              // 🆕 FIX v3.9.29 E3/E9: Se stesso slot e aumento pax, passa existingPeople per escluderli dal conteggio
-              // Se cambio slot, non passo existingPeople perché il nuovo slot non ha i miei pax
-              const existingPeopleForCheck = isSameSlot ? existingRes.people : 0;
-              console.log(`🔍 FIX v3.9.29 E3/E9: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax (esistenti da escludere: ${existingPeopleForCheck})`);
+              // 🆕 FIX v3.9.29 E3/E9: Passa existingPeople per escluderli dal conteggio
+              // - Stesso giorno: passa sempre existingPeople (slot si sovrappongono o si liberano)
+              // - Giorno diverso: non passare (nuovo giorno non ha i tuoi pax)
+              const isSameDay = !modification.newDate || modification.newDate === existingRes.date;
+              const existingPeopleForCheck = isSameDay ? existingRes.people : 0;
+              console.log(`🔍 FIX v3.9.29 E3/E9: Check preventivo MODIFY - ${checkDate} ${checkTime} per ${checkPeople} pax (stesso giorno: ${isSameDay}, esistenti da escludere: ${existingPeopleForCheck})`);
               const availability = await CalendarService.checkAvailability(checkDate, checkTime, checkPeople, callId, existingPeopleForCheck);
               
               if (!availability.available && availability.reason !== "day_closed") {
@@ -4090,4 +4092,4 @@ app.listen(CONFIG.PORT, () => {
 ║  ✨ FIX: BUG-023, E3-E10, check MODIFY, proattività numero    ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
-});      
+});
