@@ -2,7 +2,7 @@
 // PRENOW - RECEPTIONIST AI GATEWAY v3.9.30
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.30 - BUG D10 + I4:
+// FIX v3.9.30 - BUG D10 + I4 + TEST J (FUNZIONALITÀ FUTURE):
 //
 // D10: Gruppi grandi (>10 pax) - Gestione PENDING_OWNER migliorata
 //   - Resta in pending_large_group finché cliente non chiude esplicitamente
@@ -14,6 +14,20 @@
 //   - TimeManager ora riconosce numeri scritti in lettere
 //   - Supporto: undici...ventitré, mezza, un quarto, trenta, etc.
 //   - Funziona sia in italiano che inglese
+//
+// 🆕 J1-J10: NOTE CLIENTE (allergie, richieste speciali, occasioni)
+//   - Rilevamento automatico: celiaco, allergia, seggiolone, anniversario, compleanno, etc.
+//   - Salvataggio note nel calendario e log prenotazioni
+//   - GPT conferma la nota presa ("Ho annotato che sei celiaca")
+//
+// 🆕 J3: NON INVENTARE (accessibilità, parcheggio, servizi)
+//   - GPT non inventa più informazioni su accessibilità
+//   - Risponde "Non ho questa informazione, contatta direttamente il ristorante"
+//
+// 🆕 J8: TEMPO RELATIVO ("tra mezz'ora", "tra un'ora")
+//   - Riconosce pattern come "tra mezz'ora", "tra 30 minuti", "in half an hour"
+//   - Calcola orario effettivo e imposta data = oggi
+//   - Arrotonda ai 15 minuti più vicini (slot)
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX v3.9.29 - CRITICAL CAPACITY FIXES (E3, E4, E9, F9) (ereditati):
@@ -966,9 +980,77 @@ const TimeManager = {
     return { mapping, minuteMapping };
   },
   
+  // 🆕 FIX v3.9.30 J8: Supporto tempo relativo ("tra mezz'ora", "tra un'ora")
+  parseRelativeTime(text) {
+    if (!text) return null;
+    const t = text.toLowerCase().trim();
+    
+    // Pattern per tempo relativo
+    const relativePatterns = [
+      // Italiano
+      { pattern: /tra\s+mezz['']?\s*ora/i, minutes: 30 },
+      { pattern: /tra\s+un['']?\s*ora/i, minutes: 60 },
+      { pattern: /tra\s+(\d+)\s*minut/i, extract: true },
+      { pattern: /tra\s+(\d+)\s*ore/i, extract: true, hours: true },
+      { pattern: /fra\s+mezz['']?\s*ora/i, minutes: 30 },
+      { pattern: /fra\s+un['']?\s*ora/i, minutes: 60 },
+      { pattern: /fra\s+(\d+)\s*minut/i, extract: true },
+      // English
+      { pattern: /in\s+(half\s+an?\s+hour|30\s+min)/i, minutes: 30 },
+      { pattern: /in\s+(an?\s+hour|one\s+hour|60\s+min)/i, minutes: 60 },
+      { pattern: /in\s+(\d+)\s*min/i, extract: true },
+      { pattern: /in\s+(\d+)\s*hour/i, extract: true, hours: true },
+    ];
+    
+    for (const p of relativePatterns) {
+      const match = t.match(p.pattern);
+      if (match) {
+        let minutesOffset;
+        if (p.extract) {
+          const num = parseInt(match[1]);
+          minutesOffset = p.hours ? num * 60 : num;
+        } else {
+          minutesOffset = p.minutes;
+        }
+        
+        // Calcola orario effettivo
+        const now = new Date();
+        const targetTime = new Date(now.getTime() + minutesOffset * 60 * 1000);
+        
+        // Arrotonda ai 15 minuti più vicini (slot)
+        const mins = targetTime.getMinutes();
+        const roundedMins = Math.ceil(mins / 15) * 15;
+        targetTime.setMinutes(roundedMins % 60);
+        if (roundedMins >= 60) targetTime.setHours(targetTime.getHours() + 1);
+        targetTime.setSeconds(0);
+        
+        const hour = targetTime.getHours();
+        const minute = targetTime.getMinutes();
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+        
+        console.log(`⏰ FIX v3.9.30 J8: Tempo relativo "${match[0]}" → +${minutesOffset}min → ${timeStr}`);
+        
+        return {
+          time: timeStr,
+          isRelative: true,
+          isToday: true, // Tempo relativo implica "oggi"
+          originalMatch: match[0]
+        };
+      }
+    }
+    
+    return null;
+  },
+  
   parseFromText(text) {
     if (!text) return null;
     const t = text.toLowerCase().trim();
+    
+    // 🆕 Prima controlla tempo relativo
+    const relativeResult = this.parseRelativeTime(text);
+    if (relativeResult) {
+      return relativeResult.time;
+    }
     
     if (/mezzogiorno|noon/.test(t)) return "12:00:00";
     if (/mezzanotte|midnight/.test(t)) return "00:00:00";
@@ -1307,6 +1389,11 @@ const CalendarService = {
       console.log("🆕 FIX ZF9B: forceNew=true, forzo creazione nuova prenotazione");
     }
     
+    // 🆕 FIX v3.9.30 J1-J10: Includi note cliente
+    if (data.notes) {
+      console.log(`📝 FIX v3.9.30: Invio note cliente: "${data.notes}"`);
+    }
+    
     const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1319,6 +1406,7 @@ const CalendarService = {
         telefono: data.phone || "",
         email: data.customerEmail || "",
         forceNew: forceNew,  // 🆕 FIX ZF9B
+        notes: data.notes || "",  // 🆕 FIX v3.9.30 J1-J10
       }),
     });
     
@@ -2127,6 +2215,87 @@ const ValidationPipeline = {
     let response = { ...gptResponse };
     let reservation = response.reservation || {};
     
+    // 🆕 FIX v3.9.30 J8: Controlla tempo relativo ("tra mezz'ora", "tra un'ora")
+    const relativeTime = TimeManager.parseRelativeTime(userText);
+    if (relativeTime) {
+      console.log(`⏰ FIX v3.9.30 J8: Tempo relativo rilevato → ${relativeTime.time}, imposto data=oggi`);
+      reservation.time = relativeTime.time;
+      reservation.date = DateManager.toISO(DateManager.getNow()); // Oggi
+      
+      // Verifica se orario è valido (dentro orari apertura)
+      if (!this.isValidTime(relativeTime.time)) {
+        console.log(`⏰ FIX v3.9.30 J8: Orario ${relativeTime.time} fuori orari apertura`);
+        response.action = "ask_time";
+        response.reply_text = lang === "en-US"
+          ? `I'm sorry, ${relativeTime.time.substring(0,5)} is outside our opening hours. We're open for lunch 12:00-15:00 and dinner 19:00-22:30. Would you like to book for a different time?`
+          : `Mi dispiace, le ${relativeTime.time.substring(0,5)} sono fuori dai nostri orari di apertura. Siamo aperti a pranzo 12:00-15:00 e a cena 19:00-22:30. Vuoi prenotare per un altro orario?`;
+        response.reservation = reservation;
+        return response;
+      }
+    }
+    
+    // 🆕 FIX v3.9.30 J1-J10: Rileva note cliente (allergie, richieste speciali, occasioni)
+    const noteKeywords = {
+      // Allergie e intolleranze
+      'celiac|celiaco|celiaca|glutine|gluten': 'Allergia/intolleranza glutine',
+      'allergic|allergi|allergico|allergica': null, // Generico, cattura il contesto
+      'intoleran|intolleran': null, // Generico
+      'vegetarian|vegetariano|vegetariana': 'Vegetariano/a',
+      'vegan|vegano|vegana': 'Vegano/a',
+      'lactose|lattosio': 'Intolleranza lattosio',
+      'arachidi|peanut|noci|nuts|frutta secca': 'Allergia frutta secca/arachidi',
+      // Richieste bambini
+      'seggiolone|seggiolino|highchair|high chair': 'Richiesto seggiolone',
+      'bambino piccolo|bambina piccola|neonato|infant|baby|toddler': 'Presenza bambino piccolo',
+      'passeggino|stroller': 'Passeggino',
+      // Accessibilità
+      'sedia a rotelle|carrozzina|wheelchair': 'Accessibilità richiesta',
+      'disabil|handicap': 'Accessibilità richiesta',
+      // Occasioni speciali
+      'anniversario|anniversary': 'Anniversario',
+      'compleanno|birthday': 'Compleanno',
+      'romantico|romantic': 'Tavolo romantico',
+      'proposta|propose|engagement': 'Occasione speciale',
+      // Preferenze tavolo
+      'finestra|window': 'Preferenza tavolo finestra',
+      'esterno|terrazza|outside|outdoor|terrace': 'Preferenza esterno',
+      'interno|inside|indoor': 'Preferenza interno',
+      'tranquillo|quiet|riservato|private': 'Tavolo tranquillo/riservato',
+      'vicino ai giochi|near play|area giochi': 'Vicino area giochi bambini',
+    };
+    
+    const savedRes = StateManager.getReservation(callId);
+    let existingNotes = savedRes.notes || reservation.notes || '';
+    let newNotesFound = [];
+    
+    const textLower = userText.toLowerCase();
+    for (const [pattern, defaultNote] of Object.entries(noteKeywords)) {
+      const regex = new RegExp(pattern, 'i');
+      if (regex.test(textLower)) {
+        // Estrai contesto per note generiche
+        let noteText = defaultNote;
+        if (!noteText) {
+          // Cattura parte del messaggio come nota
+          const match = textLower.match(new RegExp(`(\\w+\\s+){0,3}${pattern}(\\s+\\w+){0,3}`, 'i'));
+          noteText = match ? match[0].trim() : pattern;
+        }
+        
+        // Evita duplicati
+        if (!existingNotes.toLowerCase().includes(noteText.toLowerCase().substring(0, 10))) {
+          newNotesFound.push(noteText);
+          console.log(`📝 FIX v3.9.30 NOTE: Rilevata nota cliente: "${noteText}"`);
+        }
+      }
+    }
+    
+    if (newNotesFound.length > 0) {
+      const allNotes = existingNotes 
+        ? `${existingNotes}; ${newNotesFound.join('; ')}`
+        : newNotesFound.join('; ');
+      reservation.notes = allNotes;
+      console.log(`📝 FIX v3.9.30 NOTE: Note totali: "${reservation.notes}"`);
+    }
+    
     // FIX v3.9.27 ZG6C: Se c'è una data pendente (dopo redirect P1), forza quella data
     const pendingDate = StateManager.getPendingCorrectDate(callId);
     if (pendingDate) {
@@ -2694,6 +2863,17 @@ ORDINE DOMANDE:
 4. Nome
 5. Email (opzionale, DOPO il nome)
 
+⚠️ REGOLA CRITICA - NON INVENTARE:
+- NON inventare informazioni su accessibilità, parcheggio, servizi speciali
+- Se il cliente chiede info che non conosci (es. "siete accessibili?", "avete parcheggio?"), rispondi: "${lang === "en-US" ? "I don't have that information, I recommend contacting the restaurant directly" : "Non ho questa informazione, ti consiglio di contattare direttamente il ristorante"}"
+- Puoi comunque procedere con la prenotazione dopo
+
+🆕 NOTE CLIENTE (allergie, richieste speciali, occasioni):
+- Se il cliente menziona: allergie, intolleranze, celiaco, vegetariano, vegano, seggiolone, bambini, sedia a rotelle, anniversario, compleanno, occasione speciale, tavolo romantico, finestra, esterno, interno
+- REGISTRA nel campo "notes" della reservation
+- CONFERMA che hai preso nota (es. "Ho annotato che sei celiaca")
+- Includi la nota nella conferma finale
+
 IMPORTANTE GRUPPI: Solo per 11 o più persone dire "prenotazione soggetta a conferma del ristoratore".
 Per gruppi fino a 10 persone: prenotazione NORMALE, NON dire "soggetta a conferma".
 
@@ -2712,7 +2892,8 @@ FORMATO RISPOSTA (SOLO JSON):
     "time": "HH:MM:SS o null",
     "people": numero o null,
     "name": "nome o null",
-    "customerEmail": "email o null"
+    "customerEmail": "email o null",
+    "notes": "note cliente (allergie, richieste, occasioni) o null"
   }
 }
 
@@ -3745,6 +3926,7 @@ app.post("/twilio", async (req, res) => {
               time: updatedRes.time,
               phone: From,
               customerEmail: updatedRes.email || "",
+              notes: updatedRes.notes || "",  // 🆕 FIX v3.9.30 J1-J10
             }, callId);
             
             if (result?.success) {
@@ -3896,6 +4078,7 @@ app.post("/twilio", async (req, res) => {
             phone: From || "unknown",
             customerEmail: reservation.customerEmail,
             forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
+            notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
           }, callId);
           
           if (calResult?.success) {
@@ -3935,6 +4118,7 @@ app.post("/twilio", async (req, res) => {
               phone: From || "unknown",
               customerEmail: reservation.customerEmail,
               forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
+              notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
             }, callId);
             
             if (calResult?.success) {
@@ -3977,6 +4161,7 @@ app.post("/twilio", async (req, res) => {
             phone: From || "unknown",
             customerEmail: reservation.customerEmail,
             forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
+            notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
           }, callId);
           
           if (calResult?.success) {
@@ -4016,6 +4201,7 @@ app.post("/twilio", async (req, res) => {
               phone: From || "unknown",
               customerEmail: reservation.customerEmail,
               forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
+              notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
             }, callId);
             
             if (calResult?.success) {
