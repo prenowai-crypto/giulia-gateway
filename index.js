@@ -1,8 +1,22 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.29
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.30
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
-// FIX v3.9.29 - CRITICAL CAPACITY FIXES (E3, E4, E9, F9):
+// FIX v3.9.30 - BUG D10 + I4:
+//
+// D10: Gruppi grandi (>10 pax) - Gestione PENDING_OWNER migliorata
+//   - Resta in pending_large_group finché cliente non chiude esplicitamente
+//   - Se cliente insiste per conferma immediata → spiega che serve conferma ristoratore
+//   - Se cliente accetta (ok, grazie, capito) → chiude conversazione
+//   - Evita che GPT risponda "è confermata" quando status è PENDING_OWNER
+//
+// I4: Orari in lettere (es. "venti e trenta" → 20:30)
+//   - TimeManager ora riconosce numeri scritti in lettere
+//   - Supporto: undici...ventitré, mezza, un quarto, trenta, etc.
+//   - Funziona sia in italiano che inglese
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX v3.9.29 - CRITICAL CAPACITY FIXES (E3, E4, E9, F9) (ereditati):
 //
 // E4 (P0 CRITICO): Check capacità MODIFY ora esclude pax esistenti
 //   - Quando cliente diminuisce pax (8→5), Gateway salta il check
@@ -919,6 +933,39 @@ const DateManager = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const TimeManager = {
+  // 🆕 FIX v3.9.30 I4: Mappa numeri in lettere → cifre
+  wordsToNumber(text) {
+    const mapping = {
+      'zero': 0, 'una': 1, 'uno': 1, 'due': 2, 'tre': 3, 'quattro': 4,
+      'cinque': 5, 'sei': 6, 'sette': 7, 'otto': 8, 'nove': 9, 'dieci': 10,
+      'undici': 11, 'dodici': 12, 'tredici': 13, 'quattordici': 14, 'quindici': 15,
+      'sedici': 16, 'diciassette': 17, 'diciotto': 18, 'diciannove': 19,
+      'venti': 20, 'ventuno': 21, 'ventidue': 22, 'ventitre': 23, 'ventitré': 23,
+      'ventiquattro': 24,
+      // English
+      'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
+      'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12,
+      'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
+      'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20,
+      'twenty-one': 21, 'twenty-two': 22, 'twenty-three': 23
+    };
+    
+    const minuteMapping = {
+      'mezza': 30, 'mezzo': 30, 'half': 30,
+      'un quarto': 15, 'quarter': 15,
+      'quarantacinque': 45, 'forty-five': 45, 'forty five': 45,
+      'trenta': 30, 'thirty': 30,
+      'quindici': 15, 'fifteen': 15,
+      'quaranta': 40, 'forty': 40,
+      'cinquanta': 50, 'fifty': 50,
+      'dieci': 10, 'ten': 10,
+      'venti': 20, 'twenty': 20,
+      'cinque': 5, 'five': 5
+    };
+    
+    return { mapping, minuteMapping };
+  },
+  
   parseFromText(text) {
     if (!text) return null;
     const t = text.toLowerCase().trim();
@@ -928,6 +975,37 @@ const TimeManager = {
     
     const allTimes = [];
     let match;
+    
+    // 🆕 FIX v3.9.30 I4: Pattern per numeri in lettere (es. "alle venti e trenta")
+    const { mapping, minuteMapping } = this.wordsToNumber();
+    const hourWords = Object.keys(mapping).filter(k => mapping[k] >= 12 && mapping[k] <= 23).join('|');
+    const allHourWords = Object.keys(mapping).join('|');
+    
+    // Pattern per "alle venti e trenta", "alle otto e mezza", "alle diciannove"
+    const patternWords = new RegExp(`(?:alle|ore|per le|at)\\s+(${allHourWords})(?:\\s+e\\s+(mezza|mezzo|un quarto|trenta|quindici|quaranta|quarantacinque|venti|dieci|cinque))?`, 'gi');
+    while ((match = patternWords.exec(t)) !== null) {
+      const hourWord = match[1].toLowerCase();
+      const minuteWord = match[2] ? match[2].toLowerCase() : null;
+      
+      let hour = mapping[hourWord];
+      if (hour === undefined) continue;
+      
+      let minutes = 0;
+      if (minuteWord && minuteMapping[minuteWord] !== undefined) {
+        minutes = minuteMapping[minuteWord];
+      }
+      
+      // Converti ore piccole in PM per contesto ristorante (sera)
+      if (hour >= 1 && hour <= 11 && !t.includes("mattina") && !t.includes("pranzo") && !t.includes("morning") && !t.includes("lunch")) {
+        hour += 12;
+      }
+      
+      if (hour >= 0 && hour <= 23) {
+        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+        console.log(`⏰ TimeManager patternWords: "${match[0]}" → ${timeStr}`);
+        allTimes.push({ position: match.index, time: timeStr, pattern: 'patternWords', match: match[0] });
+      }
+    }
     
     const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
     while ((match = pattern1.exec(t)) !== null) {
@@ -3156,18 +3234,40 @@ app.post("/twilio", async (req, res) => {
     
     // ═══════════════════════════════════════════════════════════════════════
     // FIX v3.7: Intercetta risposte dopo prenotazione PENDING (gruppi >10)
+    // 🆕 FIX v3.9.30 D10: Resta in pending_large_group finché cliente non chiude
     // ═══════════════════════════════════════════════════════════════════════
     if (phase === 'pending_large_group') {
       console.log(`📍 Fase pending_large_group: cliente ha risposto dopo prenotazione PENDING`);
       
-      const replyText = lang === "en-US"
-        ? "Your request has been registered. The restaurant will contact you to confirm the reservation. Is there anything else I can help you with?"
-        : "La tua richiesta è stata registrata. Il ristorante ti contatterà per confermare la prenotazione. Posso aiutarti con altro?";
+      // Riconosci se il cliente vuole chiudere la conversazione
+      const wantsToClose = /\b(ok|va bene|capito|grazie|thanks|got it|understood|perfetto|d'accordo|ciao|arrivederci|goodbye|bye)\b/i.test(userText);
       
-      StateManager.setPhase(callId, 'completed');
+      // Riconosci se il cliente chiede conferma immediata o insiste
+      const wantsImmediateConfirm = /\b(conferma|confermata|sicur|adesso|subito|ora|confirm|sure|now|immediately)\b/i.test(userText);
+      
+      let replyText;
+      
+      if (wantsToClose && !wantsImmediateConfirm) {
+        // Cliente accetta e chiude
+        console.log(`📍 FIX v3.9.30 D10: Cliente accetta prenotazione PENDING, chiudo conversazione`);
+        replyText = lang === "en-US"
+          ? "Perfect! Your request has been registered. The restaurant will contact you soon to confirm. Have a great day!"
+          : "Perfetto! La tua richiesta è stata registrata. Il ristorante ti contatterà presto per confermare. Buona giornata!";
+        
+        StateManager.setPhase(callId, 'completed');
+      } else {
+        // Cliente insiste o chiede conferma immediata
+        console.log(`📍 FIX v3.9.30 D10: Cliente insiste, ribadisco che è in attesa di conferma`);
+        replyText = lang === "en-US"
+          ? "I understand, but for groups over 10 people the reservation must be confirmed by the restaurant. They will contact you shortly at this number or by email. Is there anything else I can help you with?"
+          : "Capisco, ma per gruppi superiori a 10 persone la prenotazione deve essere confermata dal ristorante. Ti contatteranno a breve a questo numero o via email. Posso aiutarti con altro?";
+        
+        // 🆕 Resta in pending_large_group, NON passare a completed
+        // così il prossimo messaggio sarà ancora gestito qui
+      }
       
       if (isDebug) {
-        return res.status(200).json({ reply_text: replyText, action: "none", reservation: null });
+        return res.status(200).json({ reply_text: replyText, action: "none", reservation: null, phase: StateManager.getPhase(callId) });
       }
       const twiml = `
         <Response>
