@@ -2294,6 +2294,9 @@ const ValidationPipeline = {
         : newNotesFound.join('; ');
       reservation.notes = allNotes;
       console.log(`📝 FIX v3.9.30 NOTE: Note totali: "${reservation.notes}"`);
+      
+      // 🆕 FIX v3.9.30: Salva le note nello StateManager per persistenza
+      StateManager.mergeReservation(callId, { notes: reservation.notes });
     }
     
     // FIX v3.9.27 ZG6C: Se c'è una data pendente (dopo redirect P1), forza quella data
