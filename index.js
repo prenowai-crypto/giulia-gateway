@@ -4081,7 +4081,7 @@ app.post("/twilio", async (req, res) => {
             phone: From || "unknown",
             customerEmail: reservation.customerEmail,
             forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
-            notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
+            notes: StateManager.getReservation(callId).notes || reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
           }, callId);
           
           if (calResult?.success) {
@@ -4121,7 +4121,7 @@ app.post("/twilio", async (req, res) => {
               phone: From || "unknown",
               customerEmail: reservation.customerEmail,
               forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
-              notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
+              notes: StateManager.getReservation(callId).notes || reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
             }, callId);
             
             if (calResult?.success) {
@@ -4164,7 +4164,7 @@ app.post("/twilio", async (req, res) => {
             phone: From || "unknown",
             customerEmail: reservation.customerEmail,
             forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
-            notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
+            notes: StateManager.getReservation(callId).notes || reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
           }, callId);
           
           if (calResult?.success) {
@@ -4204,7 +4204,7 @@ app.post("/twilio", async (req, res) => {
               phone: From || "unknown",
               customerEmail: reservation.customerEmail,
               forceNew: StateManager.getWantsNewReservation(callId),  // 🆕 FIX ZF9B
-              notes: reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
+              notes: StateManager.getReservation(callId).notes || reservation.notes || "",  // 🆕 FIX v3.9.30 J1-J10
             }, callId);
             
             if (calResult?.success) {
@@ -4375,10 +4375,10 @@ app.get("/owner/large-group/cancel", async (req, res) => {
 app.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW GATEWAY v3.9.25 AVVIATO                            ║
+║  🚀 PRENOW GATEWAY v3.9.30 AVVIATO                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🌐 URL: ${CONFIG.BASE_URL}                         ║
-║  ✨ FIX: BUG-023, E3-E10, check MODIFY, proattività numero    ║
+║  ✨ FIX: D10, I4, J1-J10 (note cliente), J3, J8 (tempo rel.)  ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
