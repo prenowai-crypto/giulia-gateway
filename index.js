@@ -430,7 +430,8 @@ const StateManager = {
       people: 'people' in newData ? newData.people : prev.people,
       name: 'name' in newData ? newData.name : prev.name,
       customerEmail: 'customerEmail' in newData ? newData.customerEmail : prev.customerEmail,
-      notes: 'notes' in newData ? newData.notes : prev.notes,  // 🆕 FIX v3.9.30: Supporto note cliente
+      // 🆕 FIX v3.9.30: Preserva note esistenti se GPT restituisce null/undefined/vuoto
+      notes: (newData.notes && typeof newData.notes === 'string' && newData.notes.trim()) ? newData.notes : prev.notes,
     };
     this.setReservation(callId, merged);
     return merged;
@@ -1014,8 +1015,9 @@ const TimeManager = {
           minutesOffset = p.minutes;
         }
         
-        // Calcola orario effettivo
-        const now = new Date();
+        // 🆕 FIX v3.9.30 J8: Usa timezone Europe/Rome invece di UTC
+        const nowString = new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" });
+        const now = new Date(nowString);
         const targetTime = new Date(now.getTime() + minutesOffset * 60 * 1000);
         
         // Arrotonda ai 15 minuti più vicini (slot)
@@ -1029,7 +1031,7 @@ const TimeManager = {
         const minute = targetTime.getMinutes();
         const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
         
-        console.log(`⏰ FIX v3.9.30 J8: Tempo relativo "${match[0]}" → +${minutesOffset}min → ${timeStr}`);
+        console.log(`⏰ FIX v3.9.30 J8: Tempo relativo "${match[0]}" → now=${now.toISOString()} +${minutesOffset}min → ${timeStr}`);
         
         return {
           time: timeStr,
@@ -2265,8 +2267,26 @@ const ValidationPipeline = {
       'vicino ai giochi|near play|area giochi': 'Vicino area giochi bambini',
     };
     
+    // 🆕 FIX v3.9.30 J5/J6: Rileva numero di telefono alternativo
+    const phonePattern = /(?:numero|telefono|cell|phone|contact|contatt).*?(\+?\d[\d\s\-]{6,})/i;
+    const phoneMatch = userText.match(phonePattern);
+    
     const savedRes = StateManager.getReservation(callId);
     let existingNotes = savedRes.notes || reservation.notes || '';
+    
+    if (phoneMatch) {
+      const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
+      const phoneNote = `Tel. alternativo: ${phoneNumber}`;
+      console.log(`📝 FIX v3.9.30 J5/J6: Rilevato telefono alternativo: "${phoneNumber}"`);
+      
+      if (!existingNotes.includes('Tel. alternativo')) {
+        existingNotes = existingNotes ? `${existingNotes}; ${phoneNote}` : phoneNote;
+        reservation.notes = existingNotes;
+        StateManager.mergeReservation(callId, { notes: reservation.notes });
+        console.log(`📝 FIX v3.9.30 J5/J6: Note aggiornate: "${reservation.notes}"`);
+      }
+    }
+    
     let newNotesFound = [];
     
     const textLower = userText.toLowerCase();
