@@ -416,7 +416,7 @@ const StateManager = {
   // Prenotazione in costruzione
   getReservation(callId) {
     return STATE.reservations.get(callId) || {
-      date: null, time: null, people: null, name: null, customerEmail: null,
+      date: null, time: null, people: null, name: null, customerEmail: null, notes: null,  // 🆕 FIX v3.9.30
     };
   },
   setReservation(callId, reservation) {
@@ -430,6 +430,7 @@ const StateManager = {
       people: 'people' in newData ? newData.people : prev.people,
       name: 'name' in newData ? newData.name : prev.name,
       customerEmail: 'customerEmail' in newData ? newData.customerEmail : prev.customerEmail,
+      notes: 'notes' in newData ? newData.notes : prev.notes,  // 🆕 FIX v3.9.30: Supporto note cliente
     };
     this.setReservation(callId, merged);
     return merged;
