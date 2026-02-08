@@ -1,7 +1,26 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - RECEPTIONIST AI GATEWAY v3.9.30
+// PRENOW - RECEPTIONIST AI GATEWAY v3.9.31
 // Architettura pulita con RECAP deterministico per cancel/modify
 // 
+// 🆕 FIX v3.9.31 - MULTI-TENANT COMPLETO:
+//
+// Orari e chiusure ora letti dal Registry Sheet per ogni ristorante:
+//   - closed_days: giorni chiusura settimanale (es: "1" o "1,7")
+//   - lunch_start, lunch_end: orari pranzo (es: "12:00", "15:00")
+//   - dinner_start, dinner_end: orari cena (es: "19:00", "22:30")
+//   - large_group_threshold: soglia gruppi grandi (default 10)
+//   - event_threshold: soglia eventi (default 45)
+//   - receptionist_name: nome assistente (default "Giulia")
+//
+// Modifiche principali:
+//   - ConfigHelper: nuova utility per leggere config ristorante
+//   - ValidationPipeline.isValidTime(): usa orari dinamici
+//   - DateManager.buildCalendar(): usa closed_days dinamici
+//   - ClosureChecker.isOpen(): usa closed_days dinamici
+//   - GPTService.buildSystemPrompt(): usa orari/chiusure dinamici
+//   - Messaggi errore: usano orari dinamici
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // FIX v3.9.30 - BUG D10 + I4 + TEST J (FUNZIONALITÀ FUTURE):
 //
 // D10: Gruppi grandi (>10 pax) - Gestione PENDING_OWNER migliorata
@@ -143,7 +162,13 @@ const CONFIG = {
   
   LARGE_GROUP_THRESHOLD: 10,
   EVENT_THRESHOLD: 45,
-  WEEKLY_CLOSING_DAYS: [1], // Lunedì
+  WEEKLY_CLOSING_DAYS: [1], // Lunedì (fallback)
+  
+  // 🆕 v3.9.31: Orari default (fallback se non specificati nel Registry)
+  DEFAULT_LUNCH_START: "12:00",
+  DEFAULT_LUNCH_END: "15:00",
+  DEFAULT_DINNER_START: "19:00",
+  DEFAULT_DINNER_END: "22:30",
   
   GPT_MODEL: "gpt-4o-mini",
   GPT_MAX_TOKENS: 300,
@@ -587,6 +612,136 @@ const StateManager = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// 🆕 SEZIONE 5B: CONFIG HELPER (v3.9.31 - Multi-tenant)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ConfigHelper = {
+  /**
+   * Ottiene i giorni di chiusura per un ristorante
+   * @param {string} callId - ID chiamata
+   * @returns {number[]} Array di giorni (0=dom, 1=lun, ...)
+   */
+  getClosedDays(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    if (config?.closed_days) {
+      // Può essere "1" o "1,7" o "1, 7"
+      const daysStr = String(config.closed_days).replace(/\s/g, '');
+      const days = daysStr.split(',').map(d => parseInt(d.trim())).filter(d => !isNaN(d));
+      if (days.length > 0) {
+        return days;
+      }
+    }
+    return CONFIG.WEEKLY_CLOSING_DAYS; // fallback
+  },
+  
+  /**
+   * Ottiene gli orari di apertura per un ristorante
+   * @param {string} callId - ID chiamata
+   * @returns {Object} { lunchStart, lunchEnd, dinnerStart, dinnerEnd } in minuti
+   */
+  getOpeningHours(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    
+    const parseTime = (timeStr, defaultVal) => {
+      if (!timeStr) return defaultVal;
+      const [h, m] = String(timeStr).split(':').map(Number);
+      if (isNaN(h)) return defaultVal;
+      return h * 60 + (m || 0);
+    };
+    
+    return {
+      lunchStart: parseTime(config?.lunch_start, 12 * 60),      // default 12:00
+      lunchEnd: parseTime(config?.lunch_end, 15 * 60),          // default 15:00
+      dinnerStart: parseTime(config?.dinner_start, 19 * 60),    // default 19:00
+      dinnerEnd: parseTime(config?.dinner_end, 22 * 60 + 30),   // default 22:30
+    };
+  },
+  
+  /**
+   * Ottiene gli orari come stringhe per display/messaggi
+   * @param {string} callId - ID chiamata
+   * @returns {Object} { lunchStart, lunchEnd, dinnerStart, dinnerEnd } come "HH:MM"
+   */
+  getOpeningHoursDisplay(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    
+    return {
+      lunchStart: config?.lunch_start || CONFIG.DEFAULT_LUNCH_START,
+      lunchEnd: config?.lunch_end || CONFIG.DEFAULT_LUNCH_END,
+      dinnerStart: config?.dinner_start || CONFIG.DEFAULT_DINNER_START,
+      dinnerEnd: config?.dinner_end || CONFIG.DEFAULT_DINNER_END,
+    };
+  },
+  
+  /**
+   * Ottiene le soglie per gruppi/eventi
+   * @param {string} callId - ID chiamata
+   * @returns {Object} { largeGroup, event }
+   */
+  getThresholds(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    return {
+      largeGroup: Number(config?.large_group_threshold) || CONFIG.LARGE_GROUP_THRESHOLD,
+      event: Number(config?.event_threshold) || CONFIG.EVENT_THRESHOLD,
+    };
+  },
+  
+  /**
+   * Ottiene il nome del receptionist
+   * @param {string} callId - ID chiamata
+   * @returns {string} Nome receptionist
+   */
+  getReceptionistName(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    return config?.receptionist_name || CONFIG.RECEPTIONIST_NAME;
+  },
+  
+  /**
+   * Costruisce il messaggio di orario non valido
+   * @param {string} callId - ID chiamata
+   * @param {string} lang - Lingua
+   * @returns {string} Messaggio
+   */
+  buildInvalidTimeMessage(callId, lang = "it-IT") {
+    const hours = this.getOpeningHoursDisplay(callId);
+    return lang === "en-US"
+      ? `I'm sorry, that time is outside our opening hours. We're open for lunch ${hours.lunchStart}-${hours.lunchEnd} and dinner ${hours.dinnerStart}-${hours.dinnerEnd}. What time works for you?`
+      : `Mi dispiace, quell'orario è fuori dai nostri orari di apertura. Siamo aperti a pranzo ${hours.lunchStart}-${hours.lunchEnd} e a cena ${hours.dinnerStart}-${hours.dinnerEnd}. A che ora preferisci?`;
+  },
+  
+  /**
+   * Costruisce testo chiusure per il prompt GPT
+   * @param {string} callId - ID chiamata
+   * @param {string} lang - Lingua
+   * @returns {string} Testo chiusure
+   */
+  buildClosuresText(callId, lang = "it-IT") {
+    const closedDays = this.getClosedDays(callId);
+    const daysIT = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+    const daysEN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    if (closedDays.length === 0) {
+      return lang === "en-US" ? "Open every day" : "Aperto tutti i giorni";
+    }
+    
+    const dayNames = closedDays.map(d => lang === "en-US" ? daysEN[d] : daysIT[d]);
+    return lang === "en-US" 
+      ? `Closed on ${dayNames.join(', ')}`
+      : `Chiuso il ${dayNames.join(', ')}`;
+  },
+  
+  /**
+   * Costruisce testo orari per il prompt GPT
+   * @param {string} callId - ID chiamata
+   * @returns {string} Testo orari
+   */
+  buildOpeningHoursText(callId) {
+    const hours = this.getOpeningHoursDisplay(callId);
+    return `Pranzo ${hours.lunchStart}-${hours.lunchEnd}, Cena ${hours.dinnerStart}-${hours.dinnerEnd}. Ultima prenotazione alle ${hours.dinnerEnd}.`;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SEZIONE 6: MULTI-TENANT REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -663,6 +818,14 @@ const Registry = {
       const config = await this.getByTwilioNumber(twilioNumber);
       if (config) {
         StateManager.setRestaurantConfig(callId, config);
+        // 🆕 v3.9.31: Log config multi-tenant
+        console.log(`🆕 v3.9.31: Config caricata per ${config.restaurant_name}:`, {
+          closed_days: config.closed_days || '1',
+          lunch: `${config.lunch_start || '12:00'}-${config.lunch_end || '15:00'}`,
+          dinner: `${config.dinner_start || '19:00'}-${config.dinner_end || '22:30'}`,
+          thresholds: `${config.large_group_threshold || 10}/${config.event_threshold || 45}`,
+          receptionist: config.receptionist_name || 'Giulia'
+        });
         return config;
       }
     }
@@ -743,16 +906,20 @@ const DateManager = {
     return result;
   },
   
-  buildCalendar(days = 14) {
+  // 🆕 v3.9.31: buildCalendar ora accetta callId per usare closed_days dinamici
+  buildCalendar(days = 14, callId = null) {
     const now = this.getNow();
     const today = this.startOfDay(now);
     const calendar = [];
+    
+    // 🆕 v3.9.31: Usa closed_days dal config del ristorante
+    const closedDays = ConfigHelper.getClosedDays(callId);
     
     for (let i = 0; i <= days; i++) {
       const d = this.addDays(today, i);
       const iso = this.toISO(d);
       const dayOfWeek = d.getDay();
-      const isClosed = CONFIG.WEEKLY_CLOSING_DAYS.includes(dayOfWeek);
+      const isClosed = closedDays.includes(dayOfWeek);
       
       calendar.push({
         offset: i,
@@ -1308,6 +1475,7 @@ const NameManager = {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SEZIONE 10: CLOSURE CHECKER
+// 🆕 v3.9.31: Usa closed_days dinamici dal config del ristorante
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ClosureChecker = {
@@ -1317,10 +1485,14 @@ const ClosureChecker = {
     console.log(`🔍 ClosureChecker: ${dateISO}...`);
     
     const dayOfWeek = DateManager.getDayOfWeek(dateISO);
-    if (CONFIG.WEEKLY_CLOSING_DAYS.includes(dayOfWeek)) {
+    
+    // 🆕 v3.9.31: Usa closed_days dal config del ristorante
+    const closedDays = ConfigHelper.getClosedDays(callId);
+    
+    if (closedDays.includes(dayOfWeek)) {
       const dayName = DateManager.getDayName(dateISO, "it-IT");
       const dayNameEN = DateManager.getDayName(dateISO, "en-US");
-      console.log(`⛔ CHIUSO: ${dayName}`);
+      console.log(`⛔ CHIUSO: ${dayName} (closedDays: ${closedDays.join(',')})`);
       return {
         open: false,
         reason: "chiusura_settimanale",
@@ -1687,12 +1859,9 @@ const ContextService = {
     return ctx?.restaurant?.email || CONFIG.OWNER_EMAIL_DEFAULT;
   },
   
+  // 🆕 v3.9.31: Ora usa ConfigHelper per thresholds
   getThresholds(callId) {
-    const ctx = StateManager.getContext(callId);
-    return {
-      largeGroup: ctx?.rules?.largeGroupThreshold || CONFIG.LARGE_GROUP_THRESHOLD,
-      event: ctx?.rules?.eventThreshold || CONFIG.EVENT_THRESHOLD,
-    };
+    return ConfigHelper.getThresholds(callId);
   },
 };
 
@@ -2020,24 +2189,23 @@ const RecapManager = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ValidationPipeline = {
-  isValidTime(time, context = null) {
+  // 🆕 v3.9.31: Accetta callId per usare orari dinamici
+  isValidTime(time, callId = null) {
     if (!time) return false;
     const [hourStr, minStr] = time.split(':');
     const hour = parseInt(hourStr);
     const minutes = parseInt(minStr || '0');
     const totalMinutes = hour * 60 + minutes;
     
-    const lunchOpen = 12 * 60;
-    const lunchClose = 15 * 60;
-    const dinnerOpen = 19 * 60;
-    const dinnerClose = 22 * 60 + 30;
+    // 🆕 v3.9.31: Usa orari dal config del ristorante
+    const hours = ConfigHelper.getOpeningHours(callId);
     
-    const isLunch = totalMinutes >= lunchOpen && totalMinutes <= lunchClose;
-    const isDinner = totalMinutes >= dinnerOpen && totalMinutes <= dinnerClose;
+    const isLunch = totalMinutes >= hours.lunchStart && totalMinutes <= hours.lunchEnd;
+    const isDinner = totalMinutes >= hours.dinnerStart && totalMinutes <= hours.dinnerEnd;
     const isValid = isLunch || isDinner;
     
     if (!isValid) {
-      console.log(`⏰ isValidTime: ${time} (${totalMinutes} min) fuori range pranzo ${lunchOpen}-${lunchClose} E cena ${dinnerOpen}-${dinnerClose}`);
+      console.log(`⏰ isValidTime: ${time} (${totalMinutes} min) fuori range pranzo ${hours.lunchStart}-${hours.lunchEnd} E cena ${hours.dinnerStart}-${hours.dinnerEnd}`);
     }
     return isValid;
   },
@@ -2225,13 +2393,11 @@ const ValidationPipeline = {
       reservation.time = relativeTime.time;
       reservation.date = DateManager.toISO(DateManager.getNow()); // Oggi
       
-      // Verifica se orario è valido (dentro orari apertura)
-      if (!this.isValidTime(relativeTime.time)) {
+      // 🆕 v3.9.31: Verifica se orario è valido usando orari dinamici
+      if (!this.isValidTime(relativeTime.time, callId)) {
         console.log(`⏰ FIX v3.9.30 J8: Orario ${relativeTime.time} fuori orari apertura`);
         response.action = "ask_time";
-        response.reply_text = lang === "en-US"
-          ? `I'm sorry, ${relativeTime.time.substring(0,5)} is outside our opening hours. We're open for lunch 12:00-15:00 and dinner 19:00-22:30. Would you like to book for a different time?`
-          : `Mi dispiace, le ${relativeTime.time.substring(0,5)} sono fuori dai nostri orari di apertura. Siamo aperti a pranzo 12:00-15:00 e a cena 19:00-22:30. Vuoi prenotare per un altro orario?`;
+        response.reply_text = ConfigHelper.buildInvalidTimeMessage(callId, lang);
         response.reservation = reservation;
         return response;
       }
@@ -2549,7 +2715,8 @@ const ValidationPipeline = {
       }
     }
     
-    if (reservation.time && !this.isValidTime(reservation.time)) {
+    // 🆕 v3.9.31: Usa isValidTime con callId per orari dinamici
+    if (reservation.time && !this.isValidTime(reservation.time, callId)) {
       const isAskingAboutTime = /\b(ultimo|prima|quale|quali|orari|apertura|chiusura|when|what time|available|hours)\b/i.test(userText);
       
       if (isAskingAboutTime) {
@@ -2558,9 +2725,8 @@ const ValidationPipeline = {
       } else {
         console.log(`⏰ FIX v3.9.4: Orario ${reservation.time} INVALIDO → forzo ask_time`);
         response.action = "ask_time";
-        response.reply_text = lang === "en-US"
-          ? "I'm sorry, that time is outside our opening hours. We're open for lunch 12:00-15:00 and dinner 19:00-22:30. What time works for you?"
-          : "Mi dispiace, quell'orario è fuori dai nostri orari di apertura. Siamo aperti a pranzo 12:00-15:00 e a cena 19:00-22:30. A che ora preferisci?";
+        // 🆕 v3.9.31: Usa messaggio con orari dinamici
+        response.reply_text = ConfigHelper.buildInvalidTimeMessage(callId, lang);
         reservation.time = null;
       }
     }
@@ -2569,7 +2735,7 @@ const ValidationPipeline = {
       
       if (isAskingAboutTime) {
         console.log(`ℹ️ FIX v3.9: Cliente chiede info orari, lascio risposta GPT`);
-      } else if (this.isValidTime(reservation.time)) {
+      } else if (this.isValidTime(reservation.time, callId)) {
         console.log(`⚠️ FIX v3.9: GPT chiede orario ma abbiamo già ${reservation.time} valido → skip`);
         
         const hasPeople = savedReservation.people || reservation.people;
@@ -2821,6 +2987,7 @@ const ValidationPipeline = {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SEZIONE 15: GPT SERVICE (FIX v3.9.21 BUG-003/004 - Soglia gruppi)
+// 🆕 v3.9.31: Usa orari/chiusure dinamici dal config del ristorante
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const GPTService = {
@@ -2829,9 +2996,16 @@ const GPTService = {
     const restaurantEmail = context?.restaurant?.email || CONFIG.OWNER_EMAIL_DEFAULT;
     const openingHours = context?.restaurant?.openingHoursText || "";
     const menuSummary = context?.menu?.summaryText || "";
-    const largeGroupThreshold = context?.rules?.largeGroupThreshold || CONFIG.LARGE_GROUP_THRESHOLD;
     
-    const calendar = DateManager.buildCalendar(10);
+    // 🆕 v3.9.31: Usa thresholds dal config del ristorante
+    const thresholds = ConfigHelper.getThresholds(callId);
+    const largeGroupThreshold = thresholds.largeGroup;
+    
+    // 🆕 v3.9.31: Usa receptionist name dal config del ristorante
+    const receptionistName = ConfigHelper.getReceptionistName(callId);
+    
+    // 🆕 v3.9.31: buildCalendar usa closed_days dinamici
+    const calendar = DateManager.buildCalendar(10, callId);
     const calendarText = calendar.map(d => {
       let label = d.label ? ` (${d.label})` : "";
       if (d.isClosed) label += " ⛔ CHIUSO";
@@ -2840,6 +3014,10 @@ const GPTService = {
     
     const now = DateManager.getNow();
     const todayISO = DateManager.toISO(now);
+    
+    // 🆕 v3.9.31: Usa orari e chiusure dinamici
+    const closuresText = ConfigHelper.buildClosuresText(callId, lang);
+    const openingHoursText = ConfigHelper.buildOpeningHoursText(callId);
     
     let stateText = "";
     if (reservation && (reservation.date || reservation.time || reservation.people || reservation.name)) {
@@ -2858,7 +3036,7 @@ Se l'utente conferma, usa action="create_reservation" con questi dati!`;
       ? `⚠️ LANGUAGE: This conversation is in ENGLISH. You MUST reply ONLY in English!`
       : `⚠️ LINGUA: Questa conversazione è in ITALIANO. Rispondi SOLO in italiano!`;
 
-    return `Sei ${CONFIG.RECEPTIONIST_NAME}, receptionist di ${restaurantName}.
+    return `Sei ${receptionistName}, receptionist di ${restaurantName}.
 
 ${langInstruction}
 
@@ -2868,7 +3046,7 @@ CALENDARIO:
 ${calendarText}
 
 CHIUSURE:
-- LUNEDÌ sempre chiuso (${lang === "en-US" ? "Mondays" : "lunedì"})
+- ${closuresText}
 - NON inventare altre chiusure (festività, ecc.)
 
 ${stateText}
@@ -2898,11 +3076,11 @@ ORDINE DOMANDE:
 - CONFERMA che hai preso nota (es. "Ho annotato che sei celiaca")
 - Includi la nota nella conferma finale
 
-IMPORTANTE GRUPPI: Solo per 11 o più persone dire "prenotazione soggetta a conferma del ristoratore".
-Per gruppi fino a 10 persone: prenotazione NORMALE, NON dire "soggetta a conferma".
+IMPORTANTE GRUPPI: Solo per ${largeGroupThreshold + 1} o più persone dire "prenotazione soggetta a conferma del ristoratore".
+Per gruppi fino a ${largeGroupThreshold} persone: prenotazione NORMALE, NON dire "soggetta a conferma".
 
 ORARI: "alle 8" senza specificare = 20:00 (sera)
-ORARI APERTURA: Pranzo 12:00-15:00, Cena 19:00-22:30. Ultima prenotazione alle 22:30.
+ORARI APERTURA: ${openingHoursText}
 ${openingHours ? `INFO AGGIUNTIVE: ${openingHours}` : ""}
 MENU: ${menuSummary || "Cucina italiana"}
 EMAIL RISTORANTE: ${restaurantEmail}
