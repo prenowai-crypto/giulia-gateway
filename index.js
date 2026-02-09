@@ -2551,22 +2551,26 @@ const ValidationPipeline = {
         const italianDays = "lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica";
         const englishDays = "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday";
         
-        // Pattern che cattura [giorno_settimana opzionale] + numero + mese
-        const italianDatePattern = new RegExp(`(?:(?:${italianDays})\\s+)?(\\d{1,2})\\s+(${italianMonths})`, 'gi');
-        const englishDatePattern = new RegExp(`(?:(?:${englishDays})\\s+)?(${englishMonths})\\s+(\\d{1,2})`, 'gi');
+        // 🆕 FIX v3.9.31: Pattern che cattura [giorno_settimana opzionale] + numero + mese + [anno opzionale]
+        const italianDatePattern = new RegExp(`(?:(?:${italianDays})\\s+)?(\\d{1,2})\\s+(${italianMonths})(?:\\s+\\d{4})?`, 'gi');
+        const englishDatePattern = new RegExp(`(?:(?:${englishDays})\\s+)?(${englishMonths})\\s+(\\d{1,2})(?:\\s+\\d{4})?`, 'gi');
         
+        // 🆕 FIX v3.9.31: Include anche l'anno nella sostituzione
         const correctDateDisplay = DateManager.formatForDisplay(parsedDate, lang);
+        const correctYear = parsedDate.split('-')[0];
+        const correctDateWithYear = `${correctDateDisplay} ${correctYear}`;
         
         if (response.reply_text && (italianDatePattern.test(response.reply_text) || englishDatePattern.test(response.reply_text))) {
           let correctedReply = response.reply_text;
           // Reset regex lastIndex
           italianDatePattern.lastIndex = 0;
           englishDatePattern.lastIndex = 0;
-          correctedReply = correctedReply.replace(italianDatePattern, correctDateDisplay);
-          correctedReply = correctedReply.replace(englishDatePattern, correctDateDisplay);
+          // 🆕 FIX v3.9.31: Usa data con anno per la sostituzione
+          correctedReply = correctedReply.replace(italianDatePattern, correctDateWithYear);
+          correctedReply = correctedReply.replace(englishDatePattern, correctDateWithYear);
           
           if (correctedReply !== response.reply_text) {
-            console.log(`📝 FIX v3.9.23 BUG-021: Corretto reply_text con data calcolata: "${correctDateDisplay}"`);
+            console.log(`📝 FIX v3.9.23 BUG-021: Corretto reply_text con data calcolata: "${correctDateWithYear}"`);
             response.reply_text = correctedReply;
           }
         }
@@ -2596,31 +2600,48 @@ const ValidationPipeline = {
       if (reservation.date && reservation.date !== savedReservation.date) {
         console.log(`📆 FIX v3.9.2 PROTEZIONE DATA: GPT dice ${reservation.date}, mantengo ${savedReservation.date}`);
         
-        // 🆕 FIX v3.9.31: Pattern cattura anche giorno settimana opzionale
+        // 🆕 FIX v3.9.31: Pattern cattura anche giorno settimana + anno opzionale
         const italianMonths = "gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre";
         const englishMonths = "January|February|March|April|May|June|July|August|September|October|November|December";
         const italianDays = "lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica";
         const englishDays = "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday";
         
-        const italianDatePattern = new RegExp(`(?:(?:${italianDays})\\s+)?(\\d{1,2})\\s+(${italianMonths})`, 'gi');
-        const englishDatePattern = new RegExp(`(?:(?:${englishDays})\\s+)?(${englishMonths})\\s+(\\d{1,2})`, 'gi');
+        const italianDatePattern = new RegExp(`(?:(?:${italianDays})\\s+)?(\\d{1,2})\\s+(${italianMonths})(?:\\s+\\d{4})?`, 'gi');
+        const englishDatePattern = new RegExp(`(?:(?:${englishDays})\\s+)?(${englishMonths})\\s+(\\d{1,2})(?:\\s+\\d{4})?`, 'gi');
         
+        // 🆕 FIX v3.9.31: Include anno nella sostituzione
         const correctDateDisplay = DateManager.formatForDisplay(savedReservation.date, lang);
+        const correctYear = savedReservation.date.split('-')[0];
+        const correctDateWithYear = `${correctDateDisplay} ${correctYear}`;
         
         if (italianDatePattern.test(response.reply_text) || englishDatePattern.test(response.reply_text)) {
           let correctedReply = response.reply_text;
           italianDatePattern.lastIndex = 0;
           englishDatePattern.lastIndex = 0;
-          correctedReply = correctedReply.replace(italianDatePattern, correctDateDisplay);
-          correctedReply = correctedReply.replace(englishDatePattern, correctDateDisplay);
+          correctedReply = correctedReply.replace(italianDatePattern, correctDateWithYear);
+          correctedReply = correctedReply.replace(englishDatePattern, correctDateWithYear);
           
           if (correctedReply !== response.reply_text) {
-            console.log(`📝 FIX v3.9.19: Corretto reply_text con data protetta: "${correctDateDisplay}"`);
+            console.log(`📝 FIX v3.9.19: Corretto reply_text con data protetta: "${correctDateWithYear}"`);
             response.reply_text = correctedReply;
           }
         }
       }
       reservation.date = savedReservation.date;
+    }
+    
+    // 🆕 FIX v3.9.31: Se GPT inventa una data che l'utente non ha specificato, forzare ask_date
+    // Questo previene che GPT scelga arbitrariamente un giorno (es. "mercoledì") quando
+    // l'utente non ha specificato il giorno
+    if (!savedReservation.date && !parsedDate && reservation.date) {
+      console.log(`⚠️ FIX v3.9.31: GPT ha inventato data ${reservation.date} ma utente non l'ha specificata → forzo ask_date`);
+      response.action = "ask_date";
+      response.reply_text = lang === "en-US"
+        ? "For which day would you like to book?"
+        : "Per quale giorno vorresti prenotare?";
+      reservation.date = null;
+      response.reservation = reservation;
+      return response;
     }
     
     if (reservation.date) {
