@@ -3020,10 +3020,54 @@ const ValidationPipeline = {
         console.log(`ℹ️ FIX v3.9.3: Orario ${reservation.time} invalido + cliente chiede info → resetto`);
         reservation.time = null;
       } else {
-        console.log(`⏰ FIX v3.9.4: Orario ${reservation.time} INVALIDO → forzo ask_time`);
-        response.action = "ask_time";
-        // 🆕 v3.9.31: Usa messaggio con orari dinamici
-        response.reply_text = ConfigHelper.buildInvalidTimeMessage(callId, lang);
+        // 🆕 FIX v3.9.31: Prima di dire "orario invalido", verifica se è un tentativo di pranzo/cena
+        // in un giorno dove quel pasto è chiuso
+        const effectiveDateForInvalidTime = reservation.date || savedReservation.date;
+        const [h] = String(reservation.time).split(':').map(Number);
+        const isPranzishTime = h >= 10 && h <= 16; // 10:00-16:00 = tentativo pranzo
+        const isCenaishTime = h >= 17 || h <= 2;   // 17:00-02:00 = tentativo cena
+        
+        let mealClosedMessage = null;
+        
+        if (effectiveDateForInvalidTime) {
+          const dayOfWeek = DateManager.getDayOfWeek(effectiveDateForInvalidTime);
+          const lunchClosedDays = ConfigHelper.getLunchClosedDays(callId);
+          const dinnerClosedDays = ConfigHelper.getDinnerClosedDays(callId);
+          
+          if (isPranzishTime && lunchClosedDays.includes(dayOfWeek)) {
+            console.log(`🍽️ FIX v3.9.31: Orario ${reservation.time} sembra pranzo ma pranzo chiuso questo giorno`);
+            const mealCheck = {
+              open: false,
+              reason: "pranzo_chiuso",
+              message_it: ConfigHelper.buildLunchClosedMessage(effectiveDateForInvalidTime, callId, "it-IT"),
+              message_en: ConfigHelper.buildLunchClosedMessage(effectiveDateForInvalidTime, callId, "en-US"),
+            };
+            mealClosedMessage = ClosureChecker.buildClosedMessage(effectiveDateForInvalidTime, mealCheck, lang);
+          } else if (isCenaishTime && dinnerClosedDays.includes(dayOfWeek)) {
+            console.log(`🍽️ FIX v3.9.31: Orario ${reservation.time} sembra cena ma cena chiusa questo giorno`);
+            const mealCheck = {
+              open: false,
+              reason: "cena_chiusa",
+              message_it: ConfigHelper.buildDinnerClosedMessage(effectiveDateForInvalidTime, callId, "it-IT"),
+              message_en: ConfigHelper.buildDinnerClosedMessage(effectiveDateForInvalidTime, callId, "en-US"),
+            };
+            mealClosedMessage = ClosureChecker.buildClosedMessage(effectiveDateForInvalidTime, mealCheck, lang);
+          }
+        }
+        
+        if (mealClosedMessage) {
+          console.log(`🍽️ FIX v3.9.31: Uso messaggio "pasto chiuso" invece di "orario invalido"`);
+          response.reply_text = mealClosedMessage;
+          response.action = "ask_time";
+          // Mantieni la data, resetta solo l'orario
+          reservation.date = effectiveDateForInvalidTime;
+          StateManager.mergeReservation(callId, { date: effectiveDateForInvalidTime, time: null });
+        } else {
+          console.log(`⏰ FIX v3.9.4: Orario ${reservation.time} INVALIDO → forzo ask_time`);
+          response.action = "ask_time";
+          // 🆕 v3.9.31: Usa messaggio con orari dinamici
+          response.reply_text = ConfigHelper.buildInvalidTimeMessage(callId, lang);
+        }
         reservation.time = null;
       }
     }
@@ -3072,8 +3116,12 @@ const ValidationPipeline = {
           console.log(`⛔ FIX v3.9.31: ${mealType} chiuso per ${effectiveDateForMeal}`);
           response.reply_text = ClosureChecker.buildClosedMessage(effectiveDateForMeal, mealCheck, lang);
           response.action = "ask_time"; // Chiedi un altro orario (pranzo→cena o cena→pranzo)
+          // 🆕 FIX v3.9.31: MANTIENI la data! Il cliente vuole lo stesso giorno, solo pasto diverso
+          reservation.date = effectiveDateForMeal;
           reservation.time = null;
-          StateManager.mergeReservation(callId, { time: null });
+          // 🆕 FIX v3.9.31: Salva la data nel StateManager così al prossimo turno la ricordiamo
+          StateManager.mergeReservation(callId, { date: effectiveDateForMeal, time: null });
+          console.log(`📅 FIX v3.9.31: Data ${effectiveDateForMeal} salvata, orario resettato`);
           response.reservation = reservation;
           return response;
         }
