@@ -2787,7 +2787,9 @@ const ValidationPipeline = {
       const defaultTime = TimeManager.inferDefault(userText);
       if (defaultTime) {
         console.log(`⏰ FIX v3.9: Orario inferito da "${userText.substring(0,20)}": ${defaultTime}`);
+        // 🆕 FIX v3.9.31: Marca l'orario come INFERITO (non esplicito dal cliente)
         reservation.time = defaultTime;
+        reservation._timeWasInferred = true;
       }
     }
     
@@ -2795,7 +2797,23 @@ const ValidationPipeline = {
     if (reservation.time && !this.isValidTime(reservation.time, callId)) {
       const isAskingAboutTime = /\b(ultimo|prima|quale|quali|orari|apertura|chiusura|when|what time|available|hours)\b/i.test(userText);
       
-      if (isAskingAboutTime) {
+      // 🆕 FIX v3.9.31: Se l'orario era INFERITO (non esplicito), non dire "fuori orario"
+      // Semplicemente chiedi l'orario senza messaggio di errore
+      if (reservation._timeWasInferred) {
+        console.log(`⏰ FIX v3.9.31: Orario ${reservation.time} era INFERITO e invalido → chiedo orario senza errore`);
+        response.action = "ask_time";
+        // 🆕 FIX v3.9.31: Se GPT sta già chiedendo l'orario, NON sovrascrivere la risposta
+        const gptAlreadyAskingTime = /\b(che ora|what time|orario|a che ora)\b/i.test(response.reply_text);
+        if (!gptAlreadyAskingTime) {
+          response.reply_text = lang === "en-US"
+            ? "What time would you like to book?"
+            : "A che ora vorresti prenotare?";
+        } else {
+          console.log(`⏰ FIX v3.9.31: GPT già chiede orario, mantengo risposta: "${response.reply_text.substring(0,50)}..."`);
+        }
+        reservation.time = null;
+        delete reservation._timeWasInferred;
+      } else if (isAskingAboutTime) {
         console.log(`ℹ️ FIX v3.9.3: Orario ${reservation.time} invalido + cliente chiede info → resetto`);
         reservation.time = null;
       } else {
