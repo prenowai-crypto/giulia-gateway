@@ -652,6 +652,38 @@ const ConfigHelper = {
   },
   
   /**
+   * 🆕 v3.9.31: Ottiene i giorni senza pranzo
+   * @param {string} callId - ID chiamata
+   * @returns {number[]} Array di giorni (0=dom, 1=lun, ...)
+   */
+  getLunchClosedDays(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    if (config?.lunch_closed_days) {
+      const daysStr = String(config.lunch_closed_days).replace(/\s/g, '');
+      if (daysStr === '') return [];
+      const days = daysStr.split(',').map(d => parseInt(d.trim())).filter(d => !isNaN(d));
+      return days;
+    }
+    return []; // default: pranzo sempre disponibile
+  },
+  
+  /**
+   * 🆕 v3.9.31: Ottiene i giorni senza cena
+   * @param {string} callId - ID chiamata
+   * @returns {number[]} Array di giorni (0=dom, 1=lun, ...)
+   */
+  getDinnerClosedDays(callId) {
+    const config = StateManager.getRestaurantConfig(callId);
+    if (config?.dinner_closed_days) {
+      const daysStr = String(config.dinner_closed_days).replace(/\s/g, '');
+      if (daysStr === '') return [];
+      const days = daysStr.split(',').map(d => parseInt(d.trim())).filter(d => !isNaN(d));
+      return days;
+    }
+    return []; // default: cena sempre disponibile
+  },
+  
+  /**
    * Ottiene gli orari di apertura per un ristorante
    * @param {string} callId - ID chiamata
    * @returns {Object} { lunchStart, lunchEnd, dinnerStart, dinnerEnd } in minuti
@@ -755,6 +787,68 @@ const ConfigHelper = {
   buildOpeningHoursText(callId) {
     const hours = this.getOpeningHoursDisplay(callId);
     return `Pranzo ${hours.lunchStart}-${hours.lunchEnd}, Cena ${hours.dinnerStart}-${hours.dinnerEnd}. Ultima prenotazione alle ${hours.dinnerEnd}.`;
+  },
+  
+  /**
+   * 🆕 v3.9.31: Determina se un orario è pranzo o cena
+   * @param {string} timeStr - Orario in formato "HH:MM:SS" o "HH:MM"
+   * @param {string} callId - ID chiamata
+   * @returns {string} "lunch" | "dinner" | "unknown"
+   */
+  getMealType(timeStr, callId) {
+    if (!timeStr) return "unknown";
+    
+    const hours = this.getOpeningHours(callId);
+    const [h, m] = String(timeStr).split(':').map(Number);
+    if (isNaN(h)) return "unknown";
+    
+    const timeMinutes = h * 60 + (m || 0);
+    
+    // Con margine di 30 minuti per flessibilità
+    if (timeMinutes >= hours.lunchStart - 30 && timeMinutes <= hours.lunchEnd + 30) {
+      return "lunch";
+    }
+    if (timeMinutes >= hours.dinnerStart - 30 && timeMinutes <= hours.dinnerEnd + 30) {
+      return "dinner";
+    }
+    
+    // Se orario non rientra, usa euristica basata su ora
+    if (h >= 11 && h <= 15) return "lunch";
+    if (h >= 18 || h <= 2) return "dinner";
+    
+    return "unknown";
+  },
+  
+  /**
+   * 🆕 v3.9.31: Costruisce messaggio quando solo pranzo è chiuso
+   * @param {string} dateISO - Data in formato ISO
+   * @param {string} callId - ID chiamata
+   * @param {string} lang - Lingua
+   * @returns {string} Messaggio
+   */
+  buildLunchClosedMessage(dateISO, callId, lang = "it-IT") {
+    const dayName = DateManager.getDayName(dateISO, lang);
+    const hours = this.getOpeningHoursDisplay(callId);
+    
+    return lang === "en-US"
+      ? `I'm sorry, we're only open for dinner on ${dayName}s (${hours.dinnerStart}-${hours.dinnerEnd}). Would you like to book for dinner instead?`
+      : `Mi dispiace, il ${dayName} siamo aperti solo a cena (${hours.dinnerStart}-${hours.dinnerEnd}). Vuoi prenotare per cena?`;
+  },
+  
+  /**
+   * 🆕 v3.9.31: Costruisce messaggio quando solo cena è chiusa
+   * @param {string} dateISO - Data in formato ISO
+   * @param {string} callId - ID chiamata
+   * @param {string} lang - Lingua
+   * @returns {string} Messaggio
+   */
+  buildDinnerClosedMessage(dateISO, callId, lang = "it-IT") {
+    const dayName = DateManager.getDayName(dateISO, lang);
+    const hours = this.getOpeningHoursDisplay(callId);
+    
+    return lang === "en-US"
+      ? `I'm sorry, we're only open for lunch on ${dayName}s (${hours.lunchStart}-${hours.lunchEnd}). Would you like to book for lunch instead?`
+      : `Mi dispiace, il ${dayName} siamo aperti solo a pranzo (${hours.lunchStart}-${hours.lunchEnd}). Vuoi prenotare per pranzo?`;
   },
 };
 
@@ -1550,8 +1644,73 @@ const ClosureChecker = {
     }
   },
   
+  /**
+   * 🆕 v3.9.31: Verifica se aperto per un pasto specifico (pranzo/cena)
+   * @param {string} dateISO - Data in formato ISO
+   * @param {string} mealType - "lunch" | "dinner" | null
+   * @param {string} callId - ID chiamata
+   * @returns {Object} { open, reason, mealClosed, ... }
+   */
+  async isOpenForMeal(dateISO, mealType, callId = null) {
+    // Prima verifica chiusura totale
+    const baseCheck = await this.isOpen(dateISO, callId);
+    if (!baseCheck.open) {
+      return baseCheck;
+    }
+    
+    // Se non c'è mealType, tutto ok
+    if (!mealType || mealType === "unknown") {
+      return baseCheck;
+    }
+    
+    const dayOfWeek = DateManager.getDayOfWeek(dateISO);
+    const dayName = DateManager.getDayName(dateISO, "it-IT");
+    const dayNameEN = DateManager.getDayName(dateISO, "en-US");
+    
+    // Verifica chiusura pranzo
+    if (mealType === "lunch") {
+      const lunchClosedDays = ConfigHelper.getLunchClosedDays(callId);
+      if (lunchClosedDays.includes(dayOfWeek)) {
+        console.log(`⛔ PRANZO CHIUSO: ${dayName} (lunchClosedDays: ${lunchClosedDays.join(',')})`);
+        return {
+          open: false,
+          reason: "pranzo_chiuso",
+          mealClosed: "lunch",
+          dayName,
+          dayNameEN,
+          message_it: ConfigHelper.buildLunchClosedMessage(dateISO, callId, "it-IT"),
+          message_en: ConfigHelper.buildLunchClosedMessage(dateISO, callId, "en-US"),
+        };
+      }
+    }
+    
+    // Verifica chiusura cena
+    if (mealType === "dinner") {
+      const dinnerClosedDays = ConfigHelper.getDinnerClosedDays(callId);
+      if (dinnerClosedDays.includes(dayOfWeek)) {
+        console.log(`⛔ CENA CHIUSA: ${dayName} (dinnerClosedDays: ${dinnerClosedDays.join(',')})`);
+        return {
+          open: false,
+          reason: "cena_chiusa",
+          mealClosed: "dinner",
+          dayName,
+          dayNameEN,
+          message_it: ConfigHelper.buildDinnerClosedMessage(dateISO, callId, "it-IT"),
+          message_en: ConfigHelper.buildDinnerClosedMessage(dateISO, callId, "en-US"),
+        };
+      }
+    }
+    
+    return { open: true, reason: null };
+  },
+  
   buildClosedMessage(dateISO, closureResult, lang = "it-IT") {
     const dateDisplay = DateManager.formatForDisplay(dateISO, lang);
+    
+    // 🆕 v3.9.31: Gestisce messaggi pranzo/cena chiuso
+    if (closureResult.reason === "pranzo_chiuso" || closureResult.reason === "cena_chiusa") {
+      return lang === "en-US" ? closureResult.message_en : closureResult.message_it;
+    }
     
     if (closureResult.reason === "chiusura_settimanale") {
       const dayToShow = lang === "en-US" ? closureResult.dayNameEN : closureResult.dayName;
@@ -2893,6 +3052,30 @@ const ValidationPipeline = {
         } else if (hasDate && hasPeople && hasName) {
           console.log(`✅ FIX v3.9: Tutti i dati presenti, forzo create_reservation`);
           response.action = "create_reservation";
+        }
+      }
+    }
+    
+    // 🆕 FIX v3.9.31: Verifica se il pasto specifico (pranzo/cena) è disponibile
+    // Questo check avviene DOPO che abbiamo determinato data e orario
+    const effectiveDateForMeal = reservation.date || savedReservation.date;
+    const effectiveTimeForMeal = reservation.time || savedReservation.time;
+    
+    if (effectiveDateForMeal && effectiveTimeForMeal) {
+      const mealType = ConfigHelper.getMealType(effectiveTimeForMeal, callId);
+      console.log(`🍽️ FIX v3.9.31: MealType per ${effectiveTimeForMeal} = ${mealType}`);
+      
+      if (mealType !== "unknown") {
+        const mealCheck = await ClosureChecker.isOpenForMeal(effectiveDateForMeal, mealType, callId);
+        
+        if (!mealCheck.open && (mealCheck.reason === "pranzo_chiuso" || mealCheck.reason === "cena_chiusa")) {
+          console.log(`⛔ FIX v3.9.31: ${mealType} chiuso per ${effectiveDateForMeal}`);
+          response.reply_text = ClosureChecker.buildClosedMessage(effectiveDateForMeal, mealCheck, lang);
+          response.action = "ask_time"; // Chiedi un altro orario (pranzo→cena o cena→pranzo)
+          reservation.time = null;
+          StateManager.mergeReservation(callId, { time: null });
+          response.reservation = reservation;
+          return response;
         }
       }
     }
