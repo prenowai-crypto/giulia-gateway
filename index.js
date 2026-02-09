@@ -208,6 +208,9 @@ const STATE = {
   // 🆕 FIX F9: Tutte le prenotazioni di un cliente (per multi-prenotazione)
   allReservations: new Map(),
   
+  // 🆕 FIX v3.9.31: Ultima data chiusa menzionata dal cliente
+  lastClosedDates: new Map(),
+  
   // 🆕 FIX F9: Flag per tracciare se abbiamo già chiesto quale prenotazione
   askedWhichReservation: new Map(),
   
@@ -540,6 +543,20 @@ const StateManager = {
   },
   clearPendingCorrectDate(callId) {
     STATE.pendingCorrectDates.delete(callId);
+  },
+  
+  // 🆕 FIX v3.9.31: Ultima data chiusa menzionata dal cliente
+  getLastClosedDate(callId) {
+    return STATE.lastClosedDates.get(callId) || null;
+  },
+  setLastClosedDate(callId, date) {
+    if (date) {
+      STATE.lastClosedDates.set(callId, date);
+      console.log(`[INFO] FIX v3.9.31: Salvata lastClosedDate: ${date} per ${callId}`);
+    }
+  },
+  clearLastClosedDate(callId) {
+    STATE.lastClosedDates.delete(callId);
   },
   
   // 🆕 FIX F9: Tutte le prenotazioni di un cliente
@@ -2634,11 +2651,33 @@ const ValidationPipeline = {
     // Questo previene che GPT scelga arbitrariamente un giorno (es. "mercoledì") quando
     // l'utente non ha specificato il giorno
     if (!savedReservation.date && !parsedDate && reservation.date) {
-      console.log(`⚠️ FIX v3.9.31: GPT ha inventato data ${reservation.date} ma utente non l'ha specificata → forzo ask_date`);
+      // Prima controlla se c'è una lastClosedDate salvata (il cliente aveva menzionato un giorno chiuso)
+      const lastClosedDate = StateManager.getLastClosedDate(callId);
+      
+      if (lastClosedDate) {
+        // Il cliente aveva menzionato un giorno chiuso → ricordaglielo
+        console.log(`⚠️ FIX v3.9.31: Cliente aveva menzionato ${lastClosedDate} (chiuso), GPT inventa ${reservation.date} → ripeto chiusura`);
+        const closureCheck = await ClosureChecker.isOpen(lastClosedDate, callId);
+        response.reply_text = ClosureChecker.buildClosedMessage(lastClosedDate, closureCheck, lang);
+      } else {
+        // Controlliamo se la data inventata è chiusa
+        const inventedDateClosure = await ClosureChecker.isOpen(reservation.date, callId);
+        
+        if (!inventedDateClosure.open) {
+          // La data che GPT sta cercando di usare è CHIUSA → salva e ricorda al cliente
+          console.log(`⚠️ FIX v3.9.31: GPT ha inventato data ${reservation.date} che è CHIUSA → messaggio chiusura`);
+          StateManager.setLastClosedDate(callId, reservation.date);
+          response.reply_text = ClosureChecker.buildClosedMessage(reservation.date, inventedDateClosure, lang);
+        } else {
+          // La data è aperta ma l'utente non l'ha specificata → chiedi quale giorno
+          console.log(`⚠️ FIX v3.9.31: GPT ha inventato data ${reservation.date} ma utente non l'ha specificata → chiedo giorno`);
+          response.reply_text = lang === "en-US"
+            ? "For which day would you like to book?"
+            : "Per quale giorno vorresti prenotare?";
+        }
+      }
+      
       response.action = "ask_date";
-      response.reply_text = lang === "en-US"
-        ? "For which day would you like to book?"
-        : "Per quale giorno vorresti prenotare?";
       reservation.date = null;
       response.reservation = reservation;
       return response;
@@ -2648,6 +2687,8 @@ const ValidationPipeline = {
       const closureCheck = await ClosureChecker.isOpen(reservation.date, callId);
       if (!closureCheck.open) {
         console.log(`⛔ Giorno chiuso`);
+        // 🆕 FIX v3.9.31: Salva la data chiusa per riferimenti futuri
+        StateManager.setLastClosedDate(callId, reservation.date);
         response.reply_text = ClosureChecker.buildClosedMessage(reservation.date, closureCheck, lang);
         response.action = "ask_date";
         reservation.date = null;
@@ -2655,6 +2696,9 @@ const ValidationPipeline = {
         response.reservation = reservation;
         return response;
       }
+      
+      // 🆕 FIX v3.9.31: Se arriviamo qui con una data valida, pulisci lastClosedDate
+      StateManager.clearLastClosedDate(callId);
       
       if (this.FALSE_CLOSURE_PATTERNS.some(p => p.test(response.reply_text))) {
         console.log(`📝 FIX v3.9.9: GPT dice "chiuso" ma ${reservation.date} è APERTO - correggo reply_text`);
