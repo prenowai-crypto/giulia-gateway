@@ -2802,6 +2802,20 @@ const ValidationPipeline = {
       console.log(`⚠️ FIX v3.9.17: Nuovo action: ${response.action}`);
     }
     
+    // 🆕 FIX v3.9.31: Se non c'è una data valida MA c'è una lastClosedDate,
+    // il cliente sta ancora cercando di prenotare per un giorno chiuso senza specificare un nuovo giorno
+    const effectiveDateBeforeTime = reservation.date || savedReservation.date;
+    const lastClosedDateCheck = StateManager.getLastClosedDate(callId);
+    
+    if (!effectiveDateBeforeTime && lastClosedDateCheck) {
+      console.log(`⚠️ FIX v3.9.31: No data valida ma lastClosedDate=${lastClosedDateCheck} → ripeto chiusura`);
+      const closureCheckForLast = await ClosureChecker.isOpen(lastClosedDateCheck, callId);
+      response.reply_text = ClosureChecker.buildClosedMessage(lastClosedDateCheck, closureCheckForLast, lang);
+      response.action = "ask_date";
+      response.reservation = reservation;
+      return response;
+    }
+    
     const parsedTime = TimeManager.parseFromText(userText);
     if (parsedTime) {
       if (reservation.time && reservation.time !== parsedTime) {
