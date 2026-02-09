@@ -2544,11 +2544,16 @@ const ValidationPipeline = {
       
       // FIX v3.9.23 BUG-021: Correggi reply_text se GPT usa data diversa da quella calcolata
       // Questo fix si applica anche al PRIMO messaggio (quando savedReservation è vuoto)
+      // 🆕 FIX v3.9.31: Pattern cattura anche giorno settimana opzionale per evitare "venerdì sabato 6"
       if (gptOriginalDate && gptOriginalDate !== parsedDate) {
         const italianMonths = "gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre";
         const englishMonths = "January|February|March|April|May|June|July|August|September|October|November|December";
-        const italianDatePattern = new RegExp(`\\b(\\d{1,2})\\s+(${italianMonths})\\b`, 'gi');
-        const englishDatePattern = new RegExp(`\\b(${englishMonths})\\s+(\\d{1,2})\\b`, 'gi');
+        const italianDays = "lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica";
+        const englishDays = "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday";
+        
+        // Pattern che cattura [giorno_settimana opzionale] + numero + mese
+        const italianDatePattern = new RegExp(`(?:(?:${italianDays})\\s+)?(\\d{1,2})\\s+(${italianMonths})`, 'gi');
+        const englishDatePattern = new RegExp(`(?:(?:${englishDays})\\s+)?(${englishMonths})\\s+(\\d{1,2})`, 'gi');
         
         const correctDateDisplay = DateManager.formatForDisplay(parsedDate, lang);
         
@@ -2591,15 +2596,21 @@ const ValidationPipeline = {
       if (reservation.date && reservation.date !== savedReservation.date) {
         console.log(`📆 FIX v3.9.2 PROTEZIONE DATA: GPT dice ${reservation.date}, mantengo ${savedReservation.date}`);
         
+        // 🆕 FIX v3.9.31: Pattern cattura anche giorno settimana opzionale
         const italianMonths = "gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre";
         const englishMonths = "January|February|March|April|May|June|July|August|September|October|November|December";
-        const italianDatePattern = new RegExp(`\\b(\\d{1,2})\\s+(${italianMonths})\\b`, 'gi');
-        const englishDatePattern = new RegExp(`\\b(${englishMonths})\\s+(\\d{1,2})\\b`, 'gi');
+        const italianDays = "lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica";
+        const englishDays = "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday";
+        
+        const italianDatePattern = new RegExp(`(?:(?:${italianDays})\\s+)?(\\d{1,2})\\s+(${italianMonths})`, 'gi');
+        const englishDatePattern = new RegExp(`(?:(?:${englishDays})\\s+)?(${englishMonths})\\s+(\\d{1,2})`, 'gi');
         
         const correctDateDisplay = DateManager.formatForDisplay(savedReservation.date, lang);
         
         if (italianDatePattern.test(response.reply_text) || englishDatePattern.test(response.reply_text)) {
           let correctedReply = response.reply_text;
+          italianDatePattern.lastIndex = 0;
+          englishDatePattern.lastIndex = 0;
           correctedReply = correctedReply.replace(italianDatePattern, correctDateDisplay);
           correctedReply = correctedReply.replace(englishDatePattern, correctDateDisplay);
           
