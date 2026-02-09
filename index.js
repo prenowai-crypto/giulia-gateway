@@ -2396,6 +2396,21 @@ const ValidationPipeline = {
     /non abbiamo disponibilità/i,
   ],
   
+  // 🆕 FIX v3.9.31: Pattern per GPT che dice erroneamente "data troppo futura"
+  FALSE_FUTURE_DATE_PATTERNS: [
+    /data (troppo )?futura/i,
+    /troppo (in )?avanti/i,
+    /non posso prenotare.*futur/i,
+    /non (è )?possibile prenotare.*futur/i,
+    /non accettiamo prenotazioni.*futur/i,
+    /too far (in the )?future/i,
+    /can'?t book.*future/i,
+    /cannot book.*future/i,
+    /don'?t accept.*advance/i,
+    /too far ahead/i,
+    /too far in advance/i,
+  ],
+  
   async validate(gptResponse, userText, callId) {
     console.log("🔄 ValidationPipeline...");
     
@@ -2712,6 +2727,21 @@ const ValidationPipeline = {
         }
         response.action = "ask_time";
         console.log(`📝 FIX v3.9.9: Nuova reply: "${response.reply_text}"`);
+      }
+      
+      // 🆕 FIX v3.9.31: GPT dice erroneamente "data troppo futura" ma la data è valida
+      if (this.FALSE_FUTURE_DATE_PATTERNS.some(p => p.test(response.reply_text))) {
+        console.log(`📝 FIX v3.9.31: GPT dice "data futura" ma ${reservation.date} è VALIDO - correggo reply_text`);
+        
+        const dateDisplay = DateManager.formatForDisplay(reservation.date, lang);
+        
+        if (lang === "en-US") {
+          response.reply_text = `Perfect, ${dateDisplay}! What time would you like to book?`;
+        } else {
+          response.reply_text = `Perfetto, ${dateDisplay}! A che ora vorresti prenotare?`;
+        }
+        response.action = "ask_time";
+        console.log(`📝 FIX v3.9.31: Nuova reply: "${response.reply_text}"`);
       }
       
       const earlyTimeCheck = reservation.time || savedReservation.time;
