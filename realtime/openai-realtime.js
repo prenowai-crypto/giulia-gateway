@@ -73,28 +73,26 @@ export class OpenAIRealtimeClient {
   /**
    * Inizializza la sessione con OpenAI
    */
-  initializeSession() {
+initializeSession() {
     // Configura la sessione
     this.send({
       type: 'session.update',
       session: {
         modalities: ['text', 'audio'],
         instructions: this.systemPrompt,
-        voice: 'alloy', // Opzioni: alloy, echo, shimmer
-        input_audio_format: 'g711_ulaw',  // Formato Twilio
-        output_audio_format: 'g711_ulaw', // Formato per Twilio
-       ,
-turn_detection: {
-  type: 'server_vad',
-  threshold: 0.7,
-  prefix_padding_ms: 800,
-  silence_duration_ms: 2000,
-  create_response: true
-},
-input_audio_transcription: {
-  model: 'whisper-1',
-  language: 'it'
-},
+        voice: 'alloy',
+        input_audio_format: 'g711_ulaw',
+        output_audio_format: 'g711_ulaw',
+        input_audio_transcription: {
+          model: 'whisper-1',
+          language: 'it'
+        },
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.7,
+          prefix_padding_ms: 800,
+          silence_duration_ms: 2000
+        },
         tools: this.tools.map(t => ({
           type: 'function',
           name: t.name,
