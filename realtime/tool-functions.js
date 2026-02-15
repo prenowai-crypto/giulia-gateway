@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - TOOL FUNCTIONS v1.0.1
+// PRENOW - TOOL FUNCTIONS v1.0.2
 // Espone la business logic esistente come tool functions per OpenAI Realtime
-// FIX: Aggiunto fallback a process.env.APPS_SCRIPT_URL
+// FIX: Parametri corretti per Apps Script (nome italiano)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -119,21 +119,24 @@ Usa questo tool PRIMA di confermare una prenotazione per verificare:
         }
         
         console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        
+        // ⚠️ PARAMETRI IN ITALIANO per Apps Script
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'check_availability',
-            date,
-            time,
-            people,
-            calendarId: restaurantConfig.calendar_id
+            data: date,           // Apps Script usa "data" non "date"
+            ora: time,            // Apps Script usa "ora" non "time"
+            persone: people       // Apps Script usa "persone" non "people"
           })
         });
         
         const result = await response.json();
+        console.log('📋 Apps Script response:', result);
         
-        if (result.available) {
+        // Apps Script restituisce success:true/false, non available:true/false
+        if (result.success) {
           return {
             available: true,
             message: 'Lo slot è disponibile.'
@@ -141,8 +144,8 @@ Usa questo tool PRIMA di confermare una prenotazione per verificare:
         } else {
           return {
             available: false,
-            reason: 'slot_full',
-            message: 'Mi dispiace, questo orario è al completo.',
+            reason: result.reason || 'slot_full',
+            message: result.message || 'Mi dispiace, questo orario è al completo.',
             alternatives: result.alternatives || []
           };
         }
@@ -212,12 +215,6 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
         };
       }
       
-      // Determina stato iniziale
-      let status = 'CONFIRMED';
-      if (people > 10) {
-        status = 'PENDING_OWNER';
-      }
-      
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
         if (!appsScriptUrl) {
@@ -225,21 +222,21 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
         }
         
         console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        
+        // ⚠️ PARAMETRI IN ITALIANO per Apps Script
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'create_reservation',
-            name,
-            people,
-            date,
-            time,
-            phone,
-            notes: notes || '',
-            status,
-            calendarId: restaurantConfig.calendar_id,
+            // Apps Script usa create_or_update di default (nessuna action specifica)
             source: 'realtime_api',
-            callSid
+            nome: name,           // Apps Script usa "nome" non "name"
+            persone: people,      // Apps Script usa "persone" non "people"
+            data: date,           // Apps Script usa "data" non "date"
+            ora: time,            // Apps Script usa "ora" non "time"
+            telefono: phone,      // Apps Script usa "telefono" non "phone"
+            notes: notes || '',
+            forceNew: true        // Sempre nuova prenotazione via Realtime
           })
         });
         
@@ -247,7 +244,8 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
         console.log('📋 Apps Script response:', result);
         
         if (result.success) {
-          if (status === 'PENDING_OWNER') {
+          // Controlla se è un gruppo grande (PENDING_OWNER)
+          if (result.status === 'PENDING_OWNER' || people > 10) {
             return {
               success: true,
               status: 'PENDING_OWNER',
@@ -268,12 +266,18 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
             message: 'Mi dispiace, nel frattempo lo slot si è riempito. Posso proporre un altro orario?',
             alternatives: result.alternatives || []
           };
+        } else if (result.reason === 'day_closed') {
+          return {
+            success: false,
+            reason: 'day_closed',
+            message: result.message || 'Il ristorante è chiuso in questa data.'
+          };
         } else {
           console.error('❌ Apps Script error:', result);
           return {
             success: false,
             reason: result.reason || 'unknown',
-            message: 'Si è verificato un problema. Puoi riprovare?'
+            message: result.message || 'Si è verificato un problema. Puoi riprovare?'
           };
         }
       } catch (error) {
@@ -312,7 +316,7 @@ Usa questo tool quando il cliente vuole modificare o cancellare una prenotazione
       const { name, phone } = args;
       const { restaurantConfig } = context;
       
-      console.log(`🔍 Ricerca prenotazione: ${name}`);
+      console.log(`🔍 Ricerca prenotazione: ${name}, tel: ${phone || 'N/A'}`);
       
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
@@ -321,27 +325,29 @@ Usa questo tool quando il cliente vuole modificare o cancellare una prenotazione
         }
         
         console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        
+        // ⚠️ PARAMETRI IN ITALIANO per Apps Script
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'find_reservation',
-            name,
-            phone: phone || '',
-            calendarId: restaurantConfig.calendar_id
+            action: 'find_all_reservations',  // Usa l'action per trovare tutte le prenotazioni
+            telefono: phone || '',
+            nome: name
           })
         });
         
         const result = await response.json();
+        console.log('📋 Apps Script response:', result);
         
         if (result.found && result.reservations?.length > 0) {
           const reservations = result.reservations.map(r => ({
             eventId: r.eventId,
-            date: r.date,
-            time: r.time,
-            people: r.people,
-            name: r.name,
-            displayText: `${formatDateForSpeech(r.date)} alle ${r.time.substring(0, 5)} per ${r.people} persone`
+            date: r.data || r.date,
+            time: r.ora || r.time,
+            people: r.persone || r.people,
+            name: r.nome || r.name,
+            displayText: `${formatDateForSpeech(r.data || r.date)} alle ${(r.ora || r.time || '').substring(0, 5)} per ${r.persone || r.people} persone`
           }));
           
           return {
@@ -411,20 +417,22 @@ Verifica disponibilità del nuovo slot con check_availability prima di modificar
         }
         
         console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        
+        // ⚠️ PARAMETRI IN ITALIANO per Apps Script
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'modify_reservation',
             eventId,
-            newDate,
-            newTime,
-            newPeople,
-            calendarId: restaurantConfig.calendar_id
+            data: newDate,        // Apps Script usa "data"
+            ora: newTime,         // Apps Script usa "ora"
+            persone: newPeople    // Apps Script usa "persone"
           })
         });
         
         const result = await response.json();
+        console.log('📋 Apps Script response:', result);
         
         if (result.success) {
           const changes = [];
@@ -446,7 +454,7 @@ Verifica disponibilità del nuovo slot con check_availability prima di modificar
         } else {
           return {
             success: false,
-            message: 'Non ho potuto modificare la prenotazione.'
+            message: result.message || 'Non ho potuto modificare la prenotazione.'
           };
         }
       } catch (error) {
@@ -495,12 +503,12 @@ Chiedi SEMPRE conferma al cliente prima di cancellare.`,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'cancel_reservation',
-            eventId,
-            calendarId: restaurantConfig.calendar_id
+            eventId
           })
         });
         
         const result = await response.json();
+        console.log('📋 Apps Script response:', result);
         
         if (result.success) {
           return {
@@ -510,7 +518,7 @@ Chiedi SEMPRE conferma al cliente prima di cancellare.`,
         } else {
           return {
             success: false,
-            message: 'Non ho potuto cancellare la prenotazione.'
+            message: result.message || 'Non ho potuto cancellare la prenotazione.'
           };
         }
       } catch (error) {
@@ -536,6 +544,7 @@ function getDayName(dayIndex, italian = true) {
 }
 
 function formatDateForSpeech(dateStr) {
+  if (!dateStr) return '';
   const date = new Date(dateStr);
   const day = date.getDate();
   const month = date.toLocaleDateString('it-IT', { month: 'long' });
