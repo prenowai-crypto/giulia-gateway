@@ -83,14 +83,17 @@ export class OpenAIRealtimeClient {
         voice: 'alloy', // Opzioni: alloy, echo, shimmer
         input_audio_format: 'g711_ulaw',  // Formato Twilio
         output_audio_format: 'g711_ulaw', // Formato per Twilio
-        input_audio_transcription: {
-          model: 'whisper-1'
-        },
-        turn_detection: {
+       ,
+turn_detection: {
   type: 'server_vad',
-  threshold: 0.6,
-  prefix_padding_ms: 500,
-  silence_duration_ms: 1500
+  threshold: 0.7,
+  prefix_padding_ms: 800,
+  silence_duration_ms: 2000,
+  create_response: true
+},
+input_audio_transcription: {
+  model: 'whisper-1',
+  language: 'it'
 },
         tools: this.tools.map(t => ({
           type: 'function',
