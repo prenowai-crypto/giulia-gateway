@@ -89,7 +89,7 @@ async function getRestaurantConfig(phoneNumber) {
   
   // Cerca match
   const config = registry.find(r => {
-    const regNum = (r.twilio_number || r.phone_number || '').replace(/[\s\+\-\(\)]/g, '');
+    const regNum = String(r.twilio_number || r.phone_number || '').replace(/[\s\+\-\(\)]/g, '');
     return regNum.includes(normalized) || normalized.includes(regNum);
   });
   
