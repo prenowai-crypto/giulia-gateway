@@ -87,11 +87,11 @@ export class OpenAIRealtimeClient {
           model: 'whisper-1'
         },
         turn_detection: {
-          type: 'server_vad',  // Voice Activity Detection lato server
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500
-        },
+  type: 'server_vad',
+  threshold: 0.6,
+  prefix_padding_ms: 500,
+  silence_duration_ms: 1500
+},
         tools: this.tools.map(t => ({
           type: 'function',
           name: t.name,
