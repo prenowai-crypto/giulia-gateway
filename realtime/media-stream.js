@@ -154,12 +154,12 @@ INFORMAZIONI RISTORANTE:
 - Capienza per slot: ${config.slot_capacity || 30} persone
 
 FLUSSO PRENOTAZIONE:
-1. Chiedi per quante persone
-2. Chiedi data (giorno)
-3. Chiedi orario (pranzo o cena, poi orario specifico)
-4. Chiedi nome
-5. Chiedi numero di telefono (IMPORTANTE: sempre chiedere per poter ricontattare)
-6. Conferma tutti i dettagli
+1. Raccogli: persone, data, orario, nome, telefono
+2. USA SEMPRE il tool check_availability per verificare disponibilità
+3. USA SEMPRE il tool create_reservation per creare la prenotazione - NON dire mai "confermato" senza aver chiamato questo tool!
+4. Solo dopo che create_reservation restituisce success:true puoi confermare al cliente
+
+IMPORTANTE: Non dire MAI che la prenotazione è confermata se non hai chiamato create_reservation!
 
 Per gruppi oltre 10 persone: la prenotazione va in attesa di conferma del ristoratore.
 Per eventi oltre 45 persone: suggerisci di inviare email a ${config.owner_email || 'il ristorante'}.
