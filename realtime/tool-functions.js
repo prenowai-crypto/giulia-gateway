@@ -1,7 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - TOOL FUNCTIONS v1.0.0
+// PRENOW - TOOL FUNCTIONS v1.0.1
 // Espone la business logic esistente come tool functions per OpenAI Realtime
+// FIX: Aggiunto fallback a process.env.APPS_SCRIPT_URL
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Helper per ottenere l'URL di Apps Script
+ */
+function getAppsScriptUrl(restaurantConfig) {
+  const url = restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
+  if (!url) {
+    console.error('❌ APPS_SCRIPT_URL non configurato!');
+  }
+  return url;
+}
 
 /**
  * Definizione delle tool functions per OpenAI Realtime
@@ -101,7 +113,13 @@ Usa questo tool PRIMA di confermare una prenotazione per verificare:
       
       // 4. Chiama Apps Script per verifica capacità
       try {
-        const response = await fetch(restaurantConfig.apps_script_url, {
+        const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
+        if (!appsScriptUrl) {
+          return { available: true, message: 'Procedo con la prenotazione.' };
+        }
+        
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -182,7 +200,17 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
       const { name, people, date, time, phone, notes } = args;
       const { callSid, restaurantConfig } = context;
       
-      console.log(`📝 Creazione prenotazione: ${name}, ${people} pax, ${date} ${time}`);
+      console.log(`📝 Creazione prenotazione: ${name}, ${people} pax, ${date} ${time}, tel: ${phone}`);
+      
+      // Valida dati obbligatori
+      if (!name || !people || !date || !time || !phone) {
+        console.error('❌ Dati mancanti:', { name, people, date, time, phone });
+        return {
+          success: false,
+          reason: 'missing_data',
+          message: 'Mi mancano alcuni dati. Puoi ripetere nome e numero di telefono?'
+        };
+      }
       
       // Determina stato iniziale
       let status = 'CONFIRMED';
@@ -191,7 +219,13 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
       }
       
       try {
-        const response = await fetch(restaurantConfig.apps_script_url, {
+        const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
+        if (!appsScriptUrl) {
+          return { success: false, message: 'Errore di configurazione. Riprova più tardi.' };
+        }
+        
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -210,6 +244,7 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
         });
         
         const result = await response.json();
+        console.log('📋 Apps Script response:', result);
         
         if (result.success) {
           if (status === 'PENDING_OWNER') {
@@ -234,6 +269,7 @@ Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
             alternatives: result.alternatives || []
           };
         } else {
+          console.error('❌ Apps Script error:', result);
           return {
             success: false,
             reason: result.reason || 'unknown',
@@ -279,7 +315,13 @@ Usa questo tool quando il cliente vuole modificare o cancellare una prenotazione
       console.log(`🔍 Ricerca prenotazione: ${name}`);
       
       try {
-        const response = await fetch(restaurantConfig.apps_script_url, {
+        const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
+        if (!appsScriptUrl) {
+          return { found: false, message: 'Errore di configurazione.' };
+        }
+        
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -363,7 +405,13 @@ Verifica disponibilità del nuovo slot con check_availability prima di modificar
       console.log(`✏️ Modifica prenotazione: ${eventId}`);
       
       try {
-        const response = await fetch(restaurantConfig.apps_script_url, {
+        const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
+        if (!appsScriptUrl) {
+          return { success: false, message: 'Errore di configurazione.' };
+        }
+        
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -436,7 +484,13 @@ Chiedi SEMPRE conferma al cliente prima di cancellare.`,
       console.log(`🗑️ Cancellazione prenotazione: ${eventId}`);
       
       try {
-        const response = await fetch(restaurantConfig.apps_script_url, {
+        const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
+        if (!appsScriptUrl) {
+          return { success: false, message: 'Errore di configurazione.' };
+        }
+        
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
+        const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
