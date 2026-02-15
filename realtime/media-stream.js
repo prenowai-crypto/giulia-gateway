@@ -3,7 +3,7 @@
 // Riceve audio da Twilio Media Streams e lo passa a OpenAI Realtime
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import WebSocket from 'ws';
+import { WebSocketServer } from 'ws';
 import { OpenAIRealtimeClient } from './openai-realtime.js';
 
 /**
@@ -12,7 +12,7 @@ import { OpenAIRealtimeClient } from './openai-realtime.js';
  * @param {object} config - Configurazione (tools, systemPrompt, etc.)
  */
 export function setupMediaStreamHandler(server, config) {
-  const wss = new WebSocket.Server({ server, path: '/media-stream' });
+  const wss = new WebSocketServer({ server, path: '/media-stream' });
   
   console.log('📡 Media Stream WebSocket server attivo su /media-stream');
   
