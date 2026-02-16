@@ -1,768 +1,603 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - TOOL FUNCTIONS v2.0.0
-// Business logic COMPLETA integrata da index.js v3.9.31
+// PRENOW - TOOL FUNCTIONS v1.1.0
+// Espone la business logic esistente come tool functions per OpenAI Realtime
+// FIX v1.0.1: Aggiunto fallback a process.env.APPS_SCRIPT_URL
+// FIX v1.0.2: Parametri italiani per Apps Script (nome, persone, data, ora, telefono)
+// FIX v1.1.0: Validazione date server-side, blocco placeholder, blocco date passate
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 1: UTILITIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function normalizeText(str) {
-  return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-function sanitizePhone(phone) {
-  if (!phone || typeof phone !== "string") return null;
-  return phone.replace(/[^\d+]/g, "") || null;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 2: DATE MANAGER (da index.js v3.9.31)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const DateManager = {
-  DAYS_IT: ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'],
-  DAYS_EN: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
-  MONTHS_IT: ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 
-              'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'],
-  
-  getNow(timezone = 'Europe/Rome') {
-    const nowString = new Date().toLocaleString("en-US", { timeZone: timezone });
-    return new Date(nowString);
-  },
-  
-  startOfDay(date) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  },
-  
-  addDays(date, days) {
-    const d = new Date(date.getTime());
-    d.setDate(d.getDate() + days);
-    return d;
-  },
-  
-  toISO(date) {
-    if (!date || isNaN(date.getTime())) return null;
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  },
-  
-  fromISO(isoString) {
-    if (!isoString) return null;
-    const [y, m, d] = isoString.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  },
-  
-  getDayOfWeek(dateISO) {
-    if (!dateISO) return null;
-    const [y, m, d] = dateISO.split("-").map(Number);
-    return new Date(y, m - 1, d).getDay();
-  },
-  
-  getDayName(dateISO, lang = "it-IT") {
-    const dow = this.getDayOfWeek(dateISO);
-    if (dow === null) return null;
-    return lang === "en-US" ? this.DAYS_EN[dow] : this.DAYS_IT[dow];
-  },
-  
-  formatForSpeech(dateISO, lang = "it-IT") {
-    if (!dateISO) return "";
-    try {
-      const [y, m, d] = dateISO.split("-").map(Number);
-      const date = new Date(y, m - 1, d);
-      const dayName = lang === "it-IT" ? this.DAYS_IT[date.getDay()] : this.DAYS_EN[date.getDay()];
-      const monthName = lang === "it-IT" ? this.MONTHS_IT[date.getMonth()] : date.toLocaleDateString('en-US', { month: 'long' });
-      return `${dayName} ${d} ${monthName}`;
-    } catch (e) {
-      return dateISO;
-    }
-  },
-  
-  getNextWeekday(fromDate, targetWeekday) {
-    const result = new Date(fromDate.getTime());
-    const diff = ((targetWeekday - result.getDay()) + 7) % 7;
-    const daysToAdd = diff === 0 ? 7 : diff;
-    result.setDate(result.getDate() + daysToAdd);
-    return result;
-  },
-  
-  parseFromText(text, timezone = 'Europe/Rome') {
-    if (!text) return null;
-    const t = normalizeText(text);
-    const now = this.getNow(timezone);
-    const today = this.startOfDay(now);
-    
-    // Date esplicite (15 febbraio, 20/02)
-    const explicitDate = this._parseExplicitDate(t, today);
-    if (explicitDate) return explicitDate;
-    
-    // Date relative (oggi, domani, dopodomani)
-    const relativeDate = this._parseRelativeDate(t, today);
-    if (relativeDate) return relativeDate;
-    
-    // Giorno settimana + numero (martedì 10)
-    const weekdayWithDay = this._parseWeekdayWithDayNumber(t, today);
-    if (weekdayWithDay) return weekdayWithDay;
-    
-    // Giorno della settimana (venerdì, sabato prossimo)
-    const weekdayDate = this._parseWeekdayDate(t, today);
-    if (weekdayDate) return weekdayDate;
-    
-    return null;
-  },
-  
-  _parseExplicitDate(text, today) {
-    const monthsMap = {
-      'gennaio': 0, 'febbraio': 1, 'marzo': 2, 'aprile': 3, 'maggio': 4, 'giugno': 5,
-      'luglio': 6, 'agosto': 7, 'settembre': 8, 'ottobre': 9, 'novembre': 10, 'dicembre': 11
-    };
-    
-    const slashMatch = text.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-    if (slashMatch) {
-      const day = parseInt(slashMatch[1]);
-      const month = parseInt(slashMatch[2]) - 1;
-      if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
-        let year = today.getFullYear();
-        let candidate = new Date(year, month, day);
-        if (candidate < today) {
-          year++;
-          candidate = new Date(year, month, day);
-        }
-        return this.toISO(candidate);
-      }
-    }
-    
-    const allMonths = Object.keys(monthsMap).join("|");
-    const regex = new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${allMonths})`, "i");
-    const match = text.match(regex);
-    
-    if (match) {
-      const day = parseInt(match[1]);
-      const monthName = match[2].toLowerCase();
-      const month = monthsMap[monthName];
-      if (month !== undefined && day >= 1 && day <= 31) {
-        let year = today.getFullYear();
-        let candidate = new Date(year, month, day);
-        if (candidate < today) {
-          year++;
-          candidate = new Date(year, month, day);
-        }
-        return this.toISO(candidate);
-      }
-    }
-    return null;
-  },
-  
-  _parseRelativeDate(text, today) {
-    if (/dopodomani|dopo domani/.test(text)) return this.toISO(this.addDays(today, 2));
-    if (/\bdomani\b/.test(text)) return this.toISO(this.addDays(today, 1));
-    if (/oggi|stasera|questa sera/.test(text)) return this.toISO(today);
-    
-    const traMatch = text.match(/(?:tra|fra)\s*(\d+)\s*giorni/);
-    if (traMatch) return this.toISO(this.addDays(today, parseInt(traMatch[1])));
-    
-    return null;
-  },
-  
-  _parseWeekdayWithDayNumber(text, today) {
-    const weekdayPatterns = [
-      { pattern: /\b(?:domenica)\s+(\d{1,2})\b/i, index: 0 },
-      { pattern: /\b(?:lunedi)\s+(\d{1,2})\b/i, index: 1 },
-      { pattern: /\b(?:martedi)\s+(\d{1,2})\b/i, index: 2 },
-      { pattern: /\b(?:mercoledi)\s+(\d{1,2})\b/i, index: 3 },
-      { pattern: /\b(?:giovedi)\s+(\d{1,2})\b/i, index: 4 },
-      { pattern: /\b(?:venerdi)\s+(\d{1,2})\b/i, index: 5 },
-      { pattern: /\b(?:sabato)\s+(\d{1,2})\b/i, index: 6 },
-    ];
-    
-    for (const wp of weekdayPatterns) {
-      const match = text.match(wp.pattern);
-      if (match) {
-        const dayNum = parseInt(match[1]);
-        if (dayNum >= 1 && dayNum <= 31) {
-          let candidate = new Date(today.getFullYear(), today.getMonth(), dayNum);
-          if (candidate < today) {
-            candidate = new Date(today.getFullYear(), today.getMonth() + 1, dayNum);
-          }
-          return this.toISO(candidate);
-        }
-      }
-    }
-    return null;
-  },
-  
-  _parseWeekdayDate(text, today) {
-    const weekdays = [
-      { patterns: ['domenica'], index: 0 },
-      { patterns: ['lunedi'], index: 1 },
-      { patterns: ['martedi'], index: 2 },
-      { patterns: ['mercoledi'], index: 3 },
-      { patterns: ['giovedi'], index: 4 },
-      { patterns: ['venerdi'], index: 5 },
-      { patterns: ['sabato'], index: 6 },
-    ];
-    
-    let lastFoundIndex = -1;
-    let lastFoundPosition = -1;
-    
-    for (const wd of weekdays) {
-      for (const pattern of wd.patterns) {
-        const pos = text.lastIndexOf(pattern);
-        if (pos !== -1 && pos > lastFoundPosition) {
-          lastFoundPosition = pos;
-          lastFoundIndex = wd.index;
-        }
-      }
-    }
-    
-    if (lastFoundIndex !== -1) {
-      const hasNextModifier = /\b(prossim[ao])\b/i.test(text);
-      let result = this.getNextWeekday(today, lastFoundIndex);
-      if (hasNextModifier && result.getDay() === today.getDay() && result.getDate() === today.getDate()) {
-        result = this.addDays(result, 7);
-      }
-      return this.toISO(result);
-    }
-    return null;
-  },
-  
-  isInPast(dateISO, timezone = 'Europe/Rome') {
-    if (!dateISO) return false;
-    const today = this.toISO(this.getNow(timezone));
-    return dateISO < today;
-  }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 3: TIME MANAGER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const TimeManager = {
-  wordsToNumber: {
-    'una': 1, 'due': 2, 'tre': 3, 'quattro': 4, 'cinque': 5, 'sei': 6, 'sette': 7,
-    'otto': 8, 'nove': 9, 'dieci': 10, 'undici': 11, 'dodici': 12, 'tredici': 13,
-    'quattordici': 14, 'quindici': 15, 'sedici': 16, 'diciassette': 17, 'diciotto': 18,
-    'diciannove': 19, 'venti': 20, 'ventuno': 21, 'ventidue': 22, 'ventitre': 23
-  },
-  
-  minuteWords: { 'mezza': 30, 'mezzo': 30, 'trenta': 30, 'quindici': 15, 'quarantacinque': 45 },
-  
-  parseRelativeTime(text, timezone = 'Europe/Rome') {
-    if (!text) return null;
-    const t = text.toLowerCase().trim();
-    
-    const patterns = [
-      { pattern: /tra\s+mezz['']?\s*ora/i, minutes: 30 },
-      { pattern: /tra\s+un['']?\s*ora/i, minutes: 60 },
-      { pattern: /tra\s+(\d+)\s*minut/i, extract: true },
-      { pattern: /tra\s+(\d+)\s*ore/i, extract: true, hours: true },
-    ];
-    
-    for (const p of patterns) {
-      const match = t.match(p.pattern);
-      if (match) {
-        let minutesOffset = p.extract ? (p.hours ? parseInt(match[1]) * 60 : parseInt(match[1])) : p.minutes;
-        const nowString = new Date().toLocaleString("en-US", { timeZone: timezone });
-        const now = new Date(nowString);
-        const targetTime = new Date(now.getTime() + minutesOffset * 60 * 1000);
-        const mins = targetTime.getMinutes();
-        const roundedMins = Math.ceil(mins / 15) * 15;
-        targetTime.setMinutes(roundedMins % 60);
-        if (roundedMins >= 60) targetTime.setHours(targetTime.getHours() + 1);
-        const hour = targetTime.getHours();
-        const minute = targetTime.getMinutes();
-        return { time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`, isToday: true };
-      }
-    }
-    return null;
-  },
-  
-  parseFromText(text) {
-    if (!text) return null;
-    const t = text.toLowerCase().trim();
-    
-    const relativeResult = this.parseRelativeTime(text);
-    if (relativeResult) return relativeResult.time;
-    
-    if (/mezzogiorno/.test(t)) return "12:00";
-    if (/mezzanotte/.test(t)) return "00:00";
-    
-    const allTimes = [];
-    let match;
-    
-    // Pattern per numeri in lettere
-    const hourWords = Object.keys(this.wordsToNumber).join('|');
-    const patternWords = new RegExp(`(?:alle|ore|per le)\\s+(${hourWords})(?:\\s+e\\s+(mezza|mezzo|trenta|quindici))?`, 'gi');
-    
-    while ((match = patternWords.exec(t)) !== null) {
-      const hourWord = match[1].toLowerCase();
-      const minuteWord = match[2] ? match[2].toLowerCase() : null;
-      let hour = this.wordsToNumber[hourWord];
-      if (hour === undefined) continue;
-      let minutes = minuteWord && this.minuteWords[minuteWord] !== undefined ? this.minuteWords[minuteWord] : 0;
-      if (hour >= 1 && hour <= 11 && !t.includes("pranzo")) hour += 12;
-      if (hour >= 0 && hour <= 23) {
-        allTimes.push({ position: match.index, time: `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}` });
-      }
-    }
-    
-    // Pattern "alle 20:30", "ore 8"
-    const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?::(\d{2}))?/gi;
-    while ((match = pattern1.exec(t)) !== null) {
-      let hour = parseInt(match[1]);
-      const minutes = match[2] ? parseInt(match[2]) : 0;
-      if (hour >= 1 && hour <= 11 && !t.includes("pranzo")) hour += 12;
-      if (hour >= 0 && hour <= 23) {
-        allTimes.push({ position: match.index, time: `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}` });
-      }
-    }
-    
-    // Pattern standalone "20:30"
-    const pattern5 = /\b(\d{1,2}):(\d{2})\b/g;
-    while ((match = pattern5.exec(t)) !== null) {
-      let hour = parseInt(match[1]);
-      const minutes = parseInt(match[2]);
-      if (hour >= 1 && hour <= 11) hour += 12;
-      if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59) {
-        const timeStr = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-        const isDuplicate = allTimes.some(t => Math.abs(t.position - match.index) < 5 && t.time === timeStr);
-        if (!isDuplicate) allTimes.push({ position: match.index, time: timeStr });
-      }
-    }
-    
-    if (allTimes.length === 0) return null;
-    allTimes.sort((a, b) => a.position - b.position);
-    return allTimes[allTimes.length - 1].time;
-  },
-  
-  formatForDisplay(timeStr) {
-    if (!timeStr) return "";
-    return timeStr.substring(0, 5);
-  }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 4: CONFIG HELPER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const ConfigHelper = {
-  getClosedDays(config) {
-    return config?.weekly_closing_days && Array.isArray(config.weekly_closing_days) ? config.weekly_closing_days : [1];
-  },
-  
-  getLunchClosedDays(config) {
-    return config?.lunch_closed_days && Array.isArray(config.lunch_closed_days) ? config.lunch_closed_days : [];
-  },
-  
-  getDinnerClosedDays(config) {
-    return config?.dinner_closed_days && Array.isArray(config.dinner_closed_days) ? config.dinner_closed_days : [];
-  },
-  
-  getOpeningHours(config) {
-    const parseTime = (timeStr, defaultVal) => {
-      if (!timeStr) return defaultVal;
-      const [h, m] = String(timeStr).split(':').map(Number);
-      return isNaN(h) ? defaultVal : h * 60 + (m || 0);
-    };
-    return {
-      lunchStart: parseTime(config?.lunch_start, 720),
-      lunchEnd: parseTime(config?.lunch_end, 900),
-      dinnerStart: parseTime(config?.dinner_start, 1140),
-      dinnerEnd: parseTime(config?.dinner_end, 1350),
-    };
-  },
-  
-  isValidTime(timeStr, config) {
-    if (!timeStr) return false;
-    const [hourStr, minStr] = timeStr.split(':');
-    const totalMinutes = parseInt(hourStr) * 60 + parseInt(minStr || '0');
-    const hours = this.getOpeningHours(config);
-    return (totalMinutes >= hours.lunchStart && totalMinutes <= hours.lunchEnd) ||
-           (totalMinutes >= hours.dinnerStart && totalMinutes <= hours.dinnerEnd);
-  },
-  
-  getMealType(timeStr, config) {
-    if (!timeStr) return "unknown";
-    const hours = this.getOpeningHours(config);
-    const [h, m] = String(timeStr).split(':').map(Number);
-    if (isNaN(h)) return "unknown";
-    const timeMinutes = h * 60 + (m || 0);
-    if (timeMinutes >= hours.lunchStart - 30 && timeMinutes <= hours.lunchEnd + 30) return "lunch";
-    if (timeMinutes >= hours.dinnerStart - 30 && timeMinutes <= hours.dinnerEnd + 30) return "dinner";
-    if (h >= 11 && h <= 15) return "lunch";
-    if (h >= 18 || h <= 2) return "dinner";
-    return "unknown";
-  },
-  
-  buildInvalidTimeMessage(config, lang = "it-IT") {
-    const ls = config?.lunch_start || "12:00", le = config?.lunch_end || "15:00";
-    const ds = config?.dinner_start || "19:00", de = config?.dinner_end || "22:30";
-    return lang === "en-US"
-      ? `That time is outside our hours. Lunch ${ls}-${le}, dinner ${ds}-${de}.`
-      : `Quell'orario è fuori dai nostri orari. Pranzo ${ls}-${le}, cena ${ds}-${de}.`;
-  },
-  
-  getThresholds(config) {
-    return { largeGroup: Number(config?.large_group_threshold) || 10, event: Number(config?.event_threshold) || 45 };
-  }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 5: CLOSURE CHECKER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const ClosureChecker = {
-  isOpen(dateISO, config) {
-    if (!dateISO) return { open: true, reason: null };
-    const dayOfWeek = DateManager.getDayOfWeek(dateISO);
-    const closedDays = ConfigHelper.getClosedDays(config);
-    if (closedDays.includes(dayOfWeek)) {
-      const dayName = DateManager.getDayName(dateISO, "it-IT");
-      return { open: false, reason: "chiusura_settimanale", dayName, message_it: `Il ristorante è chiuso il ${dayName}.` };
-    }
-    return { open: true, reason: null };
-  },
-  
-  isOpenForMeal(dateISO, mealType, config) {
-    const baseCheck = this.isOpen(dateISO, config);
-    if (!baseCheck.open) return baseCheck;
-    if (!mealType || mealType === "unknown") return baseCheck;
-    
-    const dayOfWeek = DateManager.getDayOfWeek(dateISO);
-    const dayName = DateManager.getDayName(dateISO, "it-IT");
-    
-    if (mealType === "lunch") {
-      const lunchClosedDays = ConfigHelper.getLunchClosedDays(config);
-      if (lunchClosedDays.includes(dayOfWeek)) {
-        const ds = config?.dinner_start || "19:00", de = config?.dinner_end || "22:30";
-        return { open: false, reason: "pranzo_chiuso", message_it: `Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuoi prenotare per cena?` };
-      }
-    }
-    
-    if (mealType === "dinner") {
-      const dinnerClosedDays = ConfigHelper.getDinnerClosedDays(config);
-      if (dinnerClosedDays.includes(dayOfWeek)) {
-        const ls = config?.lunch_start || "12:00", le = config?.lunch_end || "15:00";
-        return { open: false, reason: "cena_chiusa", message_it: `Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuoi prenotare per pranzo?` };
-      }
-    }
-    return { open: true, reason: null };
-  },
-  
-  buildClosedMessage(dateISO, closureResult, lang = "it-IT") {
-    if (closureResult.message_it) return closureResult.message_it;
-    const dayName = closureResult.dayName || DateManager.getDayName(dateISO, lang);
-    return `Mi dispiace, il ristorante è chiuso il ${dayName}. Vuoi prenotare per un altro giorno?`;
-  }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 6: HELPER APPS SCRIPT
-// ═══════════════════════════════════════════════════════════════════════════════
-
+/**
+ * Helper per ottenere l'URL di Apps Script
+ */
 function getAppsScriptUrl(restaurantConfig) {
-  return restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
+  const url = restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
+  if (!url) {
+    console.error('❌ APPS_SCRIPT_URL non configurato!');
+  }
+  return url;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SEZIONE 7: TOOL FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════════
+/**
+ * FIX v1.1.0: Calcola la data corrente nel timezone del ristorante
+ */
+function getTodayISO(timezone = 'Europe/Rome') {
+  const now = new Date();
+  const options = { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' };
+  const parts = new Intl.DateTimeFormat('en-CA', options).formatToParts(now);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  return `${year}-${month}-${day}`;
+}
 
+/**
+ * FIX v1.1.0: Valida che la data non sia nel passato
+ */
+function isDateInPast(dateStr, timezone = 'Europe/Rome') {
+  const today = getTodayISO(timezone);
+  return dateStr < today;
+}
+
+/**
+ * FIX v1.1.0: Valida il nome (non deve essere placeholder)
+ */
+function isValidName(name) {
+  if (!name) return false;
+  const invalidNames = ['cliente', 'client', 'nome', 'name', 'unknown', 'sconosciuto', ''];
+  return !invalidNames.includes(name.toLowerCase().trim());
+}
+
+/**
+ * FIX v1.1.0: Valida il telefono (deve contenere solo numeri/spazi/trattini)
+ */
+function isValidPhone(phone) {
+  if (!phone) return false;
+  // Rimuovi spazi e trattini, verifica che rimangano solo numeri
+  const cleaned = phone.replace(/[\s\-\+\(\)]/g, '');
+  // Deve avere almeno 6 cifre e contenere solo numeri
+  return /^\d{6,15}$/.test(cleaned);
+}
+
+/**
+ * Definizione delle tool functions per OpenAI Realtime
+ * Ogni tool ha: name, description, parameters (JSON Schema), handler (funzione)
+ */
 export const realtimeTools = [
+  
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // TOOL 1: CHECK AVAILABILITY
+  // ═══════════════════════════════════════════════════════════════════════════════
   {
     name: 'check_availability',
-    description: 'Verifica disponibilità slot. Valida automaticamente data, orario, chiusure.',
+    description: `Verifica se un determinato slot (data + orario) è disponibile per un certo numero di persone.
+Usa questo tool PRIMA di confermare una prenotazione per verificare:
+- Il giorno non è un giorno di chiusura
+- L'orario è valido (pranzo o cena)
+- C'è capacità sufficiente nello slot`,
     parameters: {
       type: 'object',
       properties: {
-        date: { type: 'string', description: 'Data YYYY-MM-DD' },
-        time: { type: 'string', description: 'Orario HH:MM' },
-        people: { type: 'integer', description: 'Numero persone' }
+        date: {
+          type: 'string',
+          description: 'Data in formato YYYY-MM-DD (es: 2026-02-20)'
+        },
+        time: {
+          type: 'string',
+          description: 'Orario in formato HH:MM (es: 20:30)'
+        },
+        people: {
+          type: 'integer',
+          description: 'Numero di persone'
+        }
       },
       required: ['date', 'time', 'people']
     },
     handler: async (args, context) => {
       const { date, time, people } = args;
       const { restaurantConfig } = context;
-      const lang = restaurantConfig?.language || 'it-IT';
+      const timezone = restaurantConfig?.timezone || 'Europe/Rome';
       
-      console.log(`🔍 check_availability: ${date} ${time} per ${people} pax`);
+      console.log(`🔍 Check availability: ${date} ${time} per ${people} persone`);
       
-      if (DateManager.isInPast(date, restaurantConfig?.timezone)) {
-        return { available: false, reason: 'past_date', message: 'Non posso prenotare per una data passata.' };
+      // ═══════════════════════════════════════════════════════════════════════════
+      // FIX v1.1.0: Validazione data lato server
+      // ═══════════════════════════════════════════════════════════════════════════
+      
+      // 0. Verifica data non nel passato
+      if (isDateInPast(date, timezone)) {
+        const today = getTodayISO(timezone);
+        console.log(`❌ Data nel passato: ${date} < ${today}`);
+        return {
+          available: false,
+          reason: 'date_in_past',
+          message: `La data ${date} è nel passato. Oggi è ${today}. Vuoi prenotare per un altro giorno?`
+        };
       }
       
-      const closureCheck = ClosureChecker.isOpen(date, restaurantConfig);
-      if (!closureCheck.open) {
-        return { available: false, reason: 'closed_day', message: ClosureChecker.buildClosedMessage(date, closureCheck, lang) };
+      // 1. Verifica giorno chiusura
+      const dayOfWeek = new Date(date + 'T12:00:00').getDay();
+      
+      // Chiusura totale
+      if (restaurantConfig.weekly_closing_days?.includes(dayOfWeek)) {
+        const dayName = getDayName(dayOfWeek, true);
+        return {
+          available: false,
+          reason: 'day_closed',
+          message: `Il ristorante è chiuso il ${dayName}.`
+        };
       }
       
-      if (!ConfigHelper.isValidTime(time, restaurantConfig)) {
-        return { available: false, reason: 'invalid_time', message: ConfigHelper.buildInvalidTimeMessage(restaurantConfig, lang) };
+      // 2. Determina se pranzo o cena
+      const hour = parseInt(time.split(':')[0]);
+      const isLunch = hour < 15;
+      
+      // Chiusura pranzo
+      if (isLunch && restaurantConfig.lunch_closed_days?.includes(dayOfWeek)) {
+        const dayName = getDayName(dayOfWeek, true);
+        return {
+          available: false,
+          reason: 'lunch_closed',
+          message: `Il pranzo non è disponibile il ${dayName}. Posso proporre la cena?`
+        };
       }
       
-      const mealType = ConfigHelper.getMealType(time, restaurantConfig);
-      const mealCheck = ClosureChecker.isOpenForMeal(date, mealType, restaurantConfig);
-      if (!mealCheck.open) {
-        return { available: false, reason: mealCheck.reason, message: mealCheck.message_it };
+      // Chiusura cena
+      if (!isLunch && restaurantConfig.dinner_closed_days?.includes(dayOfWeek)) {
+        const dayName = getDayName(dayOfWeek, true);
+        return {
+          available: false,
+          reason: 'dinner_closed',
+          message: `La cena non è disponibile il ${dayName}. Posso proporre il pranzo?`
+        };
       }
       
+      // 3. Verifica orario valido
+      const lunchStart = restaurantConfig.lunch_start || '12:00';
+      const lunchEnd = restaurantConfig.lunch_end || '14:30';
+      const dinnerStart = restaurantConfig.dinner_start || '21:00';
+      const dinnerEnd = restaurantConfig.dinner_end || '23:00';
+      
+      const isValidLunchTime = isLunch && time >= lunchStart && time <= lunchEnd;
+      const isValidDinnerTime = !isLunch && time >= dinnerStart && time <= dinnerEnd;
+      
+      if (!isValidLunchTime && !isValidDinnerTime) {
+        return {
+          available: false,
+          reason: 'invalid_time',
+          message: isLunch 
+            ? `L'orario pranzo è dalle ${lunchStart} alle ${lunchEnd}.`
+            : `L'orario cena è dalle ${dinnerStart} alle ${dinnerEnd}.`
+        };
+      }
+      
+      // 4. Chiama Apps Script per verifica capacità
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
-        if (!appsScriptUrl) return { available: true, message: 'Slot disponibile.' };
+        if (!appsScriptUrl) {
+          return { available: true, message: 'Procedo con la prenotazione.' };
+        }
         
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'check_availability', data: date, ora: time, persone: people })
+          body: JSON.stringify({
+            action: 'check_availability',
+            data: date,        // FIX v1.0.2: parametro italiano
+            ora: time,         // FIX v1.0.2: parametro italiano
+            persone: people,   // FIX v1.0.2: parametro italiano
+            calendarId: restaurantConfig.calendar_id
+          })
         });
-        const result = await response.json();
         
-        if (result.success || result.available) {
-          return { available: true, message: 'Lo slot è disponibile.' };
+        const result = await response.json();
+        console.log('📋 Apps Script response:', result);
+        
+        // FIX v1.0.2: Apps Script usa "success" non "available"
+        if (result.success) {
+          return {
+            available: true,
+            message: 'Lo slot è disponibile.'
+          };
+        } else {
+          return {
+            available: false,
+            reason: result.reason || 'slot_full',
+            message: result.message || 'Mi dispiace, questo orario è al completo.',
+            alternatives: result.alternatives || []
+          };
         }
-        return { available: false, reason: result.reason || 'slot_full', message: result.message || 'Orario al completo.', alternatives: result.alternatives || [] };
       } catch (error) {
-        console.error('❌ check_availability error:', error);
-        return { available: true, message: 'Procedo con la prenotazione.' };
+        console.error('❌ Errore check_availability:', error);
+        return {
+          available: true, // Fallback: permetti la prenotazione
+          message: 'Non ho potuto verificare la disponibilità, procedo con la prenotazione.'
+        };
       }
     }
   },
   
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // TOOL 2: CREATE RESERVATION
+  // ═══════════════════════════════════════════════════════════════════════════════
   {
     name: 'create_reservation',
-    description: 'Crea prenotazione. Richiede: nome, persone, data, orario, telefono. NON usare nome="Cliente"!',
+    description: `Crea una nuova prenotazione nel calendario del ristorante.
+Usa questo tool SOLO dopo aver:
+1. Verificato disponibilità con check_availability
+2. Raccolto tutti i dati: nome, persone, data, orario, telefono
+Per gruppi >10 persone, la prenotazione va in stato PENDING_OWNER.`,
     parameters: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'Nome cliente (NO placeholder!)' },
-        people: { type: 'integer', description: 'Numero persone' },
-        date: { type: 'string', description: 'Data YYYY-MM-DD' },
-        time: { type: 'string', description: 'Orario HH:MM' },
-        phone: { type: 'string', description: 'Telefono (OBBLIGATORIO!)' },
-        notes: { type: 'string', description: 'Note opzionali' }
+        name: {
+          type: 'string',
+          description: 'Nome del cliente'
+        },
+        people: {
+          type: 'integer',
+          description: 'Numero di persone'
+        },
+        date: {
+          type: 'string',
+          description: 'Data in formato YYYY-MM-DD'
+        },
+        time: {
+          type: 'string',
+          description: 'Orario in formato HH:MM'
+        },
+        phone: {
+          type: 'string',
+          description: 'Numero di telefono del cliente'
+        },
+        notes: {
+          type: 'string',
+          description: 'Note aggiuntive (allergie, occasioni speciali, ecc.)'
+        }
       },
       required: ['name', 'people', 'date', 'time', 'phone']
     },
     handler: async (args, context) => {
       const { name, people, date, time, phone, notes } = args;
-      const { restaurantConfig } = context;
-      const lang = restaurantConfig?.language || 'it-IT';
+      const { callSid, restaurantConfig } = context;
+      const timezone = restaurantConfig?.timezone || 'Europe/Rome';
       
-      console.log(`📝 create_reservation: ${name}, ${people} pax, ${date} ${time}, tel: ${phone}`);
+      console.log(`📝 Creazione prenotazione: ${name}, ${people} pax, ${date} ${time}, tel: ${phone}`);
       
-      // Validazioni dati
-      if (!name || name.toLowerCase() === 'cliente' || name.length < 2) {
-        return { success: false, reason: 'missing_name', message: 'Mi serve il tuo nome. Come ti chiami?' };
-      }
-      if (!phone || phone.length < 6) {
-        return { success: false, reason: 'missing_phone', message: 'Mi serve il numero di telefono.' };
-      }
-      if (!people || people < 1) {
-        return { success: false, reason: 'missing_people', message: 'Per quante persone?' };
-      }
-      if (!date) {
-        return { success: false, reason: 'missing_date', message: 'Per quale giorno?' };
-      }
-      if (!time) {
-        return { success: false, reason: 'missing_time', message: 'A che ora?' };
+      // ═══════════════════════════════════════════════════════════════════════════
+      // FIX v1.1.0: Validazione rigorosa dati
+      // ═══════════════════════════════════════════════════════════════════════════
+      
+      // Valida nome (non placeholder)
+      if (!isValidName(name)) {
+        console.error('❌ Nome non valido o placeholder:', name);
+        return {
+          success: false,
+          reason: 'invalid_name',
+          message: 'Mi può dire il suo nome per favore?'
+        };
       }
       
-      // Validazioni business
-      if (DateManager.isInPast(date, restaurantConfig?.timezone)) {
-        return { success: false, reason: 'past_date', message: 'Non posso prenotare per una data passata.' };
+      // Valida telefono (solo numeri)
+      if (!isValidPhone(phone)) {
+        console.error('❌ Telefono non valido:', phone);
+        return {
+          success: false,
+          reason: 'invalid_phone',
+          message: 'Mi può dettare il suo numero di telefono per favore?'
+        };
       }
       
-      const closureCheck = ClosureChecker.isOpen(date, restaurantConfig);
-      if (!closureCheck.open) {
-        return { success: false, reason: 'closed_day', message: ClosureChecker.buildClosedMessage(date, closureCheck, lang) };
+      // Valida data non nel passato
+      if (isDateInPast(date, timezone)) {
+        const today = getTodayISO(timezone);
+        console.error(`❌ Data nel passato: ${date} < ${today}`);
+        return {
+          success: false,
+          reason: 'date_in_past',
+          message: `La data ${date} è nel passato. Per quale giorno vuole prenotare?`
+        };
       }
       
-      if (!ConfigHelper.isValidTime(time, restaurantConfig)) {
-        return { success: false, reason: 'invalid_time', message: ConfigHelper.buildInvalidTimeMessage(restaurantConfig, lang) };
+      // Valida dati obbligatori base
+      if (!people || !date || !time) {
+        console.error('❌ Dati mancanti:', { name, people, date, time, phone });
+        return {
+          success: false,
+          reason: 'missing_data',
+          message: 'Mi mancano alcuni dati. Per quante persone, che giorno e a che ora?'
+        };
       }
       
-      const mealType = ConfigHelper.getMealType(time, restaurantConfig);
-      const mealCheck = ClosureChecker.isOpenForMeal(date, mealType, restaurantConfig);
-      if (!mealCheck.open) {
-        return { success: false, reason: mealCheck.reason, message: mealCheck.message_it };
-      }
+      // ═══════════════════════════════════════════════════════════════════════════
       
-      const thresholds = ConfigHelper.getThresholds(restaurantConfig);
-      if (people >= thresholds.event) {
-        const email = restaurantConfig?.owner_email || 'il ristorante';
-        return { success: false, reason: 'event_size', message: `Per ${people} persone, scrivi a ${email}.` };
+      // Determina stato iniziale
+      const largeGroupThreshold = restaurantConfig?.large_group_threshold || 10;
+      let status = 'CONFIRMED';
+      if (people > largeGroupThreshold) {
+        status = 'PENDING_OWNER';
       }
       
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
-        if (!appsScriptUrl) return { success: false, message: 'Errore configurazione.' };
+        if (!appsScriptUrl) {
+          return { success: false, message: 'Errore di configurazione. Riprova più tardi.' };
+        }
         
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            source: 'realtime_api', nome: name, persone: people, data: date,
-            ora: time, telefono: sanitizePhone(phone), notes: notes || '', forceNew: true
+            action: 'create_reservation',
+            nome: name,           // FIX v1.0.2: parametro italiano
+            persone: people,      // FIX v1.0.2: parametro italiano
+            data: date,           // FIX v1.0.2: parametro italiano
+            ora: time,            // FIX v1.0.2: parametro italiano
+            telefono: phone,      // FIX v1.0.2: parametro italiano
+            notes: notes || '',
+            status,
+            forceNew: true,       // Sempre nuova prenotazione via Realtime API
+            calendarId: restaurantConfig.calendar_id,
+            source: 'realtime_api',
+            callSid
           })
         });
+        
         const result = await response.json();
+        console.log('📋 Apps Script response:', result);
         
         if (result.success) {
-          const dateFormatted = DateManager.formatForSpeech(date, lang);
-          const timeFormatted = TimeManager.formatForDisplay(time);
-          const firstName = name.split(' ')[0];
-          
-          if (result.status === 'PENDING_OWNER' || people > thresholds.largeGroup) {
-            return { success: true, status: 'PENDING_OWNER', eventId: result.eventId,
-              message: `Richiesta registrata per ${people} persone a nome ${firstName}, ${dateFormatted} alle ${timeFormatted}. Il ristoratore confermerà.` };
+          if (status === 'PENDING_OWNER') {
+            return {
+              success: true,
+              status: 'PENDING_OWNER',
+              eventId: result.eventId,
+              changeType: result.changeType,
+              forceNew: result.forceNew,
+              emailStatus: result.emailStatus,
+              message: `Ho registrato la richiesta per ${people} persone a nome ${name}. Essendo un gruppo numeroso, il ristoratore confermerà la prenotazione e ti ricontatterà al numero ${phone}.`
+            };
           }
           
-          return { success: true, status: 'CONFIRMED', eventId: result.eventId,
-            message: `Perfetto ${firstName}! Confermato per ${people} persone, ${dateFormatted} alle ${timeFormatted}. Ti aspettiamo!` };
+          return {
+            success: true,
+            status: 'CONFIRMED',
+            eventId: result.eventId,
+            changeType: result.changeType,
+            forceNew: result.forceNew,
+            emailStatus: result.emailStatus,
+            message: `Perfetto! Prenotazione confermata per ${people} persone a nome ${name}, ${formatDateForSpeech(date)} alle ${time.substring(0, 5)}. Ti aspettiamo!`
+          };
+        } else if (result.reason === 'slot_full') {
+          return {
+            success: false,
+            reason: 'slot_full',
+            message: 'Mi dispiace, nel frattempo lo slot si è riempito. Posso proporre un altro orario?',
+            alternatives: result.alternatives || []
+          };
+        } else if (result.reason === 'day_closed') {
+          return {
+            success: false,
+            reason: 'day_closed',
+            message: result.message || 'Il ristorante è chiuso in quel giorno.'
+          };
+        } else {
+          console.error('❌ Apps Script error:', result);
+          return {
+            success: false,
+            reason: result.reason || 'unknown',
+            message: result.message || 'Si è verificato un problema. Puoi riprovare?'
+          };
         }
-        
-        if (result.reason === 'slot_full') {
-          return { success: false, reason: 'slot_full', message: 'Orario al completo. Altro orario?', alternatives: result.alternatives || [] };
-        }
-        return { success: false, reason: result.reason || 'unknown', message: result.message || 'Problema. Riprova?' };
       } catch (error) {
-        console.error('❌ create_reservation error:', error);
-        return { success: false, reason: 'error', message: 'Errore tecnico. Riprova.' };
+        console.error('❌ Errore create_reservation:', error);
+        return {
+          success: false,
+          reason: 'error',
+          message: 'Errore tecnico. Riprova tra poco.'
+        };
       }
     }
   },
   
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // TOOL 3: FIND RESERVATION
+  // ═══════════════════════════════════════════════════════════════════════════════
   {
     name: 'find_reservation',
-    description: 'Cerca prenotazione per telefono o nome.',
+    description: `Cerca una prenotazione esistente per nome o telefono.
+Usa questo tool quando il cliente vuole modificare o cancellare una prenotazione.`,
     parameters: {
       type: 'object',
       properties: {
-        phone: { type: 'string', description: 'Telefono cliente' },
-        name: { type: 'string', description: 'Nome cliente' }
+        name: {
+          type: 'string',
+          description: 'Nome del cliente'
+        },
+        phone: {
+          type: 'string',
+          description: 'Numero di telefono (opzionale, per ricerca più precisa)'
+        }
       },
-      required: []
+      required: ['name']
     },
     handler: async (args, context) => {
-      const { phone, name } = args;
+      const { name, phone } = args;
       const { restaurantConfig } = context;
-      const lang = restaurantConfig?.language || 'it-IT';
       
-      if (!phone && !name) {
-        return { found: false, message: 'Mi serve nome o telefono per cercare.' };
-      }
+      console.log(`🔍 Ricerca prenotazione: ${name}`);
       
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
-        if (!appsScriptUrl) return { found: false, message: 'Errore configurazione.' };
+        if (!appsScriptUrl) {
+          return { found: false, message: 'Errore di configurazione.' };
+        }
         
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'find_all_reservations', telefono: sanitizePhone(phone) || '', nome: name || '' })
+          body: JSON.stringify({
+            action: 'find_reservation',
+            nome: name,           // FIX v1.0.2: parametro italiano
+            telefono: phone || '', // FIX v1.0.2: parametro italiano
+            calendarId: restaurantConfig.calendar_id
+          })
         });
+        
         const result = await response.json();
         
         if (result.found && result.reservations?.length > 0) {
           const reservations = result.reservations.map(r => ({
             eventId: r.eventId,
-            date: r.data || r.date,
-            time: r.ora || r.time,
-            people: r.persone || r.people,
-            name: r.nome || r.name,
-            displayText: `${DateManager.formatForSpeech(r.data || r.date, lang)} alle ${TimeManager.formatForDisplay(r.ora || r.time)} per ${r.persone || r.people} persone`
+            date: r.date || r.data,
+            time: r.time || r.ora,
+            people: r.people || r.persone,
+            name: r.name || r.nome,
+            displayText: `${formatDateForSpeech(r.date || r.data)} alle ${(r.time || r.ora).substring(0, 5)} per ${r.people || r.persone} persone`
           }));
           
-          return { found: true, count: reservations.length, reservations,
-            message: reservations.length === 1 ? `Trovata: ${reservations[0].displayText}.` : `Trovate ${reservations.length} prenotazioni.` };
+          return {
+            found: true,
+            count: reservations.length,
+            reservations,
+            message: reservations.length === 1
+              ? `Ho trovato la prenotazione: ${reservations[0].displayText}.`
+              : `Ho trovato ${reservations.length} prenotazioni a questo nome.`
+          };
+        } else {
+          return {
+            found: false,
+            message: `Non ho trovato prenotazioni a nome ${name}.`
+          };
         }
-        return { found: false, message: `Non ho trovato prenotazioni${name ? ` a nome ${name}` : ''}.` };
       } catch (error) {
-        console.error('❌ find_reservation error:', error);
-        return { found: false, message: 'Errore ricerca. Riprova.' };
+        console.error('❌ Errore find_reservation:', error);
+        return {
+          found: false,
+          message: 'Errore nella ricerca. Puoi ripetere il nome?'
+        };
       }
     }
   },
   
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // TOOL 4: MODIFY RESERVATION
+  // ═══════════════════════════════════════════════════════════════════════════════
   {
     name: 'modify_reservation',
-    description: 'Modifica prenotazione. Usa find_reservation prima per eventId.',
+    description: `Modifica una prenotazione esistente.
+Usa find_reservation prima per ottenere l'eventId.
+Verifica disponibilità del nuovo slot con check_availability prima di modificare.`,
     parameters: {
       type: 'object',
       properties: {
-        eventId: { type: 'string', description: 'ID prenotazione' },
-        newDate: { type: 'string', description: 'Nuova data YYYY-MM-DD' },
-        newTime: { type: 'string', description: 'Nuovo orario HH:MM' },
-        newPeople: { type: 'integer', description: 'Nuovo numero persone' }
+        eventId: {
+          type: 'string',
+          description: 'ID della prenotazione da modificare'
+        },
+        newDate: {
+          type: 'string',
+          description: 'Nuova data (YYYY-MM-DD) - opzionale'
+        },
+        newTime: {
+          type: 'string',
+          description: 'Nuovo orario (HH:MM) - opzionale'
+        },
+        newPeople: {
+          type: 'integer',
+          description: 'Nuovo numero persone - opzionale'
+        }
       },
       required: ['eventId']
     },
     handler: async (args, context) => {
       const { eventId, newDate, newTime, newPeople } = args;
       const { restaurantConfig } = context;
-      const lang = restaurantConfig?.language || 'it-IT';
+      const timezone = restaurantConfig?.timezone || 'Europe/Rome';
       
-      if (!eventId) return { success: false, message: 'Cerca prima la prenotazione.' };
+      console.log(`✏️ Modifica prenotazione: ${eventId}`);
       
-      if (newDate) {
-        if (DateManager.isInPast(newDate, restaurantConfig?.timezone)) {
-          return { success: false, reason: 'past_date', message: 'Non posso spostare a data passata.' };
-        }
-        const closureCheck = ClosureChecker.isOpen(newDate, restaurantConfig);
-        if (!closureCheck.open) {
-          return { success: false, reason: 'closed_day', message: ClosureChecker.buildClosedMessage(newDate, closureCheck, lang) };
-        }
-      }
-      
-      if (newTime && !ConfigHelper.isValidTime(newTime, restaurantConfig)) {
-        return { success: false, reason: 'invalid_time', message: ConfigHelper.buildInvalidTimeMessage(restaurantConfig, lang) };
-      }
-      
-      if (newDate && newTime) {
-        const mealType = ConfigHelper.getMealType(newTime, restaurantConfig);
-        const mealCheck = ClosureChecker.isOpenForMeal(newDate, mealType, restaurantConfig);
-        if (!mealCheck.open) return { success: false, reason: mealCheck.reason, message: mealCheck.message_it };
+      // FIX v1.1.0: Valida nuova data se fornita
+      if (newDate && isDateInPast(newDate, timezone)) {
+        return {
+          success: false,
+          reason: 'date_in_past',
+          message: `La data ${newDate} è nel passato. Per quale giorno vuole spostare?`
+        };
       }
       
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
-        if (!appsScriptUrl) return { success: false, message: 'Errore configurazione.' };
+        if (!appsScriptUrl) {
+          return { success: false, message: 'Errore di configurazione.' };
+        }
         
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'modify_reservation', eventId, data: newDate, ora: newTime, persone: newPeople })
+          body: JSON.stringify({
+            action: 'modify_reservation',
+            eventId,
+            nuovaData: newDate,      // FIX v1.0.2: parametro italiano
+            nuovaOra: newTime,       // FIX v1.0.2: parametro italiano
+            nuovePersone: newPeople, // FIX v1.0.2: parametro italiano
+            calendarId: restaurantConfig.calendar_id
+          })
         });
+        
         const result = await response.json();
         
         if (result.success) {
           const changes = [];
-          if (newDate) changes.push(DateManager.formatForSpeech(newDate, lang));
-          if (newTime) changes.push(`alle ${TimeManager.formatForDisplay(newTime)}`);
-          if (newPeople) changes.push(`${newPeople} persone`);
-          return { success: true, message: `Modificato: ${changes.join(', ')}. Ti aspettiamo!` };
+          if (newDate) changes.push(`data: ${formatDateForSpeech(newDate)}`);
+          if (newTime) changes.push(`orario: ${newTime.substring(0, 5)}`);
+          if (newPeople) changes.push(`persone: ${newPeople}`);
+          
+          return {
+            success: true,
+            message: `Prenotazione modificata. Nuovi dettagli: ${changes.join(', ')}.`
+          };
+        } else if (result.reason === 'slot_full') {
+          return {
+            success: false,
+            reason: 'slot_full',
+            message: 'Il nuovo orario non è disponibile. Posso proporre alternative?',
+            alternatives: result.alternatives || []
+          };
+        } else {
+          return {
+            success: false,
+            message: result.message || 'Non ho potuto modificare la prenotazione.'
+          };
         }
-        if (result.reason === 'slot_full') {
-          return { success: false, reason: 'slot_full', message: 'Nuovo orario non disponibile.', alternatives: result.alternatives || [] };
-        }
-        return { success: false, message: result.message || 'Non ho potuto modificare.' };
       } catch (error) {
-        console.error('❌ modify_reservation error:', error);
-        return { success: false, message: 'Errore modifica. Riprova.' };
+        console.error('❌ Errore modify_reservation:', error);
+        return {
+          success: false,
+          message: 'Errore nella modifica. Riprova.'
+        };
       }
     }
   },
   
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // TOOL 5: CANCEL RESERVATION
+  // ═══════════════════════════════════════════════════════════════════════════════
   {
     name: 'cancel_reservation',
-    description: 'Cancella prenotazione. Chiedi SEMPRE conferma prima!',
+    description: `Cancella una prenotazione esistente.
+Usa find_reservation prima per ottenere l'eventId.
+Chiedi SEMPRE conferma al cliente prima di cancellare.`,
     parameters: {
       type: 'object',
       properties: {
-        eventId: { type: 'string', description: 'ID prenotazione' }
+        eventId: {
+          type: 'string',
+          description: 'ID della prenotazione da cancellare'
+        }
       },
       required: ['eventId']
     },
@@ -770,28 +605,66 @@ export const realtimeTools = [
       const { eventId } = args;
       const { restaurantConfig } = context;
       
-      if (!eventId) return { success: false, message: 'Cerca prima la prenotazione.' };
+      console.log(`🗑️ Cancellazione prenotazione: ${eventId}`);
       
       try {
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
-        if (!appsScriptUrl) return { success: false, message: 'Errore configurazione.' };
+        if (!appsScriptUrl) {
+          return { success: false, message: 'Errore di configurazione.' };
+        }
         
+        console.log(`📡 Calling Apps Script: ${appsScriptUrl}`);
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'cancel_reservation', eventId })
+          body: JSON.stringify({
+            action: 'cancel_reservation',
+            eventId,
+            calendarId: restaurantConfig.calendar_id
+          })
         });
+        
         const result = await response.json();
         
-        if (result.success) return { success: true, message: 'Cancellata. Speriamo di rivederti!' };
-        return { success: false, message: result.message || 'Non ho potuto cancellare.' };
+        if (result.success) {
+          return {
+            success: true,
+            message: 'Prenotazione cancellata. Speriamo di rivederti presto!'
+          };
+        } else {
+          return {
+            success: false,
+            message: result.message || 'Non ho potuto cancellare la prenotazione.'
+          };
+        }
       } catch (error) {
-        console.error('❌ cancel_reservation error:', error);
-        return { success: false, message: 'Errore cancellazione. Riprova.' };
+        console.error('❌ Errore cancel_reservation:', error);
+        return {
+          success: false,
+          message: 'Errore nella cancellazione. Riprova.'
+        };
       }
     }
   }
 ];
 
-export { DateManager, TimeManager, ConfigHelper, ClosureChecker };
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function getDayName(dayIndex, italian = true) {
+  const names = italian
+    ? ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato']
+    : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return names[dayIndex];
+}
+
+function formatDateForSpeech(dateStr) {
+  if (!dateStr) return 'data non specificata';
+  const date = new Date(dateStr + 'T12:00:00');
+  const day = date.getDate();
+  const month = date.toLocaleDateString('it-IT', { month: 'long' });
+  return `${day} ${month}`;
+}
+
 export default realtimeTools;
