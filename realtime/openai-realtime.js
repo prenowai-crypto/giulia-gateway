@@ -74,9 +74,9 @@ export class OpenAIRealtimeClient {
         },
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.7,
-          prefix_padding_ms: 800,
-          silence_duration_ms: 2000
+          threshold: 0.6,           // Leggermente più sensibile
+          prefix_padding_ms: 500,   // Meno padding iniziale
+          silence_duration_ms: 2500 // Più tempo prima di considerare turno finito
         },
         tools: this.tools.map(t => ({
           type: 'function',
