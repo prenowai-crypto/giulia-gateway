@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - REALTIME GATEWAY v1.3.0
-// FIX: Telnyx TeXML usa <Start><Stream> non <Connect><Stream>
+// PRENOW - REALTIME GATEWAY v1.4.0
+// FIX: Store From/To in memory, URL senza query params
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -139,7 +139,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     service: 'PRENOW Realtime Gateway',
-    version: '1.3.0',
+    version: '1.4.0',
     status: 'ok',
     provider: 'Telnyx TeXML',
     endpoints: {
@@ -150,8 +150,24 @@ app.get('/', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// STORE per salvare From/To (CallSid -> {from, to})
+// ═══════════════════════════════════════════════════════════════════════════════
+const callDataStore = new Map();
+
+// Pulisci dati vecchi ogni 5 minuti
+setInterval(() => {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  for (const [callSid, data] of callDataStore.entries()) {
+    if (data.timestamp < fiveMinutesAgo) {
+      callDataStore.delete(callSid);
+    }
+  }
+}, 60 * 1000);
+
+// Export per uso in media-stream (passato tramite config)
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // TWIML ENDPOINT - Telnyx/Twilio chiama questo per iniziare lo stream
-// FIX v1.2.0: Passa From/To via URL query params (più affidabile con Telnyx)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/twiml-stream', (req, res) => {
@@ -162,11 +178,18 @@ app.post('/twiml-stream', (req, res) => {
   console.log(`   From: ${From}, To: ${To}`);
   console.log(`   Body completo:`, JSON.stringify(req.body, null, 2));
   
-  // Costruisci URL WebSocket con From/To come query params
-  // Questo garantisce che i dati arrivino anche se Telnyx non passa customParameters
-  const fromEncoded = encodeURIComponent(From || 'unknown');
-  const toEncoded = encodeURIComponent(To || 'unknown');
-  const wsUrl = `wss://${req.get('host')}/media-stream?from=${fromEncoded}&to=${toEncoded}`;
+  // Salva From/To in memoria per recuperarli quando il WebSocket si connette
+  if (CallSid) {
+    callDataStore.set(CallSid, {
+      from: From || 'unknown',
+      to: To || 'unknown',
+      timestamp: Date.now()
+    });
+    console.log(`💾 Salvato call data per CallSid: ${CallSid}`);
+  }
+  
+  // URL WebSocket SENZA query params (più compatibile)
+  const wsUrl = `wss://${req.get('host')}/media-stream`;
   
   console.log(`🔌 WebSocket URL: ${wsUrl}`);
   
@@ -179,12 +202,14 @@ app.post('/twiml-stream', (req, res) => {
   <Pause length="60"/>
 </Response>`;
   
+  console.log(`📤 TeXML response:`, twiml);
+  
   res.type('text/xml').send(twiml);
 });
 
 // GET per test
 app.get('/twiml-stream', (req, res) => {
-  const wsUrl = `wss://${req.get('host')}/media-stream?from=test&to=test`;
+  const wsUrl = `wss://${req.get('host')}/media-stream`;
   
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -208,13 +233,14 @@ setupMediaStreamHandler(server, {
   openaiApiKey: CONFIG.OPENAI_API_KEY,
   model: CONFIG.OPENAI_MODEL,
   tools: realtimeTools,
-  getRestaurantConfig: getRestaurantConfig
+  getRestaurantConfig: getRestaurantConfig,
+  callDataStore: callDataStore  // Passa il store
 });
 
 server.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY v1.3.0                            ║
+║  🚀 PRENOW REALTIME GATEWAY v1.4.0                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🎤 OpenAI Model: ${CONFIG.OPENAI_MODEL}            ║
 ║  📞 TeXML: POST /twiml-stream (Telnyx compatible)             ║
