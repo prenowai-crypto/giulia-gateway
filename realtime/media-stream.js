@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - MEDIA STREAM HANDLER v1.5.0
+// PRENOW - MEDIA STREAM HANDLER v1.6.0
 // FIX: Usa callDataStore per recuperare From/To dal CallSid
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -60,7 +60,7 @@ export function setupMediaStreamHandler(server, config) {
             console.log(`📞 Stream started - StreamSid: ${session.streamSid}, CallSid: ${session.callSid}`);
             
             // ═══════════════════════════════════════════════════════════════
-            // FIX v1.5.0: Recupera From/To dal callDataStore usando CallSid
+            // FIX v1.6.0: Recupera From/To dal callDataStore usando CallSid
             // ═══════════════════════════════════════════════════════════════
             if (callDataStore && session.callSid) {
               const storedData = callDataStore.get(session.callSid);
@@ -288,6 +288,8 @@ REGOLE COMUNICAZIONE:
 - Parla in italiano, in modo naturale e cordiale
 - Sei al telefono, quindi sii concisa (max 2 frasi per risposta)
 - Non inventare informazioni su accessibilità, parcheggio o altri servizi
+- IGNORA se senti ripetere quello che hai appena detto (è un echo tecnico)
+- Aspetta sempre che il cliente finisca di parlare prima di rispondere
 
 INFORMAZIONI RISTORANTE:
 - Nome: ${config.restaurant_name}
