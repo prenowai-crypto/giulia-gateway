@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - REALTIME GATEWAY v1.7.0
-// FIX: outbound_track = voce utente (terminologia Telnyx)
+// PRENOW - REALTIME GATEWAY v1.8.0
+// FIX: Echo cancellation aggressiva (3s delay)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -139,7 +139,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     service: 'PRENOW Realtime Gateway',
-    version: '1.7.0',
+    version: '1.8.0',
     status: 'ok',
     provider: 'Telnyx TeXML',
     endpoints: {
@@ -193,11 +193,11 @@ app.post('/twiml-stream', (req, res) => {
   
   console.log(`🔌 WebSocket URL: ${wsUrl}`);
   
-  // TeXML: outbound_track = voce utente, bidirectional = possiamo inviare audio
+  // TeXML: both_tracks + echo cancellation lato server
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="outbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
+    <Stream url="${wsUrl}" track="both_tracks" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
   </Start>
   <Pause length="60"/>
 </Response>`;
@@ -214,7 +214,7 @@ app.get('/twiml-stream', (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="outbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
+    <Stream url="${wsUrl}" track="both_tracks" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
   </Start>
   <Pause length="60"/>
 </Response>`;
@@ -240,7 +240,7 @@ setupMediaStreamHandler(server, {
 server.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY v1.7.0                            ║
+║  🚀 PRENOW REALTIME GATEWAY v1.8.0                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🎤 OpenAI Model: ${CONFIG.OPENAI_MODEL}            ║
 ║  📞 TeXML: POST /twiml-stream (Telnyx compatible)             ║
