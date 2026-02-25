@@ -1,37 +1,36 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - MEDIA STREAM HANDLER v1.2.0
-// FIX: Legge From/To dai query params URL (compatibilità Telnyx)
+// PRENOW - MEDIA STREAM HANDLER v1.4.0
+// FIX: Usa callDataStore per recuperare From/To dal CallSid
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { WebSocketServer } from 'ws';
 import { OpenAIRealtimeClient } from './openai-realtime.js';
 
+// Importato da index.js - sarà passato come config
+let callDataStore = null;
+
 /**
  * Setup WebSocket server per Telnyx/Twilio Media Streams
  */
 export function setupMediaStreamHandler(server, config) {
+  // Salva reference al callDataStore
+  callDataStore = config.callDataStore;
+  
   const wss = new WebSocketServer({ server, path: '/media-stream' });
   
   console.log('📡 Media Stream WebSocket server attivo su /media-stream');
   
   wss.on('connection', (ws, req) => {
     console.log('🔌 Nuova connessione Twilio Media Stream');
+    console.log(`   URL: ${req.url}`);
+    console.log(`   Headers:`, JSON.stringify(req.headers, null, 2));
     
-    // ═══════════════════════════════════════════════════════════════════════════
-    // FIX v1.2.0: Estrai From/To dai query params dell'URL
-    // ═══════════════════════════════════════════════════════════════════════════
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const fromParam = url.searchParams.get('from') || 'unknown';
-    const toParam = url.searchParams.get('to') || 'unknown';
-    
-    console.log(`📞 Parametri da URL - From: ${fromParam}, To: ${toParam}`);
-    
-    // Stato della sessione
+    // Stato della sessione - From/To verranno recuperati dal callDataStore
     const session = {
       streamSid: null,
       callSid: null,
-      from: fromParam,  // Usa i valori dall'URL
-      to: toParam,      // Usa i valori dall'URL
+      from: 'unknown',
+      to: 'unknown',
       openaiClient: null,
       restaurantConfig: null,
     };
@@ -56,9 +55,34 @@ export function setupMediaStreamHandler(server, config) {
             // Telnyx: data.start.stream_id, data.start.call_control_id, etc.
             
             session.streamSid = data.start?.streamSid || data.start?.stream_id || data.streamSid || data.stream_id;
-            session.callSid = data.start?.callSid || data.start?.call_control_id || data.callSid || data.call_control_id;
+            session.callSid = data.start?.callSid || data.start?.call_control_id || data.callSid || data.call_control_id || data.CallSid;
             
-            // Prova a prendere From/To da customParameters (Twilio) come fallback
+            console.log(`📞 Stream started - StreamSid: ${session.streamSid}, CallSid: ${session.callSid}`);
+            
+            // ═══════════════════════════════════════════════════════════════
+            // FIX v1.4.0: Recupera From/To dal callDataStore usando CallSid
+            // ═══════════════════════════════════════════════════════════════
+            if (callDataStore && session.callSid) {
+              const storedData = callDataStore.get(session.callSid);
+              if (storedData) {
+                session.from = storedData.from;
+                session.to = storedData.to;
+                console.log(`💾 Recuperato da store - From: ${session.from}, To: ${session.to}`);
+              } else {
+                console.warn(`⚠️ Nessun dato trovato in store per CallSid: ${session.callSid}`);
+                // Prova anche con varianti del CallSid (Telnyx può usare formati diversi)
+                for (const [key, value] of callDataStore.entries()) {
+                  if (session.callSid.includes(key) || key.includes(session.callSid)) {
+                    session.from = value.from;
+                    session.to = value.to;
+                    console.log(`💾 Match parziale trovato - From: ${session.from}, To: ${session.to}`);
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Fallback: prova customParameters (Twilio style)
             if (session.from === 'unknown' && data.start?.customParameters?.from) {
               session.from = data.start.customParameters.from;
             }
@@ -66,8 +90,7 @@ export function setupMediaStreamHandler(server, config) {
               session.to = data.start.customParameters.to;
             }
             
-            console.log(`📞 Stream started - CallSid: ${session.callSid}`);
-            console.log(`   From: ${session.from}, To: ${session.to}`);
+            console.log(`📞 Final - From: ${session.from}, To: ${session.to}`);
             
             // Cerca config ristorante
             session.restaurantConfig = await config.getRestaurantConfig(session.to);
