@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - MEDIA STREAM HANDLER v1.4.0
+// PRENOW - MEDIA STREAM HANDLER v1.5.0
 // FIX: Usa callDataStore per recuperare From/To dal CallSid
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -60,7 +60,7 @@ export function setupMediaStreamHandler(server, config) {
             console.log(`📞 Stream started - StreamSid: ${session.streamSid}, CallSid: ${session.callSid}`);
             
             // ═══════════════════════════════════════════════════════════════
-            // FIX v1.4.0: Recupera From/To dal callDataStore usando CallSid
+            // FIX v1.5.0: Recupera From/To dal callDataStore usando CallSid
             // ═══════════════════════════════════════════════════════════════
             if (callDataStore && session.callSid) {
               const storedData = callDataStore.get(session.callSid);
@@ -117,9 +117,10 @@ export function setupMediaStreamHandler(server, config) {
               restaurantConfig: session.restaurantConfig,
               onAudioDelta: (audioBase64) => {
                 if (ws.readyState === 1) {
+                  // Telnyx usa stream_id, Twilio usa streamSid
                   ws.send(JSON.stringify({
                     event: 'media',
-                    streamSid: session.streamSid,
+                    stream_id: session.streamSid,  // Telnyx format
                     media: {
                       payload: audioBase64
                     }
