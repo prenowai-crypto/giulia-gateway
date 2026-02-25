@@ -22,6 +22,13 @@ export class OpenAIRealtimeClient {
     this.isConnected = false;
     this.sessionId = null;
     this.audioBuffer = [];
+    
+    // ═══════════════════════════════════════════════════════════════
+    // FIX v1.8.0: Echo cancellation
+    // ═══════════════════════════════════════════════════════════════
+    this.isAiSpeaking = true; // Inizia come true perché AI saluta subito
+    this.aiSpeakingEndTime = Date.now(); // Inizializza al tempo corrente
+    this.ECHO_DELAY_MS = 3000; // 3 secondi - l'echo impiega tempo a tornare
   }
   
   async connect() {
@@ -114,6 +121,8 @@ export class OpenAIRealtimeClient {
         break;
         
       case 'response.audio.delta':
+        // AI sta parlando - marca come speaking
+        this.isAiSpeaking = true;
         if (message.delta) {
           this.onAudioDelta(message.delta);
         }
@@ -136,6 +145,9 @@ export class OpenAIRealtimeClient {
         break;
         
       case 'response.done':
+        // AI ha finito di parlare - marca timestamp
+        this.isAiSpeaking = false;
+        this.aiSpeakingEndTime = Date.now();
         if (message.response?.status === 'failed') {
           console.error('❌ Risposta fallita:', message.response.status_details);
         }
@@ -211,10 +223,34 @@ export class OpenAIRealtimeClient {
   sendAudio(audioBase64) {
     if (!this.isConnected) return;
     
+    // ═══════════════════════════════════════════════════════════════
+    // FIX v1.8.0: Echo cancellation aggressiva
+    // L'audio dell'AI impiega ~2-3 secondi a tornare come echo
+    // ═══════════════════════════════════════════════════════════════
+    if (this.isAiSpeaking) {
+      return; // AI sta parlando, ignora tutto l'input
+    }
+    
+    const timeSinceAiStopped = Date.now() - this.aiSpeakingEndTime;
+    if (timeSinceAiStopped < this.ECHO_DELAY_MS) {
+      return; // Troppo presto, probabilmente echo
+    }
+    
     this.send({
       type: 'input_audio_buffer.append',
       audio: audioBase64
     });
+  }
+  
+  // Metodo per segnalare che l'AI sta iniziando a parlare
+  markAiSpeakingStart() {
+    this.isAiSpeaking = true;
+  }
+  
+  // Metodo per segnalare che l'AI ha finito di parlare
+  markAiSpeakingEnd() {
+    this.isAiSpeaking = false;
+    this.aiSpeakingEndTime = Date.now();
   }
   
   send(message) {
