@@ -5,10 +5,6 @@
 
 import WebSocket from 'ws';
 
-/**
- * Client per OpenAI Realtime API
- * Gestisce: connessione WebSocket, audio bidirezionale, tool calls
- */
 export class OpenAIRealtimeClient {
   constructor(options) {
     this.apiKey = options.apiKey;
@@ -18,23 +14,16 @@ export class OpenAIRealtimeClient {
     this.callSid = options.callSid;
     this.restaurantConfig = options.restaurantConfig;
     
-    // Callbacks
     this.onAudioDelta = options.onAudioDelta || (() => {});
     this.onTranscript = options.onTranscript || (() => {});
     this.onError = options.onError || console.error;
     
-    // Stato
     this.ws = null;
     this.isConnected = false;
     this.sessionId = null;
-    
-    // Buffer per conversione audio Twilio (mulaw) → OpenAI (pcm16)
     this.audioBuffer = [];
   }
   
-  /**
-   * Connette a OpenAI Realtime API
-   */
   async connect() {
     return new Promise((resolve, reject) => {
       const url = `wss://api.openai.com/v1/realtime?model=${this.model}`;
@@ -70,11 +59,7 @@ export class OpenAIRealtimeClient {
     });
   }
   
-  /**
-   * Inizializza la sessione con OpenAI
-   */
-initializeSession() {
-    // Configura la sessione
+  initializeSession() {
     this.send({
       type: 'session.update',
       session: {
@@ -102,7 +87,6 @@ initializeSession() {
       }
     });
     
-    // Invia messaggio iniziale (il sistema saluta)
     this.send({
       type: 'conversation.item.create',
       item: {
@@ -115,13 +99,9 @@ initializeSession() {
       }
     });
     
-    // Triggera risposta
     this.send({ type: 'response.create' });
   }
   
-  /**
-   * Gestisce messaggi in arrivo da OpenAI
-   */
   handleMessage(message) {
     switch (message.type) {
       case 'session.created':
@@ -134,38 +114,28 @@ initializeSession() {
         break;
         
       case 'response.audio.delta':
-        // Audio in uscita verso Twilio
         if (message.delta) {
           this.onAudioDelta(message.delta);
         }
         break;
         
-      case 'response.audio_transcript.delta':
-        // Trascrizione parziale di cosa sta dicendo l'AI
-        // (opzionale, per logging)
-        break;
-        
       case 'response.audio_transcript.done':
-        // Trascrizione completa risposta AI
         if (message.transcript) {
           this.onTranscript(message.transcript, 'assistant');
         }
         break;
         
       case 'conversation.item.input_audio_transcription.completed':
-        // Trascrizione di cosa ha detto l'utente
         if (message.transcript) {
           this.onTranscript(message.transcript, 'user');
         }
         break;
         
       case 'response.function_call_arguments.done':
-        // Tool call completata, esegui la funzione
         this.handleToolCall(message);
         break;
         
       case 'response.done':
-        // Risposta completata
         if (message.response?.status === 'failed') {
           console.error('❌ Risposta fallita:', message.response.status_details);
         }
@@ -185,16 +155,12 @@ initializeSession() {
         break;
         
       default:
-        // Log eventi non gestiti esplicitamente (per debug)
         if (process.env.DEBUG_REALTIME) {
           console.log(`📨 ${message.type}`);
         }
     }
   }
   
-  /**
-   * Gestisce tool calls da OpenAI
-   */
   async handleToolCall(message) {
     const { call_id, name, arguments: argsString } = message;
     
@@ -202,15 +168,12 @@ initializeSession() {
     
     try {
       const args = JSON.parse(argsString);
-      
-      // Trova il tool corrispondente
       const tool = this.tools.find(t => t.name === name);
       
       if (!tool) {
         throw new Error(`Tool non trovato: ${name}`);
       }
       
-      // Esegui la funzione
       const result = await tool.handler(args, {
         callSid: this.callSid,
         restaurantConfig: this.restaurantConfig
@@ -218,7 +181,6 @@ initializeSession() {
       
       console.log(`✅ Tool result:`, result);
       
-      // Invia risultato a OpenAI
       this.send({
         type: 'conversation.item.create',
         item: {
@@ -228,13 +190,11 @@ initializeSession() {
         }
       });
       
-      // Triggera nuova risposta basata sul risultato
       this.send({ type: 'response.create' });
       
     } catch (error) {
       console.error(`❌ Tool error (${name}):`, error);
       
-      // Invia errore a OpenAI
       this.send({
         type: 'conversation.item.create',
         item: {
@@ -248,10 +208,6 @@ initializeSession() {
     }
   }
   
-  /**
-   * Invia audio a OpenAI (da Twilio)
-   * @param {string} audioBase64 - Audio in formato mulaw base64
-   */
   sendAudio(audioBase64) {
     if (!this.isConnected) return;
     
@@ -261,18 +217,12 @@ initializeSession() {
     });
   }
   
-  /**
-   * Invia messaggio a OpenAI
-   */
   send(message) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     }
   }
   
-  /**
-   * Disconnette da OpenAI
-   */
   disconnect() {
     if (this.ws) {
       this.ws.close();
