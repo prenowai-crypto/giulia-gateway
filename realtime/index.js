@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - REALTIME GATEWAY v1.2.0
-// FIX: Compatibilità Telnyx - passa From/To via URL query params
+// PRENOW - REALTIME GATEWAY v1.3.0
+// FIX: Telnyx TeXML usa <Start><Stream> non <Connect><Stream>
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -139,7 +139,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     service: 'PRENOW Realtime Gateway',
-    version: '1.2.0',
+    version: '1.3.0',
     status: 'ok',
     provider: 'Telnyx TeXML',
     endpoints: {
@@ -170,12 +170,13 @@ app.post('/twiml-stream', (req, res) => {
   
   console.log(`🔌 WebSocket URL: ${wsUrl}`);
   
-  // TeXML che avvia Media Stream (compatibile Telnyx)
+  // TeXML che avvia Media Stream (sintassi Telnyx: Start/Stream, non Connect/Stream)
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Connect>
-    <Stream url="${wsUrl}" />
-  </Connect>
+  <Start>
+    <Stream url="${wsUrl}" track="inbound_track" />
+  </Start>
+  <Pause length="60"/>
 </Response>`;
   
   res.type('text/xml').send(twiml);
@@ -187,9 +188,10 @@ app.get('/twiml-stream', (req, res) => {
   
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Connect>
-    <Stream url="${wsUrl}" />
-  </Connect>
+  <Start>
+    <Stream url="${wsUrl}" track="inbound_track" />
+  </Start>
+  <Pause length="60"/>
 </Response>`;
   
   res.type('text/xml').send(twiml);
@@ -212,7 +214,7 @@ setupMediaStreamHandler(server, {
 server.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY v1.2.0                            ║
+║  🚀 PRENOW REALTIME GATEWAY v1.3.0                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🎤 OpenAI Model: ${CONFIG.OPENAI_MODEL}            ║
 ║  📞 TeXML: POST /twiml-stream (Telnyx compatible)             ║
