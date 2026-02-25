@@ -1,10 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - REALTIME GATEWAY v1.0.0
-// Entry point per il nuovo sistema con OpenAI Realtime API
-// 
-// QUESTO FILE può essere:
-// A) Aggiunto all'index.js esistente (integrazione)
-// B) Eseguito separatamente per test (standalone)
+// PRENOW - REALTIME GATEWAY v1.2.0
+// FIX: Compatibilità Telnyx - passa From/To via URL query params
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -34,11 +30,7 @@ const CONFIG = {
 // REGISTRY - CARICA CONFIG RISTORANTI
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Carica il registry da Google Sheets
- */
 async function loadRegistry() {
-  // Usa cache se valida
   if (CONFIG.registryCache && (Date.now() - CONFIG.registryCacheTime < CONFIG.CACHE_TTL)) {
     return CONFIG.registryCache;
   }
@@ -48,7 +40,6 @@ async function loadRegistry() {
     const response = await fetch(url);
     const text = await response.text();
     
-    // Parse Google Sheets JSON response
     const jsonMatch = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\);?$/);
     if (!jsonMatch) throw new Error('Invalid response format');
     
@@ -78,27 +69,30 @@ async function loadRegistry() {
   }
 }
 
-/**
- * Trova config ristorante dal numero chiamato
- */
 async function getRestaurantConfig(phoneNumber) {
   const registry = await loadRegistry();
   
   // Normalizza numero (rimuovi spazi, +, etc.)
   const normalized = phoneNumber.replace(/[\s\+\-\(\)]/g, '');
   
+  console.log(`🔍 Cercando ristorante per numero: ${phoneNumber} (normalizzato: ${normalized})`);
+  
   // Cerca match
   const config = registry.find(r => {
     const regNum = String(r.twilio_number || r.phone_number || '').replace(/[\s\+\-\(\)]/g, '');
-    return regNum.includes(normalized) || normalized.includes(regNum);
+    const match = regNum.includes(normalized) || normalized.includes(regNum);
+    if (match) {
+      console.log(`✅ Match trovato: ${regNum}`);
+    }
+    return match;
   });
   
   if (!config) {
     console.warn(`⚠️ Nessun ristorante per numero: ${phoneNumber}`);
+    console.log(`📋 Numeri in registry:`, registry.map(r => r.twilio_number || r.phone_number));
     return null;
   }
   
-  // Normalizza config
   return {
     restaurant_id: config.restaurant_id || config.id,
     restaurant_name: config.restaurant_name || config.name || 'Ristorante',
@@ -106,21 +100,17 @@ async function getRestaurantConfig(phoneNumber) {
     owner_email: config.owner_email,
     language: config.language || 'it-IT',
     
-    // Orari
     lunch_start: config.lunch_start || '12:00',
     lunch_end: config.lunch_end || '14:30',
     dinner_start: config.dinner_start || '19:00',
     dinner_end: config.dinner_end || '22:30',
     
-    // Chiusure (parse JSON array)
-    weekly_closing_days: parseIntArray(config.weekly_closing_days) || [1], // Default: lunedì
+    weekly_closing_days: parseIntArray(config.weekly_closing_days) || [1],
     lunch_closed_days: parseIntArray(config.lunch_closed_days) || [],
     dinner_closed_days: parseIntArray(config.dinner_closed_days) || [],
     
-    // Capacità
     slot_capacity: parseInt(config.slot_capacity) || 30,
     
-    // URLs
     apps_script_url: config.apps_script_url || process.env.APPS_SCRIPT_URL,
     calendar_id: config.calendar_id,
   };
@@ -149,8 +139,9 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     service: 'PRENOW Realtime Gateway',
-    version: '1.0.0',
+    version: '1.2.0',
     status: 'ok',
+    provider: 'Telnyx TeXML',
     endpoints: {
       twiml: '/twiml-stream',
       websocket: '/media-stream'
@@ -159,43 +150,45 @@ app.get('/', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TWIML ENDPOINT - Twilio chiama questo per iniziare lo stream
+// TWIML ENDPOINT - Telnyx/Twilio chiama questo per iniziare lo stream
+// FIX v1.2.0: Passa From/To via URL query params (più affidabile con Telnyx)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/twiml-stream', (req, res) => {
+  // Telnyx TeXML usa stesso formato di Twilio per i parametri
   const { From, To, CallSid } = req.body;
   
   console.log(`📞 Chiamata in arrivo - CallSid: ${CallSid}`);
   console.log(`   From: ${From}, To: ${To}`);
+  console.log(`   Body completo:`, JSON.stringify(req.body, null, 2));
   
-  // Costruisci URL WebSocket
-  const wsUrl = `wss://${req.get('host')}/media-stream`;
+  // Costruisci URL WebSocket con From/To come query params
+  // Questo garantisce che i dati arrivino anche se Telnyx non passa customParameters
+  const fromEncoded = encodeURIComponent(From || 'unknown');
+  const toEncoded = encodeURIComponent(To || 'unknown');
+  const wsUrl = `wss://${req.get('host')}/media-stream?from=${fromEncoded}&to=${toEncoded}`;
   
-  // TwiML che avvia Media Stream
+  console.log(`🔌 WebSocket URL: ${wsUrl}`);
+  
+  // TeXML che avvia Media Stream (compatibile Telnyx)
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${wsUrl}">
-      <Parameter name="from" value="${From || 'unknown'}"/>
-      <Parameter name="to" value="${To || 'unknown'}"/>
-    </Stream>
+    <Stream url="${wsUrl}" />
   </Connect>
 </Response>`;
   
   res.type('text/xml').send(twiml);
 });
 
-// Anche GET per test
+// GET per test
 app.get('/twiml-stream', (req, res) => {
-  const wsUrl = `wss://${req.get('host')}/media-stream`;
+  const wsUrl = `wss://${req.get('host')}/media-stream?from=test&to=test`;
   
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${wsUrl}">
-      <Parameter name="from" value="test"/>
-      <Parameter name="to" value="test"/>
-    </Stream>
+    <Stream url="${wsUrl}" />
   </Connect>
 </Response>`;
   
@@ -219,10 +212,10 @@ setupMediaStreamHandler(server, {
 server.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY v1.0.0                            ║
+║  🚀 PRENOW REALTIME GATEWAY v1.2.0                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🎤 OpenAI Model: ${CONFIG.OPENAI_MODEL}            ║
-║  📞 TwiML: POST /twiml-stream                                 ║
+║  📞 TeXML: POST /twiml-stream (Telnyx compatible)             ║
 ║  🔌 WebSocket: /media-stream                                  ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
