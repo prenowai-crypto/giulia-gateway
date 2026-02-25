@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - REALTIME GATEWAY v1.8.0
-// FIX: Echo cancellation aggressiva (3s delay)
+// PRENOW - REALTIME GATEWAY v1.9.0
+// Rollback a v1.5.0 funzionante + VAD threshold alto + prompt anti-echo
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -139,7 +139,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     service: 'PRENOW Realtime Gateway',
-    version: '1.8.0',
+    version: '1.9.0',
     status: 'ok',
     provider: 'Telnyx TeXML',
     endpoints: {
@@ -240,7 +240,7 @@ setupMediaStreamHandler(server, {
 server.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY v1.8.0                            ║
+║  🚀 PRENOW REALTIME GATEWAY v1.9.0                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🎤 OpenAI Model: ${CONFIG.OPENAI_MODEL}            ║
 ║  📞 TeXML: POST /twiml-stream (Telnyx compatible)             ║
