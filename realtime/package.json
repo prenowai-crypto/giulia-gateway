@@ -1,6 +1,6 @@
 {
   "name": "prenow-realtime-gateway",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "PRENOW Voice AI with OpenAI Realtime API + Telnyx/Twilio Media Streams",
   "main": "index.js",
   "type": "module",
