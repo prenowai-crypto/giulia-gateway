@@ -139,7 +139,14 @@ export function setupMediaStreamHandler(server, config) {
             break;
             
           case 'media':
-            if (session.openaiClient) {
+            // DEBUG: Log primi 3 pacchetti audio per verificare che arrivino
+            if (!session.mediaPacketCount) session.mediaPacketCount = 0;
+            session.mediaPacketCount++;
+            if (session.mediaPacketCount <= 3) {
+              console.log(`🔊 Media packet #${session.mediaPacketCount} ricevuto (${data.media?.payload?.length || 0} bytes)`);
+            }
+            
+            if (session.openaiClient && data.media?.payload) {
               session.openaiClient.sendAudio(data.media.payload);
             }
             break;
