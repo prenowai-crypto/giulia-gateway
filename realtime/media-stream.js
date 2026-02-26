@@ -145,9 +145,15 @@ export function setupMediaStreamHandler(server, config) {
             if (session.mediaPacketCount <= 3) {
               console.log(`🔊 Media packet #${session.mediaPacketCount} ricevuto (${data.media?.payload?.length || 0} bytes)`);
             }
+            // Log ogni 100 pacchetti per vedere se continuano ad arrivare
+            if (session.mediaPacketCount % 100 === 0) {
+              console.log(`📊 Media packets totali: ${session.mediaPacketCount}, OpenAI ready: ${!!session.openaiClient?.isConnected}`);
+            }
             
-            if (session.openaiClient && data.media?.payload) {
+            if (session.openaiClient && session.openaiClient.isConnected && data.media?.payload) {
               session.openaiClient.sendAudio(data.media.payload);
+            } else if (session.mediaPacketCount <= 5) {
+              console.log(`⚠️ Media packet #${session.mediaPacketCount} PERSO - OpenAI non pronto`);
             }
             break;
             
