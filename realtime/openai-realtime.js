@@ -1,8 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - OPENAI REALTIME CLIENT v2.3.0
+// PRENOW - OPENAI REALTIME CLIENT v2.3.1
 // 
-// PULITO: Rimossa echo detection (non serve con inbound_track)
-// Con inbound_track, Telnyx invia SOLO audio del cliente, zero echo.
+// Rollback alla versione funzionante (v2.2.0)
+// L'echo detection rimane ma è innocua con inbound_track (non trova mai echo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
@@ -23,6 +23,15 @@ export class OpenAIRealtimeClient {
     this.ws = null;
     this.isConnected = false;
     this.sessionId = null;
+    
+    // Echo detection (innocua con inbound_track, ma la teniamo per sicurezza)
+    this.recentAiTranscripts = [];
+    this.recentAiPhrases = [];
+    this.MAX_AI_HISTORY = 10;
+    this.lastAiFinishedTime = 0;
+    this.isAiCurrentlySpeaking = false;
+    this.speechStartedDuringAi = false;
+    this.ECHO_WINDOW_MS = 5000;
   }
   
   async connect() {
@@ -75,9 +84,9 @@ export class OpenAIRealtimeClient {
         },
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.5,            // Sensibilità normale
+          threshold: 0.6,
           prefix_padding_ms: 300,
-          silence_duration_ms: 700   // Risposta veloce
+          silence_duration_ms: 800
         },
         tools: this.tools.map(t => ({
           type: 'function',
@@ -88,7 +97,8 @@ export class OpenAIRealtimeClient {
       }
     });
     
-    // Trigger saluto iniziale
+    this.isAiCurrentlySpeaking = true;
+    
     this.send({
       type: 'conversation.item.create',
       item: {
@@ -104,6 +114,105 @@ export class OpenAIRealtimeClient {
     this.send({ type: 'response.create' });
   }
   
+  extractWords(text) {
+    if (!text) return [];
+    return text.toLowerCase()
+      .replace(/[.,!?;:'"()]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 1);
+  }
+  
+  isEchoOfAi(userText) {
+    if (!userText) return true;
+    
+    const trimmed = userText.trim();
+    
+    if (trimmed.length <= 15) {
+      console.log(`🔊 Frase corta (${trimmed.length} chars) = INPUT REALE: "${trimmed}"`);
+      return false;
+    }
+    
+    const userWords = this.extractWords(trimmed);
+    
+    if (userWords.length <= 3) {
+      console.log(`🔊 Poche parole (${userWords.length}) = INPUT REALE: "${trimmed}"`);
+      return false;
+    }
+    
+    if (this.speechStartedDuringAi) {
+      console.log(`🔊 Speech durante AI (barge-in) = probabilmente INPUT REALE`);
+      this.speechStartedDuringAi = false;
+    }
+    
+    const timeSinceAiFinished = Date.now() - this.lastAiFinishedTime;
+    
+    if (timeSinceAiFinished > this.ECHO_WINDOW_MS) {
+      console.log(`🔊 Fuori finestra echo (${timeSinceAiFinished}ms) = INPUT REALE`);
+      return false;
+    }
+    
+    for (const aiPhrase of this.recentAiPhrases) {
+      const aiWords = this.extractWords(aiPhrase);
+      if (aiWords.length === 0) continue;
+      
+      let matchCount = 0;
+      for (const word of userWords) {
+        if (aiWords.includes(word)) matchCount++;
+      }
+      
+      const matchRatio = matchCount / userWords.length;
+      
+      if (matchRatio > 0.5 && matchCount >= 3) {
+        console.log(`🔇 ECHO RILEVATO! Match: ${matchCount}/${userWords.length} (${(matchRatio*100).toFixed(0)}%)`);
+        console.log(`   AI disse: "${aiPhrase.substring(0, 60)}..."`);
+        console.log(`   Ricevuto: "${trimmed.substring(0, 60)}..."`);
+        return true;
+      }
+    }
+    
+    const greetingKeywords = [
+      'buongiorno', 'buonasera', 'benvenuto', 'benvenuta', 
+      'osteria', 'ristorante', 'trattoria',
+      'posso aiutarti', 'posso aiutarla', 'come posso',
+      'prenotare', 'prenotazione', 'tavolo'
+    ];
+    
+    let greetingMatches = 0;
+    const textLower = trimmed.toLowerCase();
+    for (const kw of greetingKeywords) {
+      if (textLower.includes(kw)) greetingMatches++;
+    }
+    
+    if (greetingMatches >= 3 && timeSinceAiFinished < 3000) {
+      console.log(`🔇 ECHO (greeting keywords): ${greetingMatches} match`);
+      return true;
+    }
+    
+    console.log(`🔊 INPUT REALE: "${trimmed.substring(0, 50)}..."`);
+    return false;
+  }
+  
+  saveAiPhrase(transcript) {
+    if (!transcript || transcript.trim().length < 5) return;
+    
+    this.recentAiTranscripts.unshift(transcript);
+    if (this.recentAiTranscripts.length > this.MAX_AI_HISTORY) {
+      this.recentAiTranscripts.pop();
+    }
+    
+    this.recentAiPhrases.unshift(transcript);
+    
+    const words = transcript.split(/\s+/);
+    if (words.length > 5) {
+      this.recentAiPhrases.unshift(words.slice(0, Math.ceil(words.length/2)).join(' '));
+      this.recentAiPhrases.unshift(words.slice(Math.floor(words.length/2)).join(' '));
+    }
+    
+    while (this.recentAiPhrases.length > this.MAX_AI_HISTORY * 2) {
+      this.recentAiPhrases.pop();
+    }
+  }
+  
   handleMessage(message) {
     switch (message.type) {
       case 'session.created':
@@ -116,6 +225,8 @@ export class OpenAIRealtimeClient {
         break;
         
       case 'response.audio.delta':
+        this.isAiCurrentlySpeaking = true;
+        
         if (message.delta) {
           this.onAudioDelta(message.delta);
         }
@@ -123,12 +234,16 @@ export class OpenAIRealtimeClient {
         
       case 'response.audio_transcript.done':
         if (message.transcript) {
+          this.saveAiPhrase(message.transcript);
           console.log(`💬 [assistant]: ${message.transcript}`);
           this.onTranscript(message.transcript, 'assistant');
         }
         break;
         
       case 'response.done':
+        this.isAiCurrentlySpeaking = false;
+        this.lastAiFinishedTime = Date.now();
+        
         if (message.response?.status === 'failed') {
           console.error('❌ Risposta fallita:', message.response.status_details);
         }
@@ -136,6 +251,10 @@ export class OpenAIRealtimeClient {
         
       case 'input_audio_buffer.speech_started':
         console.log('🎤 Utente sta parlando...');
+        if (this.isAiCurrentlySpeaking) {
+          console.log('⚡ BARGE-IN rilevato!');
+          this.speechStartedDuringAi = true;
+        }
         break;
         
       case 'input_audio_buffer.speech_stopped':
@@ -143,9 +262,14 @@ export class OpenAIRealtimeClient {
         break;
         
       case 'conversation.item.input_audio_transcription.completed':
-        // v2.3.0: Nessun filtro echo - con inbound_track non serve!
         if (message.transcript) {
           const transcript = message.transcript.trim();
+          
+          if (this.isEchoOfAi(transcript)) {
+            console.log(`🔇 Trascrizione IGNORATA (echo)`);
+            return;
+          }
+          
           console.log(`💬 [user]: ${transcript}`);
           this.onTranscript(transcript, 'user');
         }
