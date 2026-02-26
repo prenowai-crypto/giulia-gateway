@@ -413,7 +413,16 @@ export class OpenAIRealtimeClient {
   // AUDIO: MAI bloccato - fluisce sempre verso OpenAI
   // ═══════════════════════════════════════════════════════════════════════════
   sendAudio(audioBase64) {
-    if (!this.isConnected) return;
+    if (!this.isConnected) {
+      return;
+    }
+    
+    // Debug: log primi invii
+    if (!this.audioSendCount) this.audioSendCount = 0;
+    this.audioSendCount++;
+    if (this.audioSendCount <= 3) {
+      console.log(`📤 Invio audio #${this.audioSendCount} a OpenAI (${audioBase64?.length || 0} chars)`);
+    }
     
     this.send({
       type: 'input_audio_buffer.append',
