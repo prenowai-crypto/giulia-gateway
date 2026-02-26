@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - REALTIME GATEWAY v2.0.0
+// PRENOW - REALTIME GATEWAY v2.2.0
 // FIX CRITICO: Echo cancellation basata sul CONTENUTO
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -139,7 +139,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     service: 'PRENOW Realtime Gateway',
-    version: '2.0.0',
+    version: '2.2.0',
     status: 'ok',
     provider: 'Telnyx TeXML',
     endpoints: {
@@ -193,11 +193,11 @@ app.post('/twiml-stream', (req, res) => {
   
   console.log(`🔌 WebSocket URL: ${wsUrl}`);
   
-  // TeXML: both_tracks + echo cancellation lato server
+  // TeXML: inbound_track = solo audio utente (NO echo!) + bidirectional per output AI
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="both_tracks" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
+    <Stream url="${wsUrl}" track="inbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
   </Start>
   <Pause length="60"/>
 </Response>`;
@@ -214,7 +214,7 @@ app.get('/twiml-stream', (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="both_tracks" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
+    <Stream url="${wsUrl}" track="inbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
   </Start>
   <Pause length="60"/>
 </Response>`;
@@ -240,7 +240,7 @@ setupMediaStreamHandler(server, {
 server.listen(CONFIG.PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY v2.0.0                            ║
+║  🚀 PRENOW REALTIME GATEWAY v2.2.0                            ║
 ║  📍 Porta: ${CONFIG.PORT}                                            ║
 ║  🎤 OpenAI Model: ${CONFIG.OPENAI_MODEL}            ║
 ║  📞 TeXML: POST /twiml-stream (Telnyx compatible)             ║
