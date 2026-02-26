@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - MEDIA STREAM HANDLER v2.3.0
+// PRENOW - MEDIA STREAM HANDLER v2.3.1
 // - Prompt migliorato: MAI inventare dati, sempre chiedere conferma
 // - Rimossa istruzione echo (non serve con inbound_track)
 // ═══════════════════════════════════════════════════════════════════════════════
