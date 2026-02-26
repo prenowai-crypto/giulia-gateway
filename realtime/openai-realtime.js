@@ -1,12 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - OPENAI REALTIME CLIENT v2.0.0
-// FIX CRITICO: Echo cancellation basata sul CONTENUTO
+// PRENOW - OPENAI REALTIME CLIENT v2.1.0
 // 
-// Il problema: con Telnyx both_tracks, l'AI sente la propria voce che torna
-// indietro come echo. Whisper la trascrive e l'AI risponde a se stessa.
+// FIX CRITICO: Echo cancellation che PERMETTE il barge-in
+// 
+// PROBLEMA: Con Telnyx both_tracks, l'AI sente la propria voce come echo.
+// MA il cliente deve poter interrompere l'AI (barge-in).
 //
-// Soluzione: Confrontare ogni trascrizione utente con le ultime risposte AI.
-// Se sono simili (>30% parole in comune), è ECHO → ignora.
+// SOLUZIONE INTELLIGENTE:
+// 1. L'audio NON viene MAI bloccato - fluisce sempre verso OpenAI
+// 2. Quando arriva una trascrizione, verifico se è ECHO o INPUT REALE
+// 3. ECHO = trascrizione che inizia come una frase AI recente
+// 4. BARGE-IN = trascrizione che arriva MENTRE AI parla ma è DIVERSA
+// 5. Frasi corte ("sì", "no", "ok") sono sempre considerate input reale
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
@@ -27,16 +32,19 @@ export class OpenAIRealtimeClient {
     this.ws = null;
     this.isConnected = false;
     this.sessionId = null;
-    this.audioBuffer = [];
     
     // ═══════════════════════════════════════════════════════════════════════════
-    // v2.0.0: Echo cancellation basata sul contenuto
+    // v2.1.0: Echo detection intelligente
     // ═══════════════════════════════════════════════════════════════════════════
-    this.recentAiTranscripts = [];      // Ultime N trascrizioni AI
-    this.MAX_AI_TRANSCRIPTS = 5;        // Quante trascrizioni AI tenere
-    this.isAiSpeaking = false;          // True mentre AI sta generando audio
-    this.lastAiSpeakingTime = 0;        // Timestamp ultimo audio AI
-    this.ECHO_WINDOW_MS = 4000;         // Finestra temporale per echo (4 secondi)
+    this.recentAiTranscripts = [];      // Ultime trascrizioni AI (testo completo)
+    this.recentAiPhrases = [];          // Frasi/parti delle risposte AI per matching parziale
+    this.MAX_AI_HISTORY = 10;           // Quante entry tenere
+    this.lastAiFinishedTime = 0;        // Quando l'AI ha FINITO di parlare
+    this.isAiCurrentlySpeaking = false; // True mentre AI sta generando audio
+    this.speechStartedDuringAi = false; // True se utente ha iniziato a parlare durante AI
+    
+    // Finestra temporale: echo può arrivare fino a 5 secondi dopo che AI finisce
+    this.ECHO_WINDOW_MS = 5000;
   }
   
   async connect() {
@@ -89,9 +97,9 @@ export class OpenAIRealtimeClient {
         },
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.7,            // Threshold medio
-          prefix_padding_ms: 400,    // Padding ragionevole
-          silence_duration_ms: 1200  // 1.2 secondi di silenzio
+          threshold: 0.6,            // Sensibilità media per catturare barge-in
+          prefix_padding_ms: 300,    // Padding ragionevole
+          silence_duration_ms: 800   // Più veloce per conversazione naturale
         },
         tools: this.tools.map(t => ({
           type: 'function',
@@ -103,7 +111,7 @@ export class OpenAIRealtimeClient {
     });
     
     // Trigger saluto iniziale
-    this.isAiSpeaking = true; // L'AI sta per parlare
+    this.isAiCurrentlySpeaking = true;
     
     this.send({
       type: 'conversation.item.create',
@@ -121,76 +129,149 @@ export class OpenAIRealtimeClient {
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // v2.0.0: Calcola similarità tra due frasi (Jaccard su parole)
+  // v2.1.0: Estrae parole significative da un testo
   // ═══════════════════════════════════════════════════════════════════════════
-  calculateSimilarity(text1, text2) {
-    if (!text1 || !text2) return 0;
-    
-    // Normalizza e tokenizza
-    const normalize = (t) => t.toLowerCase()
-      .replace(/[.,!?;:'"]/g, '')
+  extractWords(text) {
+    if (!text) return [];
+    return text.toLowerCase()
+      .replace(/[.,!?;:'"()]/g, '')
       .split(/\s+/)
-      .filter(w => w.length > 2); // Solo parole > 2 caratteri
-    
-    const words1 = new Set(normalize(text1));
-    const words2 = new Set(normalize(text2));
-    
-    if (words1.size === 0 || words2.size === 0) return 0;
-    
-    // Intersezione
-    const intersection = new Set([...words1].filter(w => words2.has(w)));
-    
-    // Jaccard similarity
-    const union = new Set([...words1, ...words2]);
-    const similarity = intersection.size / union.size;
-    
-    return similarity;
+      .filter(w => w.length > 1);
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // v2.0.0: Verifica se una trascrizione utente è echo dell'AI
+  // v2.1.0: Verifica se il testo utente è un ECHO dell'AI
   // ═══════════════════════════════════════════════════════════════════════════
-  isEcho(userTranscript) {
-    if (!userTranscript || userTranscript.trim().length < 3) {
-      return true; // Trascrizioni troppo corte sono probabilmente rumore
-    }
+  isEchoOfAi(userText) {
+    if (!userText) return true; // Testo vuoto = ignora
     
-    const timeSinceAiSpoke = Date.now() - this.lastAiSpeakingTime;
+    const trimmed = userText.trim();
     
-    // Se l'AI non ha parlato di recente, non può essere echo
-    if (timeSinceAiSpoke > this.ECHO_WINDOW_MS) {
-      console.log(`🔊 v2.0.0: AI ha parlato ${timeSinceAiSpoke}ms fa (>${this.ECHO_WINDOW_MS}ms), non è echo`);
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGOLA 1: Frasi molto corte sono SEMPRE input reale (non echo)
+    // "Sì", "No", "Ok", "Grazie" etc.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (trimmed.length <= 15) {
+      console.log(`🔊 v2.1.0: Frase corta (${trimmed.length} chars) = INPUT REALE: "${trimmed}"`);
       return false;
     }
     
-    // Confronta con le ultime trascrizioni AI
-    for (const aiTranscript of this.recentAiTranscripts) {
-      const similarity = this.calculateSimilarity(userTranscript, aiTranscript);
+    const userWords = this.extractWords(trimmed);
+    
+    if (userWords.length <= 3) {
+      console.log(`🔊 v2.1.0: Poche parole (${userWords.length}) = INPUT REALE: "${trimmed}"`);
+      return false;
+    }
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGOLA 2: Se l'utente ha iniziato a parlare MENTRE l'AI parlava (barge-in),
+    // è probabilmente input reale, non echo
+    // ─────────────────────────────────────────────────────────────────────────
+    if (this.speechStartedDuringAi) {
+      console.log(`🔊 v2.1.0: Speech iniziato durante AI (barge-in) = probabilmente INPUT REALE`);
+      // Reset flag
+      this.speechStartedDuringAi = false;
+      // Comunque fai il check echo, ma con soglia più alta
+    }
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGOLA 3: Controlla finestra temporale
+    // Echo arriva tipicamente 1-3 secondi dopo che AI ha finito
+    // ─────────────────────────────────────────────────────────────────────────
+    const timeSinceAiFinished = Date.now() - this.lastAiFinishedTime;
+    
+    if (timeSinceAiFinished > this.ECHO_WINDOW_MS) {
+      console.log(`🔊 v2.1.0: Fuori finestra echo (${timeSinceAiFinished}ms > ${this.ECHO_WINDOW_MS}ms) = INPUT REALE`);
+      return false;
+    }
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGOLA 4: Confronta con frasi AI recenti
+    // Echo tipicamente contiene PARTI della frase AI
+    // ─────────────────────────────────────────────────────────────────────────
+    const userWordSet = new Set(userWords);
+    
+    for (const aiPhrase of this.recentAiPhrases) {
+      const aiWords = this.extractWords(aiPhrase);
+      if (aiWords.length === 0) continue;
       
-      if (similarity > 0.3) { // 30% di parole in comune = probabilmente echo
-        console.log(`🔇 v2.0.0: ECHO RILEVATO! Similarità ${(similarity * 100).toFixed(0)}%`);
-        console.log(`   AI disse: "${aiTranscript.substring(0, 50)}..."`);
-        console.log(`   Ricevuto: "${userTranscript.substring(0, 50)}..."`);
+      // Conta quante parole dell'utente sono presenti nella frase AI
+      let matchCount = 0;
+      for (const word of userWords) {
+        if (aiWords.includes(word)) matchCount++;
+      }
+      
+      const matchRatio = matchCount / userWords.length;
+      
+      // Se più del 50% delle parole utente sono nella frase AI = ECHO
+      if (matchRatio > 0.5 && matchCount >= 3) {
+        console.log(`🔇 v2.1.0: ECHO RILEVATO!`);
+        console.log(`   Match: ${matchCount}/${userWords.length} parole (${(matchRatio*100).toFixed(0)}%)`);
+        console.log(`   AI disse: "${aiPhrase.substring(0, 60)}..."`);
+        console.log(`   Ricevuto: "${trimmed.substring(0, 60)}..."`);
         return true;
       }
     }
     
-    // Controlla anche parole chiave tipiche dell'AI
-    const aiKeywords = ['buongiorno', 'benvenuto', 'osteria', 'posso aiutarti', 'come posso', 'prenotare', 'tavolo'];
-    const userLower = userTranscript.toLowerCase();
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGOLA 5: Controlla parole chiave tipiche del greeting AI
+    // Se la trascrizione contiene MOLTE parole tipiche del saluto AI, è echo
+    // ─────────────────────────────────────────────────────────────────────────
+    const greetingKeywords = [
+      'buongiorno', 'buonasera', 'benvenuto', 'benvenuta', 
+      'osteria', 'ristorante', 'trattoria',
+      'posso aiutarti', 'posso aiutarla', 'come posso',
+      'prenotare', 'prenotazione', 'tavolo'
+    ];
     
-    let keywordMatches = 0;
-    for (const kw of aiKeywords) {
-      if (userLower.includes(kw)) keywordMatches++;
+    let greetingMatches = 0;
+    const textLower = trimmed.toLowerCase();
+    for (const kw of greetingKeywords) {
+      if (textLower.includes(kw)) greetingMatches++;
     }
     
-    if (keywordMatches >= 2 && timeSinceAiSpoke < 3000) {
-      console.log(`🔇 v2.0.0: ECHO (keywords): ${keywordMatches} parole chiave AI in "${userTranscript.substring(0, 30)}..."`);
+    // Se 3+ parole chiave di greeting E siamo entro 3 secondi = ECHO
+    if (greetingMatches >= 3 && timeSinceAiFinished < 3000) {
+      console.log(`🔇 v2.1.0: ECHO (greeting keywords): ${greetingMatches} match in "${trimmed.substring(0, 40)}..."`);
       return true;
     }
     
-    console.log(`🔊 v2.0.0: Input valido: "${userTranscript.substring(0, 50)}..."`);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Nessun match = INPUT REALE
+    // ─────────────────────────────────────────────────────────────────────────
+    console.log(`🔊 v2.1.0: INPUT REALE: "${trimmed.substring(0, 50)}..."`);
     return false;
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // v2.1.0: Salva una frase AI per futuro echo detection
+  // ═══════════════════════════════════════════════════════════════════════════
+  saveAiPhrase(transcript) {
+    if (!transcript || transcript.trim().length < 5) return;
+    
+    // Salva trascrizione completa
+    this.recentAiTranscripts.unshift(transcript);
+    if (this.recentAiTranscripts.length > this.MAX_AI_HISTORY) {
+      this.recentAiTranscripts.pop();
+    }
+    
+    // Salva anche sottostringhe per matching parziale
+    // (l'echo potrebbe catturare solo parte della frase)
+    this.recentAiPhrases.unshift(transcript);
+    
+    // Dividi in parti se la frase è lunga
+    const words = transcript.split(/\s+/);
+    if (words.length > 5) {
+      // Prima metà
+      this.recentAiPhrases.unshift(words.slice(0, Math.ceil(words.length/2)).join(' '));
+      // Seconda metà
+      this.recentAiPhrases.unshift(words.slice(Math.floor(words.length/2)).join(' '));
+    }
+    
+    // Mantieni solo le ultime N
+    while (this.recentAiPhrases.length > this.MAX_AI_HISTORY * 2) {
+      this.recentAiPhrases.pop();
+    }
   }
   
   handleMessage(message) {
@@ -205,9 +286,8 @@ export class OpenAIRealtimeClient {
         break;
         
       case 'response.audio.delta':
-        // AI sta parlando - marca il timestamp
-        this.isAiSpeaking = true;
-        this.lastAiSpeakingTime = Date.now();
+        // AI sta parlando
+        this.isAiCurrentlySpeaking = true;
         
         if (message.delta) {
           this.onAudioDelta(message.delta);
@@ -217,11 +297,7 @@ export class OpenAIRealtimeClient {
       case 'response.audio_transcript.done':
         // Trascrizione AI completata - salvala per echo detection
         if (message.transcript) {
-          this.recentAiTranscripts.unshift(message.transcript);
-          // Mantieni solo le ultime N
-          if (this.recentAiTranscripts.length > this.MAX_AI_TRANSCRIPTS) {
-            this.recentAiTranscripts.pop();
-          }
+          this.saveAiPhrase(message.transcript);
           console.log(`💬 [assistant]: ${message.transcript}`);
           this.onTranscript(message.transcript, 'assistant');
         }
@@ -229,32 +305,42 @@ export class OpenAIRealtimeClient {
         
       case 'response.done':
         // AI ha finito di parlare
-        this.isAiSpeaking = false;
-        this.lastAiSpeakingTime = Date.now(); // Marca quando ha FINITO
+        this.isAiCurrentlySpeaking = false;
+        this.lastAiFinishedTime = Date.now();
         
         if (message.response?.status === 'failed') {
           console.error('❌ Risposta fallita:', message.response.status_details);
         }
         break;
         
+      case 'input_audio_buffer.speech_started':
+        console.log('🎤 Utente sta parlando...');
+        // Se l'utente inizia a parlare mentre AI sta parlando = barge-in
+        if (this.isAiCurrentlySpeaking) {
+          console.log('⚡ v2.1.0: BARGE-IN rilevato! Utente parla durante AI');
+          this.speechStartedDuringAi = true;
+        }
+        break;
+        
+      case 'input_audio_buffer.speech_stopped':
+        console.log('🎤 Utente ha finito di parlare');
+        break;
+        
       case 'conversation.item.input_audio_transcription.completed':
         // ═══════════════════════════════════════════════════════════════════
-        // v2.0.0: PUNTO CRITICO - Verifica se è echo prima di processare
+        // v2.1.0: PUNTO CRITICO - Echo detection intelligente
         // ═══════════════════════════════════════════════════════════════════
         if (message.transcript) {
           const transcript = message.transcript.trim();
           
-          if (this.isEcho(transcript)) {
-            console.log(`🔇 v2.0.0: Trascrizione ignorata (echo): "${transcript.substring(0, 40)}..."`);
-            
-            // IMPORTANTE: Cancella il buffer audio per evitare che OpenAI risponda
-            this.send({ type: 'input_audio_buffer.clear' });
-            
-            // NON chiamare onTranscript - ignora completamente
+          if (this.isEchoOfAi(transcript)) {
+            console.log(`🔇 v2.1.0: Trascrizione IGNORATA (echo)`);
+            // NON fare nulla - lascia che OpenAI gestisca normalmente
+            // Non cancelliamo il buffer per non interferire con barge-in
             return;
           }
           
-          // Input valido - procedi normalmente
+          // Input valido - notifica
           console.log(`💬 [user]: ${transcript}`);
           this.onTranscript(transcript, 'user');
         }
@@ -267,14 +353,6 @@ export class OpenAIRealtimeClient {
       case 'error':
         console.error('❌ Errore OpenAI:', message.error);
         this.onError(message.error);
-        break;
-        
-      case 'input_audio_buffer.speech_started':
-        console.log('🎤 Utente sta parlando...');
-        break;
-        
-      case 'input_audio_buffer.speech_stopped':
-        console.log('🎤 Utente ha finito di parlare');
         break;
         
       default:
@@ -331,13 +409,11 @@ export class OpenAIRealtimeClient {
     }
   }
   
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUDIO: MAI bloccato - fluisce sempre verso OpenAI
+  // ═══════════════════════════════════════════════════════════════════════════
   sendAudio(audioBase64) {
     if (!this.isConnected) return;
-    
-    // ═══════════════════════════════════════════════════════════════════════════
-    // v2.0.0: NON bloccare l'audio in ingresso - lascia che OpenAI gestisca il VAD
-    // Il filtraggio avviene a livello di TRASCRIZIONE, non di audio
-    // ═══════════════════════════════════════════════════════════════════════════
     
     this.send({
       type: 'input_audio_buffer.append',
