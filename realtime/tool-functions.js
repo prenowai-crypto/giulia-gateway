@@ -1,5 +1,10 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - TOOL FUNCTIONS v2.1.0
+// PRENOW - TOOL FUNCTIONS v3.0.0
+//
+// 🆕 v3.0.0 - ANTI-HALLUCINATION:
+//   - prepare_reservation: usa sessionState.collectedData come fonte primaria
+//   - I parametri GPT vengono usati solo come fallback (non come fonte principale)
+//   - Log dettagliato: mostra dati server vs dati GPT per ogni tool call
 //
 // FIX v2.1.0:
 //   - find_reservation: usa callerPhone automaticamente + salva in sessionState
@@ -148,7 +153,7 @@ export const realtimeTools = [
   // ═══════════════════════════════════════════════════════════════════════════
   {
     name: 'prepare_reservation',
-    description: `OBBLIGATORIO prima di create_reservation. Valida i dati e costruisce il recap da leggere al cliente. Il telefono viene preso automaticamente dal sistema (callerPhone).`,
+    description: `OBBLIGATORIO prima di create_reservation. Il sistema recupera automaticamente i dati dalla conversazione (data, orario, persone, nome). Passa i parametri che conosci: il server usa i dati realmente detti dal cliente, ignorando eventuali errori GPT. Il telefono viene preso automaticamente dal caller ID.`,
     parameters: {
       type: 'object',
       properties: {
@@ -162,17 +167,29 @@ export const realtimeTools = [
       required: ['name', 'people', 'date', 'time']
     },
     handler: async (args, context) => {
-      const { name, people, date, time, email, notes } = args;
       const { restaurantConfig, sessionState, callerPhone } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
-      console.log(`📋 prepare_reservation: ${name}, ${people} pax, ${date} ${time}, tel: ${callerPhone}, email: ${email}`);
+      // 🆕 v3.0.0: collectedData è la FONTE DI VERITÀ (server-side, deterministico)
+      // I parametri GPT sono usati solo come fallback per campi non ancora parsati
+      const cd = sessionState?.collectedData || {};
+      const name   = cd.name   || args.name;
+      const date   = cd.date   || args.date;
+      const time   = cd.time   || args.time;
+      const people = cd.people || args.people;
+      const email  = cd.email  || args.email;
+      const notes  = args.notes;
+
+      console.log(`📋 prepare_reservation v3.0.0:`);
+      console.log(`   [SERVER]  name="${cd.name}" date="${cd.date}" time="${cd.time}" people=${cd.people} email="${cd.email}"`);
+      console.log(`   [GPT]     name="${args.name}" date="${args.date}" time="${args.time}" people=${args.people}`);
+      console.log(`   [FINALE]  name="${name}" date="${date}" time="${time}" people=${people} tel="${callerPhone}"`);
 
       if (!isValidName(name)) {
-        return { ready: false, missing: 'name', message: `Nome non valido: "${name}". Chiedere il nome reale.` };
+        return { ready: false, missing: 'name', message: `Nome non valido: "${name}". Chiedere il nome reale al cliente.` };
       }
 
-      // ✅ FIX: telefono viene dal caller ID automaticamente
+      // Telefono viene dal caller ID automaticamente
       const phone = callerPhone || '';
       if (!phone || !isValidPhone(phone)) {
         console.warn(`⚠️ callerPhone non disponibile o non valido: ${phone}`);
