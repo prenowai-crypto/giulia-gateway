@@ -1,25 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - MEDIA STREAM HANDLER v2.0.0
-// FIX: Usa callDataStore per recuperare From/To dal CallSid
-//
-// NOVITÀ v2.0.0 (portate da index v3.9.31):
-//   - buildSystemPrompt v2.0: "Un attimo..." obbligatorio prima dei tool
-//   - Protezione cognomi (non interpretati come comandi)
-//   - prepare_reservation OBBLIGATORIO nel flusso
-//   - Flusso cancellazione con conferma obbligatoria
+// PRENOW - MEDIA STREAM HANDLER v2.1.0
+// FIX v2.1.0:
+//   - buildDateContext: aggiunto next14days per date assolute (8 marzo, ecc.)
+//   - Passa callerPhone al context dei tool
+//   - Email opzionale nel flusso nuova prenotazione
+//   - Flusso modifica/cancellazione: chiede nome + data per find_reservation
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { WebSocketServer } from 'ws';
 import { OpenAIRealtimeClient } from './openai-realtime.js';
 
-// Importato da index.js - sarà passato come config
 let callDataStore = null;
 
-/**
- * Setup WebSocket server per Telnyx/Twilio Media Streams
- */
 export function setupMediaStreamHandler(server, config) {
-  // Salva reference al callDataStore
   callDataStore = config.callDataStore;
   
   const wss = new WebSocketServer({ server, path: '/media-stream' });
@@ -28,10 +21,7 @@ export function setupMediaStreamHandler(server, config) {
   
   wss.on('connection', (ws, req) => {
     console.log('🔌 Nuova connessione Twilio Media Stream');
-    console.log(`   URL: ${req.url}`);
-    console.log(`   Headers:`, JSON.stringify(req.headers, null, 2));
     
-    // Stato della sessione - From/To verranno recuperati dal callDataStore
     const session = {
       streamSid: null,
       callSid: null,
@@ -45,7 +35,6 @@ export function setupMediaStreamHandler(server, config) {
       try {
         const data = JSON.parse(message);
         
-        // Log primo messaggio per debug struttura Telnyx
         if (data.event === 'connected' || data.event === 'start') {
           console.log(`📨 Evento ${data.event}:`, JSON.stringify(data, null, 2));
         }
@@ -61,9 +50,6 @@ export function setupMediaStreamHandler(server, config) {
             
             console.log(`📞 Stream started - StreamSid: ${session.streamSid}, CallSid: ${session.callSid}`);
             
-            // ═══════════════════════════════════════════════════════════════
-            // Recupera From/To dal callDataStore usando CallSid
-            // ═══════════════════════════════════════════════════════════════
             if (callDataStore && session.callSid) {
               const storedData = callDataStore.get(session.callSid);
               if (storedData) {
@@ -83,7 +69,6 @@ export function setupMediaStreamHandler(server, config) {
               }
             }
             
-            // Fallback: prova customParameters (Twilio style)
             if (session.from === 'unknown' && data.start?.customParameters?.from) {
               session.from = data.start.customParameters.from;
             }
@@ -93,7 +78,6 @@ export function setupMediaStreamHandler(server, config) {
             
             console.log(`📞 Final - From: ${session.from}, To: ${session.to}`);
             
-            // Cerca config ristorante
             session.restaurantConfig = await config.getRestaurantConfig(session.to);
             
             if (!session.restaurantConfig) {
@@ -104,26 +88,24 @@ export function setupMediaStreamHandler(server, config) {
             
             console.log(`🍽️  Ristorante: ${session.restaurantConfig.restaurant_name}`);
             
-            // Calcola contesto date
             const dateContext = buildDateContext(session.restaurantConfig.timezone || 'Europe/Rome');
             console.log(`📅 Date context: Oggi è ${dateContext.todayFormatted}`);
             
-            // Inizializza client OpenAI
             session.openaiClient = new OpenAIRealtimeClient({
               apiKey: config.openaiApiKey,
               model: config.model || 'gpt-4o-mini-realtime-preview',
               systemPrompt: buildSystemPrompt(session.restaurantConfig, dateContext),
               tools: config.tools,
               callSid: session.callSid,
+              // ✅ FIX: passa il numero del chiamante al context dei tool
+              callerPhone: session.from !== 'unknown' ? session.from : null,
               restaurantConfig: session.restaurantConfig,
               onAudioDelta: (audioBase64) => {
                 if (ws.readyState === 1) {
                   ws.send(JSON.stringify({
                     event: 'media',
                     stream_id: session.streamSid,
-                    media: {
-                      payload: audioBase64
-                    }
+                    media: { payload: audioBase64 }
                   }));
                 }
               },
@@ -186,7 +168,8 @@ export function setupMediaStreamHandler(server, config) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CALCOLO DINAMICO DATE (invariato)
+// CALCOLO DINAMICO DATE v2.1.0
+// FIX: aggiunto next14days per risolvere date assolute (es. "8 marzo")
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function buildDateContext(timezone = 'Europe/Rome') {
@@ -226,6 +209,7 @@ function buildDateContext(timezone = 'Europe/Rome') {
   const sundayFormatted = `domenica ${sunday.getDate()} ${monthNames[sunday.getMonth()]}`;
   const sundayISO = formatDateISO(sunday);
   
+  // Prossimi giorni della settimana (invariato)
   const weekDates = {};
   for (let i = 0; i < 7; i++) {
     const date = new Date(localDate);
@@ -238,6 +222,18 @@ function buildDateContext(timezone = 'Europe/Rome') {
       formatted: `${date.getDate()} ${monthNames[date.getMonth()]}`,
       iso: formatDateISO(date)
     };
+  }
+
+  // ✅ FIX: Prossimi 30 giorni con data → ISO
+  // Permette all'AI di risolvere "8 marzo", "15 aprile", ecc.
+  const absoluteDates = {};
+  for (let i = 0; i <= 30; i++) {
+    const date = new Date(localDate);
+    date.setDate(date.getDate() + i);
+    const day = date.getDate();
+    const month = monthNames[date.getMonth()];
+    const key = `${day} ${month}`; // es. "8 marzo"
+    absoluteDates[key] = formatDateISO(date);
   }
   
   return {
@@ -254,6 +250,7 @@ function buildDateContext(timezone = 'Europe/Rome') {
     sundayFormatted,
     sundayISO,
     weekDates,
+    absoluteDates,
     year: todayYear,
     month: todayMonth,
     monthName: monthNames[todayMonth]
@@ -268,8 +265,7 @@ function formatDateISO(date) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BUILD SYSTEM PROMPT v2.0.0
-// Portato da index v3.9.31 - RecapManager, NameManager, StateManager
+// BUILD SYSTEM PROMPT v2.1.0
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function buildSystemPrompt(config, dateContext) {
@@ -278,6 +274,11 @@ function buildSystemPrompt(config, dateContext) {
 
   const closedDaysText = formatClosedDays(config, isItalian);
   const closedDayNumbers = config.weekly_closing_days || [];
+
+  // Costruisce lista date assolute per il prompt
+  const absoluteDatesLines = Object.entries(dateContext.absoluteDates)
+    .map(([label, iso]) => `  - "${label}" = ${iso}`)
+    .join('\n');
 
   if (isItalian) {
     return `Sei ${config.receptionist_name || 'Giulia'}, la receptionist AI del ristorante "${config.restaurant_name}".
@@ -297,7 +298,12 @@ OGGI È: ${dateContext.todayFormatted} (${dateContext.todayISO})
 - "prossimo venerdì" = ${dateContext.weekDates['venerdì'].formatted} (${dateContext.weekDates['venerdì'].iso})
 - "prossimo sabato" = ${dateContext.weekDates['sabato'].formatted} (${dateContext.weekDates['sabato'].iso})
 - "prossima domenica" = ${dateContext.weekDates['domenica'].formatted} (${dateContext.weekDates['domenica'].iso})
+
+DATE ASSOLUTE (prossimi 30 giorni):
+${absoluteDatesLines}
+
 Usa SEMPRE il formato ISO (YYYY-MM-DD) nei tool call.
+Se il cliente dice "8 marzo" cerca nella lista sopra e usa il valore ISO corrispondente.
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -315,15 +321,15 @@ Usa SEMPRE il formato ISO (YYYY-MM-DD) nei tool call.
 ═══════════════════════════════════════════════════════════════════════════════
 ⚡ QUANDO DIRE "UN ATTIMO"
 ═══════════════════════════════════════════════════════════════════════════════
-Dì "Un attimo..." SOLO in questi 3 momenti precisi, subito prima del tool:
+Dì "Un attimo..." SOLO in questi momenti precisi, subito prima del tool:
   1. Prima di check_availability → "Un attimo, verifico la disponibilità..."
   2. Prima di prepare_reservation → "Un attimo, preparo il riepilogo..."
   3. Prima di create_reservation → "Un attimo, registro la prenotazione..."
+  4. Prima di find_reservation → "Un attimo, cerco la prenotazione..."
+  5. Prima di modify_reservation → "Un attimo, aggiorno la prenotazione..."
+  6. Prima di cancel_reservation → "Un attimo, cancello la prenotazione..."
 
-NON dire "Un attimo" in nessun altro momento:
-  - NON quando fai domande (data, orario, pax, nome, telefono)
-  - NON quando proponi alternative
-  - NON quando saluti o chiudi la conversazione
+NON dire "Un attimo" in nessun altro momento.
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -334,115 +340,102 @@ come un'azione o un comando.
 
 ESEMPI CORRETTI:
   Cliente: "Prenotazione a nome Cancelleri" → COGNOME "Cancelleri"
-  Cliente: "Sono Sposta" → COGNOME "Sposta" (non una richiesta di spostamento!)
-  Cliente: "Modifica, è il mio cognome" → COGNOME "Modifica"
+  Cliente: "Sono Sposta" → COGNOME "Sposta"
   Cliente: "Mi chiamo Annulli" → COGNOME "Annulli"
 
 REGOLA: Se il cliente dice il nome nel contesto "a nome X", "mi chiamo X", "sono X",
 è sempre il suo nome, non un comando.
-
-NON usare MAI questi valori come nome:
-  "Cliente", "Nome", "Unknown", "Sconosciuto", valori vuoti o numeri.
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
 📋 FLUSSO NUOVA PRENOTAZIONE (segui SEMPRE questo ordine esatto)
 ═══════════════════════════════════════════════════════════════════════════════
-STEP 1 - Verifica giorno di chiusura (SENZA tool, solo calcolo mentale):
+STEP 1 - Verifica giorno di chiusura (SENZA tool):
   Giorni chiusi: [${closedDayNumbers.join(', ')}] (0=dom, 1=lun, 2=mar, 3=mer, 4=gio, 5=ven, 6=sab)
-  Se chiuso → avvisa e proponi alternative. NON procedere con gli altri step.
+  Se chiuso → avvisa e proponi alternative. NON procedere.
 
-STEP 2 - Raccogli i dati UNO ALLA VOLTA (una domanda per volta):
+STEP 2 - Raccogli i dati UNO ALLA VOLTA:
   2a. Data → "Per quale giorno?"
   2b. Orario → "A che ora?"
   2c. Numero persone → "Per quante persone?"
-  2d. Nome → "A che nome?" (deve essere un nome reale, NON "Cliente" o simili)
-  2e. Telefono → "Mi lascia un numero di telefono?" (almeno 6 cifre)
+  2d. Nome → "A che nome?" (nome reale obbligatorio)
+  ⚠️ Il telefono viene acquisito automaticamente dal sistema (numero chiamante).
+  ⚠️ NON chiedere il telefono - lo abbiamo già.
 
-  ⚠️ Fai UNA domanda alla volta, aspetta la risposta, poi vai al passo successivo.
-  ⚠️ NON proporre orari di tua iniziativa. Chiedi sempre cosa preferisce il cliente.
-  ⚠️ NON chiamare nessun tool durante questo step.
-
-STEP 3 - Solo dopo aver raccolto data + orario + persone + nome + telefono:
+STEP 3 - Con data + orario + persone + nome:
   Dì "Un attimo, verifico la disponibilità..." → chiama check_availability.
-  Se NON disponibile → chiedi al cliente un orario alternativo (non proporlo tu).
+  Se NON disponibile → chiedi orario alternativo.
   Se disponibile → vai allo STEP 4.
 
-STEP 4 - Dì "Un attimo, preparo il riepilogo..." → chiama prepare_reservation.
-  Il tool restituisce un testo recap: leggilo ESATTAMENTE al cliente, parola per parola.
+STEP 4 - Chiedi l'email (OPZIONALE):
+  "Vuole ricevere l'email di conferma? Se sì, mi lascia il suo indirizzo email?"
+  Se il cliente non vuole o non ha email → prosegui senza.
+  Se fornisce email → salvala nelle note.
 
-STEP 5 - Aspetta conferma esplicita (sì / confermo / giusto / esatto / va bene).
-  Se il cliente corregge qualcosa → aggiorna e torna allo STEP 4.
+STEP 5 - Dì "Un attimo, preparo il riepilogo..." → chiama prepare_reservation.
+  Il tool restituisce un testo recap: leggilo ESATTAMENTE al cliente.
 
-STEP 6 - Solo dopo conferma esplicita:
+STEP 6 - Aspetta conferma esplicita (sì / confermo / giusto / va bene).
+  Se corregge qualcosa → aggiorna e torna allo STEP 5.
+
+STEP 7 - Solo dopo conferma esplicita:
   Dì "Un attimo, registro la prenotazione..." → chiama create_reservation.
-  Poi leggi il messaggio di conferma restituito dal tool e saluta.
+  Poi leggi il messaggio di conferma e saluta.
 
 ⚠️ NON saltare nessuno step.
-⚠️ NON inventare disponibilità o proporre orari non verificati.
-⚠️ NON dire "confermato" o "prenotato" prima di chiamare create_reservation.
+⚠️ NON inventare disponibilità.
+⚠️ NON dire "confermato" prima di create_reservation.
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
 🔄 FLUSSO MODIFICA PRENOTAZIONE
 ═══════════════════════════════════════════════════════════════════════════════
-1. Chiedi a che nome è la prenotazione
-2. Chiama find_reservation ("Un attimo, cerco...")
-3. Leggi la prenotazione trovata al cliente (data, ora, persone)
+1. Chiedi: "A che nome è la prenotazione e per quale giorno?"
+   (Serve NOME + DATA per trovare la prenotazione corretta)
+2. Dì "Un attimo, cerco..." → chiama find_reservation con nome e data
+3. Leggi la prenotazione trovata al cliente
 4. Chiedi cosa vuole modificare
-5. Raccogli le modifiche richieste
-6. Chiama modify_reservation ("Un attimo, aggiorno...")
+5. Raccoglie le modifiche
+6. Dì "Un attimo, aggiorno..." → chiama modify_reservation
 7. Conferma la modifica al cliente
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
 ❌ FLUSSO CANCELLAZIONE PRENOTAZIONE
 ═══════════════════════════════════════════════════════════════════════════════
-1. Chiedi a che nome è la prenotazione
-2. Chiama find_reservation ("Un attimo, cerco...")
-3. Leggi la prenotazione trovata: "Ho trovato la tua prenotazione per X persone il [data] alle [ora]. Confermi di volerla cancellare?"
-4. Aspetta conferma ESPLICITA del cliente
-5. SOLO dopo conferma: chiama cancel_reservation ("Un attimo, cancello...")
-6. Saluta: "Fatto! La prenotazione è stata cancellata. Arrivederci!"
+1. Chiedi: "A che nome è la prenotazione e per quale giorno?"
+   (Serve NOME + DATA per trovare la prenotazione corretta)
+2. Dì "Un attimo, cerco..." → chiama find_reservation con nome e data
+3. Leggi la prenotazione trovata: "Ho trovato: X persone il [data] alle [ora]. Confermi la cancellazione?"
+4. Aspetta conferma ESPLICITA
+5. SOLO dopo conferma: dì "Un attimo, cancello..." → chiama cancel_reservation
+6. "Fatto! Prenotazione cancellata. Arrivederci!"
 
 ⚠️ NON cancellare senza conferma esplicita.
-⚠️ Se il cliente ci ripensa ("lascia stare", "no aspetta"), NON cancellare.
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
 🚫 REGOLE ASSOLUTE
 ═══════════════════════════════════════════════════════════════════════════════
-- NON inventare informazioni su parcheggio, accessibilità, menu o servizi
+- NON inventare informazioni su parcheggio, menu o servizi
 - NON usare date nel passato
 - NON chiamare create_reservation senza prepare_reservation
-- NON confermare prenotazioni senza aver chiamato create_reservation
+- NON confermare senza aver chiamato create_reservation
 - IGNORA frasi che ripetono quello che hai appena detto (eco tecnico)
-- Aspetta sempre che il cliente finisca prima di rispondere
-- Se il cliente chiede qualcosa che non sai: "Non ho questa informazione, contatti direttamente il ristorante."
+- Se non sai qualcosa: "Non ho questa informazione, contatti il ristorante."
 ═══════════════════════════════════════════════════════════════════════════════`;
   }
 
-  // English version
   return `You are ${config.receptionist_name || 'Giulia'}, the AI receptionist for "${config.restaurant_name}".
-You are on the phone. Be natural, friendly, and CONCISE (max 2 sentences per response).
-
+On the phone. Be natural, friendly, CONCISE (max 2 sentences).
 TODAY IS: ${dateContext.todayFormatted} (${dateContext.todayISO})
-
-RESTAURANT:
-- ${closedDaysText}
-- Lunch: ${config.lunch_start || '12:00'} - ${config.lunch_end || '14:30'}
-- Dinner: ${config.dinner_start || '19:00'} - ${config.dinner_end || '22:30'}
-
-CRITICAL RULES:
-1. ALWAYS say "One moment..." before calling any tool.
-2. NEVER use placeholder names like "Client" or "Name".
-3. ALWAYS call prepare_reservation BEFORE create_reservation.
-4. NEVER confirm without calling create_reservation first.
-5. For cancellations: read the booking back, ask for explicit confirmation, THEN cancel.`;
+Phone number is captured automatically from caller ID - do NOT ask for phone.
+Email is optional - ask after availability check.
+ALWAYS say "One moment..." before any tool call.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// FORMAT CLOSED DAYS (invariato)
+// FORMAT CLOSED DAYS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function formatClosedDays(config, isItalian) {
