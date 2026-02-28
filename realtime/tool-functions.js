@@ -261,16 +261,26 @@ export const realtimeTools = [
       required: ['name', 'people', 'date', 'time']
     },
     handler: async (args, context) => {
-      const { name, people, date, time, notes } = args;
       const { callSid, restaurantConfig, sessionState, callerPhone } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
-      // Recupera telefono e dati da sessionState se disponibili
+      // 🆕 v3.0.0: usa collectedData + pendingReservation come fonte di verità
+      // priorità: collectedData (parsing server) > pendingReservation (prepare) > args GPT
+      const cd = sessionState?.collectedData || {};
       const pending = sessionState?.pendingReservation || {};
-      const phone = callerPhone || pending.phone || '';
-      const finalNotes = notes || pending.notes || '';
 
-      console.log(`📝 create_reservation: ${name}, ${people} pax, ${date} ${time}, tel: ${phone}`);
+      const name   = cd.name   || pending.name   || args.name;
+      const date   = cd.date   || pending.date   || args.date;
+      const time   = cd.time   || pending.time   || args.time;
+      const people = cd.people || pending.people || args.people;
+      const phone  = callerPhone || pending.phone || '';
+      const finalNotes = args.notes || pending.notes || '';
+
+      console.log(`📝 create_reservation v3.0.0:`);
+      console.log(`   [SERVER]  name="${cd.name}" date="${cd.date}" time="${cd.time}" people=${cd.people}`);
+      console.log(`   [PENDING] name="${pending.name}" date="${pending.date}" time="${pending.time}" people=${pending.people}`);
+      console.log(`   [GPT]     name="${args.name}" date="${args.date}" time="${args.time}" people=${args.people}`);
+      console.log(`   [FINALE]  name="${name}" date="${date}" time="${time}" people=${people} tel="${phone}"`);
 
       if (sessionState && !sessionState.pendingConfirmation) {
         return { success: false, reason: 'missing_prepare', message: 'Prima chiamare prepare_reservation.' };
