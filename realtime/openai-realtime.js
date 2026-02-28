@@ -105,9 +105,9 @@ export class OpenAIRealtimeClient {
         },
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.6,
+          threshold: 0.4,
           prefix_padding_ms: 300,
-          silence_duration_ms: 800
+          silence_duration_ms: 1000
         },
         tools: this.tools.map(t => ({
           type: 'function',
