@@ -368,10 +368,17 @@ export const realtimeTools = [
       required: ['name']
     },
     handler: async (args, context) => {
-      const { name, date } = args;
       const { restaurantConfig, sessionState, callerPhone } = context;
 
-      console.log(`🔍 find_reservation: nome="${name}" data="${date || 'qualsiasi'}" tel="${callerPhone || 'n/a'}"`);
+      // 🆕 v3.0.0: usa collectedData come fonte primaria per nome e data
+      const cd = sessionState?.collectedData || {};
+      const name = cd.name || args.name;
+      const date = cd.date || args.date || '';
+
+      console.log(`🔍 find_reservation v3.0.0:`);
+      console.log(`   [SERVER] name="${cd.name}" date="${cd.date}"`);
+      console.log(`   [GPT]    name="${args.name}" date="${args.date}"`);
+      console.log(`   [FINALE] name="${name}" date="${date}" tel="${callerPhone || 'n/a'}"`);
 
       if (!isValidName(name)) {
         return { found: false, message: `Nome "${name}" non valido. Chiedere il nome della prenotazione.` };
@@ -381,7 +388,7 @@ export const realtimeTools = [
         const appsScriptUrl = getAppsScriptUrl(restaurantConfig);
         if (!appsScriptUrl) return { found: false, message: 'Errore configurazione.' };
 
-        // ✅ FIX: passa nome + telefono chiamante + data
+        // Passa nome + telefono + data a Apps Script
         const response = await fetch(appsScriptUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -389,7 +396,7 @@ export const realtimeTools = [
             action: 'find_reservation',
             nome: name,
             telefono: callerPhone || '',
-            data: date || '',
+            data: date,
             calendarId: restaurantConfig.calendar_id
           })
         });
