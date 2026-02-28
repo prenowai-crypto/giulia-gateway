@@ -1,10 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - OPENAI REALTIME CLIENT v2.2.0
+// PRENOW - OPENAI REALTIME CLIENT v2.2.1
 //
-// NOVITÀ v2.2.0 (portate da index v3.9.31):
+// FIX v2.2.1:
+//   - Constructor: salva callerPhone (numero chiamante automatico)
+//   - sessionState: aggiunto foundReservation (usato da modify/cancel)
+//   - handleToolCall: passa callerPhone al context dei tool handler
+//
+// NOVITÀ v2.2.0:
 //   - sessionState: traccia dati prenotazione lato server
-//   - sessionState passato ai tool handler (necessario per prepare_reservation)
-//   - Log migliorati: stato conversazione sempre visibile
+//   - sessionState passato ai tool handler
 //
 // Echo cancellation: INVARIATA da v2.1.0
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -19,6 +23,7 @@ export class OpenAIRealtimeClient {
     this.tools = options.tools || [];
     this.callSid = options.callSid;
     this.restaurantConfig = options.restaurantConfig;
+    this.callerPhone = options.callerPhone || null;  // ✅ FIX v2.2.1
 
     this.onAudioDelta = options.onAudioDelta || (() => {});
     this.onTranscript = options.onTranscript || (() => {});
@@ -29,17 +34,17 @@ export class OpenAIRealtimeClient {
     this.sessionId = null;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SESSION STATE (v2.2.0): traccia dati raccolti durante la chiamata
-    // Usato da prepare_reservation e create_reservation
+    // SESSION STATE v2.2.1
     // ─────────────────────────────────────────────────────────────────────────
     this.sessionState = {
-      pendingReservation: null,  // Dati prenotazione dopo prepare_reservation
-      pendingConfirmation: false, // True = recap letto, in attesa conferma cliente
-      phase: 'initial',          // Fase corrente conversazione
+      pendingReservation: null,   // Dati dopo prepare_reservation
+      pendingConfirmation: false, // True = recap letto, attesa conferma
+      foundReservation: null,     // ✅ FIX v2.2.1: usato da modify/cancel
+      phase: 'initial',
     };
 
     // ─────────────────────────────────────────────────────────────────────────
-    // v2.1.0: Echo detection
+    // Echo detection
     // ─────────────────────────────────────────────────────────────────────────
     this.recentAiTranscripts = [];
     this.recentAiPhrases = [];
@@ -131,7 +136,7 @@ export class OpenAIRealtimeClient {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Echo detection (invariata da v2.1.0)
+  // Echo detection (invariata)
   // ─────────────────────────────────────────────────────────────────────────
 
   extractWords(text) {
@@ -311,8 +316,7 @@ export class OpenAIRealtimeClient {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // TOOL CALL HANDLER
-  // v2.2.0: passa sessionState al handler
+  // TOOL CALL HANDLER v2.2.1
   // ─────────────────────────────────────────────────────────────────────────
 
   async handleToolCall(message) {
@@ -328,11 +332,12 @@ export class OpenAIRealtimeClient {
         throw new Error(`Tool non trovato: ${name}`);
       }
 
-      // v2.2.0: passa sessionState così i tool possono leggere/scrivere stato
+      // ✅ FIX v2.2.1: passa callerPhone al context
       const result = await tool.handler(args, {
         callSid: this.callSid,
         restaurantConfig: this.restaurantConfig,
-        sessionState: this.sessionState  // ← NUOVO
+        sessionState: this.sessionState,
+        callerPhone: this.callerPhone    // ← numero chiamante automatico
       });
 
       console.log(`✅ Tool result [${name}]:`, JSON.stringify(result).substring(0, 200));
