@@ -155,7 +155,8 @@ function parsePeople(text) {
 
 function parseName(text) {
   if (!text) return null;
-  const t = text.trim();
+  // Strip "nome " o "nome: " iniziale (es. "Nome Mirko" → "Mirko")
+  let t = text.trim().replace(/^nome\s*:?\s*/i, '');
   const EXCLUDE = [
     'si','no','ok','sì','yes','grazie','prego','esatto','confermo','giusto','certo',
     'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','buonanotte',
