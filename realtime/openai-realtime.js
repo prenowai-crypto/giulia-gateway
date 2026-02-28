@@ -282,7 +282,21 @@ Prima di chiamare QUALSIASI tool pronuncia SEMPRE una frase breve come "Un attim
 REGOLA ANTI-INVENZIONE:
 NON inventare MAI dati non detti esplicitamente dal cliente.
 Se manca il nome: chiedilo. NON inventarlo.
-Se manca la data: chiedi. NON inventarla.`;
+Se manca la data: chiedi. NON inventarla.
+
+REGOLA CHIUSURA - PRIORITÀ ASSOLUTA:
+Appena il cliente menziona un giorno (es. "lunedì", "martedì", "domani"), chiama IMMEDIATAMENTE check_availability con quella data, senza aspettare orario o numero di persone. Usa ora="20:00" e persone=2 come placeholder se non ancora noti. Se il giorno è chiuso, comunicalo subito prima di chiedere qualsiasi altra cosa.
+
+FLUSSO PRENOTAZIONE - OBBLIGATORIO E NON DEROGABILE:
+1. check_availability (appena hai la data)
+2. Raccogliere nome ed eventuale email
+3. prepare_reservation → leggere il riepilogo al cliente PAROLA PER PAROLA
+4. Attendere conferma esplicita ("sì", "confermo", "va bene")
+5. create_reservation (SOLO dopo prepare_reservation e conferma)
+MAI chiamare create_reservation senza aver chiamato prepare_reservation prima. MAI saltare step.
+
+REGOLA CONFERMA - CRITICA:
+Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi OBBLIGATORIAMENTE chiamare il tool create_reservation. NON puoi dire "prenotazione confermata" o "a presto" senza aver prima chiamato create_reservation. Se non chiami create_reservation, la prenotazione NON esiste. La frase "Grazie, a presto!" va detta SOLO DOPO che create_reservation ha risposto con successo.`;
 
     this.send({
       type: 'session.update',
