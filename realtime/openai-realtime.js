@@ -161,20 +161,27 @@ function parseName(text) {
     'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','buonanotte',
     'io','me','noi','lui','lei','uno','una','un'
   ];
+  // Preposizioni/congiunzioni che interrompono il nome
+  const STOP_AFTER_NAME = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|o|a|un|una|uno)\b/i;
+
   const patterns = [
-    /\ba\s+nome\s+(?:di\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)\b/i,
+    // "a nome Simone" / "a nome Simone Rossi" → si ferma prima di preposizioni/orari
+    /\ba\s+nome\s+(?:di\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
     /\bmi\s+chiamo\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)/i,
     /\bsono\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
     /\bname\s+is\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
     /\bi'?m\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
     /\bunder\s+(?:the\s+)?name\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
-    // Risposta secca: solo nome
+    // Risposta secca: solo 1-2 parole che sembrano un nome (max 2 token)
     /^([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]{1,}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)$/,
   ];
   for (const p of patterns) {
     const m = t.match(p);
     if (m && m[1]) {
-      const name = m[1].trim();
+      // Tronca il nome prima di stop words (es. "Simone alle" → "Simone")
+      let name = m[1].trim();
+      const stopMatch = name.match(STOP_AFTER_NAME);
+      if (stopMatch) name = name.substring(0, stopMatch.index).trim();
       if (name.length >= 2 && !EXCLUDE.includes(name.toLowerCase())) return name;
     }
   }
