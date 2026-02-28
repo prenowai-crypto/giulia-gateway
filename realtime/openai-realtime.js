@@ -52,7 +52,7 @@ export class OpenAIRealtimeClient {
     this.lastAiFinishedTime = 0;
     this.isAiCurrentlySpeaking = false;
     this.speechStartedDuringAi = false;
-    this.ECHO_WINDOW_MS = 5000;
+    this.ECHO_WINDOW_MS = 2500;
   }
 
   async connect() {
@@ -152,7 +152,7 @@ export class OpenAIRealtimeClient {
 
     const trimmed = userText.trim();
 
-    if (trimmed.length <= 15) {
+    if (trimmed.length <= 20) {
       console.log(`🔊 Frase corta = INPUT REALE: "${trimmed}"`);
       return false;
     }
@@ -185,7 +185,7 @@ export class OpenAIRealtimeClient {
 
       const matchRatio = matchCount / userWords.length;
 
-      if (matchRatio > 0.5 && matchCount >= 3) {
+      if (matchRatio > 0.75 && matchCount >= 6) {
         console.log(`🔇 ECHO RILEVATO! Match: ${matchCount}/${userWords.length} (${(matchRatio * 100).toFixed(0)}%)`);
         return true;
       }
@@ -204,7 +204,7 @@ export class OpenAIRealtimeClient {
       if (textLower.includes(kw)) greetingMatches++;
     }
 
-    if (greetingMatches >= 3 && timeSinceAiFinished < 3000) {
+    if (greetingMatches >= 4 && timeSinceAiFinished < 1500) {
       console.log(`🔇 ECHO (greeting): ${greetingMatches} keyword match`);
       return true;
     }
