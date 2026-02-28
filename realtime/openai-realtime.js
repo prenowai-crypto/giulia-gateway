@@ -102,14 +102,23 @@ function parseTime(text) {
   if (/mezzogiorno|noon/.test(t)) return '12:00';
   if (/mezzanotte|midnight/.test(t)) return '00:00';
 
-  const m1 = t.match(/(?:alle|ore|per le|at)\s*(\d{1,2})(?::(\d{2}))?/i);
+  // "alle 12.30" o "alle 12:30" (sia punto che due punti come separatore)
+  const m1 = t.match(/(?:alle|ore|per le|at)\s*(\d{1,2})[\.:](\d{2})/i);
   if (m1) {
-    let h = parseInt(m1[1]), min = m1[2] ? parseInt(m1[2]) : 0;
+    let h = parseInt(m1[1]), min = parseInt(m1[2]);
     if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
-    if (h >= 0 && h <= 23) return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
+      return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+  }
+  // "alle 12" senza minuti
+  const m1b = t.match(/(?:alle|ore|per le|at)\s*(\d{1,2})\b/i);
+  if (m1b) {
+    let h = parseInt(m1b[1]);
+    if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
+    if (h >= 0 && h <= 23) return `${String(h).padStart(2,'0')}:00`;
   }
 
-  const m2 = t.match(/\b(\d{1,2}):(\d{2})\b/);
+  const m2 = t.match(/\b(\d{1,2})[\.:](\d{2})\b/);
   if (m2) {
     const h = parseInt(m2[1]), min = parseInt(m2[2]);
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
@@ -156,7 +165,11 @@ function parsePeople(text) {
 function parseName(text) {
   if (!text) return null;
   // Strip "nome " o "nome: " iniziale (es. "Nome Mirko" → "Mirko")
-  let t = text.trim().replace(/^nome\s*:?\s*/i, '');
+  // Strip anche punteggiatura finale (es. "Mirko." → "Mirko")
+  let t = text.trim()
+    .replace(/^nome\s*:?\s*/i, '')
+    .replace(/[.,!?]+$/, '')
+    .trim();
   const EXCLUDE = [
     'si','no','ok','sì','yes','grazie','prego','esatto','confermo','giusto','certo',
     'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','buonanotte',
@@ -284,6 +297,7 @@ REGOLA ANTI-INVENZIONE:
 NON inventare MAI dati non detti esplicitamente dal cliente.
 Se manca il nome: chiedilo. NON inventarlo.
 Se manca la data: chiedi. NON inventarla.
+Se l'email NON è stata fornita: NON includerla nel riepilogo. NON inventare email di esempio come "mirko@example.com". Se email=null, il riepilogo deve semplicemente non menzionarla.
 
 REGOLA CHIUSURA - PRIORITÀ ASSOLUTA:
 Appena il cliente menziona un giorno (es. "lunedì", "martedì", "domani"), chiama IMMEDIATAMENTE check_availability con quella data, senza aspettare orario o numero di persone. Usa ora="20:00" e persone=2 come placeholder se non ancora noti. Se il giorno è chiuso, comunicalo subito prima di chiedere qualsiasi altra cosa.
