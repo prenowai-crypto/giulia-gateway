@@ -199,7 +199,7 @@ app.post('/twiml-stream', (req, res) => {
   <Start>
     <Stream url="${wsUrl}" track="inbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
   </Start>
-  <Pause length="60"/>
+  <Pause length="300"/>
 </Response>`;
   
   console.log(`📤 TeXML response:`, twiml);
