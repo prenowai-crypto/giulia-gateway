@@ -87,6 +87,7 @@ export function setupMediaStreamHandler(server, config) {
             }
             
             console.log(`🍽️  Ristorante: ${session.restaurantConfig.restaurant_name}`);
+            console.log(`🔒 Chiusure: weekly=${JSON.stringify(session.restaurantConfig.weekly_closing_days)} lunch=${JSON.stringify(session.restaurantConfig.lunch_closed_days)}`);
             
             const dateContext = buildDateContext(session.restaurantConfig.timezone || 'Europe/Rome');
             console.log(`📅 Date context: Oggi è ${dateContext.todayFormatted}`);
