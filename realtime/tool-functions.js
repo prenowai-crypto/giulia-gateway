@@ -97,7 +97,10 @@ export const realtimeTools = [
       required: ['date', 'time', 'people']
     },
     handler: async (args, context) => {
-      const { date, time, people } = args;
+      const cd = context?.sessionState?.collectedData || {};
+      const date   = cd.date   || args.date;
+      const time   = cd.time   || args.time   || '20:00';
+      const people = cd.people || args.people || 2;
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
@@ -237,6 +240,7 @@ export const realtimeTools = [
       return {
         ready: true,
         recap: recapMessage,
+        ISTRUZIONE_OBBLIGATORIA: `Pronuncia ESATTAMENTE questa frase, parola per parola, senza modifiche: "${recapMessage}"`,
         data: { name, people, date, time, phone, email: email || '', notes: finalNotes, isLargeGroup },
         instruction: `Leggere il recap al cliente: "${recapMessage}". Aspettare conferma esplicita prima di create_reservation.`
       };
