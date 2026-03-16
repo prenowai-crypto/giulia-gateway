@@ -104,6 +104,11 @@ export const realtimeTools = [
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
+      // 🛡️ Blocca subito se la data non è stata acquisita
+      if (!date) {
+        return { available: false, reason: 'missing_date', message: 'Data non specificata. Chiedere al cliente per quale giorno vuole prenotare.' };
+      }
+
       // 🛡️ Controlla PRIMA giorno chiuso (non serve orario per saperlo)
       if (date) {
         if (isDateInPast(date, timezone)) {
@@ -211,6 +216,10 @@ export const realtimeTools = [
         // Non blocchiamo - il telefono potrebbe essere in note o non disponibile
       }
 
+      // Blocca se data non ancora acquisita
+      if (!date) {
+        return { ready: false, missing: 'date', message: 'Data non ancora acquisita dal cliente. Chiedere per quale giorno vuole prenotare prima di procedere.' };
+      }
       if (!date || !time || !people) {
         const missing = [];
         if (!date) missing.push('data');
@@ -281,11 +290,11 @@ export const realtimeTools = [
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
       // 🆕 v3.0.0: usa collectedData + pendingReservation come fonte di verità
-      // priorità: collectedData (parsing server) > pendingReservation (prepare) > args GPT
+      // Per nome, data, orario: server e pending PRIMA di GPT
       const cd = sessionState?.collectedData || {};
       const pending = sessionState?.pendingReservation || {};
 
-      const name   = cd.name   || pending.name   || args.name;
+      const name   = cd.name   || pending.name;   // NO fallback GPT per nome
       const date   = cd.date   || pending.date   || args.date;
       const time   = cd.time   || pending.time   || args.time;
       const people = cd.people || pending.people || args.people;
