@@ -439,18 +439,6 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
       setTimeout(() => {
         try {
           this.send({
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: 'server_closure_check',
-              output: JSON.stringify({
-                available: false,
-                reason: 'day_closed',
-                message: `Il ristorante è chiuso il ${nomeGiorno}. Comunicarlo subito al cliente e proporre altro giorno.`
-              })
-            }
-          });
-          this.send({
             type: 'response.create',
             response: {
               instructions: `Il ristorante è chiuso il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, siamo chiusi il ${nomeGiorno}. Vuole prenotare per un altro giorno?" Non raccogliere altri dati prima di comunicare la chiusura.`
