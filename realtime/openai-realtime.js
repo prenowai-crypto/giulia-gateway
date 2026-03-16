@@ -157,6 +157,9 @@ function parsePeople(text) {
     'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10,
     'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10
   };
+  // Frasi comuni dove "sei" significa "you are" non "6" — da escludere
+  const FALSE_POSITIVES = /\bci\s+sei\b|\bsei\s+(?:li|lì|qui|là|ancora|pronto)\b|\bcome\s+sei\b/i;
+  if (FALSE_POSITIVES.test(t)) return null;
   for (const [w, n] of Object.entries(wordNums)) {
     if (new RegExp(`\\b${w}\\b`).test(t)) return n;
   }
@@ -176,7 +179,9 @@ function parseName(text) {
     'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','buonanotte',
     'io','me','noi','lui','lei','uno','una','un',
     // parole telefoniche comuni che non sono nomi
-    'pronto','salve','allora','ecco','dunque','quindi','però','anche','magari','cioè'
+    'pronto','salve','allora','ecco','dunque','quindi','però','anche','magari','cioè',
+    // frasi di controllo linea
+    'ci sei','ci siete','mi senti','mi sentite','pronto pronto'
   ];
   // Preposizioni/congiunzioni che interrompono il nome
   const STOP_AFTER_NAME = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|o|a|un|una|uno)\b/i;
