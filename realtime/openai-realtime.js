@@ -133,8 +133,9 @@ function parseTime(text) {
     return `${String(h).padStart(2,'0')}:00`;
   }
 
-  if (/\bpranzo\b|\blunch\b/.test(t)) return '13:00';
-  if (/\bcena\b|\bdinner\b|\bsera\b/.test(t)) return '20:00';
+  // NON mappiamo "pranzo/cena/sera" a un orario fisso: il cliente deve specificarlo esplicitamente
+  // if (/\bpranzo\b|\blunch\b/.test(t)) return '13:00';
+  // if (/\bcena\b|\bdinner\b|\bsera\b/.test(t)) return '20:00';
   return null;
 }
 
@@ -294,12 +295,13 @@ export class OpenAIRealtimeClient {
 
 REGOLA CRITICA - TOOL CALLS:
 Prima di chiamare QUALSIASI tool pronuncia SEMPRE una frase breve come "Un attimo..." o "Un momento..." per evitare silenzi. È OBBLIGATORIO.
+NON annunciare mai data, orario o numero di persone PRIMA di aver chiamato il tool. Esempio SBAGLIATO: "Perfetto, per mercoledì alle 21, verifico..." → Esempio CORRETTO: "Un attimo, verifico la disponibilità..."
 
 REGOLA ANTI-INVENZIONE:
 NON inventare MAI dati non detti esplicitamente dal cliente.
 Se manca il nome: chiedilo. NON inventarlo.
 Se manca la data: chiedi. NON inventarla.
-Se manca l'orario: chiedilo SEMPRE esplicitamente. NON usare un orario di default. "Sera" non è un orario: chiedi "A che ora preferisce?".
+Se manca l'orario: chiedilo SEMPRE esplicitamente con "A che ora preferisce?". NON usare un orario di default. "Sera", "pranzo", "cena" NON sono orari: il cliente deve dire un'ora precisa come "alle 20", "alle 20:30", ecc. Finché non c'è un orario esplicito, NON chiamare check_availability.
 Se l'email NON è stata fornita: NON includerla nel riepilogo. NON inventare email di esempio. Se email=null, non menzionarla.
 
 REGOLA RECAP - CRITICA:
