@@ -369,6 +369,7 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
   _parseAndStore(transcript) {
     const cd = this.sessionState.collectedData;
     const locked = this.sessionState.pendingConfirmation === true;
+    const prevDate = cd.date;
 
     const date = parseDate(transcript);
     if (date && cd.date !== date) {
@@ -389,7 +390,6 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
     }
 
     // 🛡️ Nome e email: non aggiornare se siamo in attesa di conferma
-    // (evita che "sì, va benissimo" sovrascriva il nome)
     if (!locked) {
       const name = parseName(transcript);
       if (name && cd.name !== name) {
@@ -403,7 +403,6 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
         cd.email = email;
       }
     } else {
-      // Logga solo per debug
       const name = parseName(transcript);
       if (name && cd.name !== name) {
         console.log(`🔒 [SERVER] name LOCKED - ignorato: "${name}" (pendingConfirmation=true)`);
@@ -411,6 +410,35 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
     }
 
     console.log(`📊 [SERVER] collectedData:`, JSON.stringify(cd));
+
+    // 🆕 AUTO-TRIGGER: se è stata parsata una nuova data, inietta istruzione
+    // per forzare check_availability immediato (evita che GPT ignori il tool call)
+    if (cd.date && cd.date !== prevDate && !locked) {
+      const timeForCheck = cd.time || '20:00';
+      const peopleForCheck = cd.people || 2;
+      console.log(`🚀 [SERVER] Auto-trigger check_availability per data ${cd.date}`);
+      this._injectCheckAvailabilityHint(cd.date, timeForCheck, peopleForCheck);
+    }
+  }
+
+  // Inietta un messaggio sistema che spinge GPT a chiamare check_availability subito
+  _injectCheckAvailabilityHint(date, time, people) {
+    try {
+      this.send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'system',
+          content: [{
+            type: 'input_text',
+            text: `[SISTEMA] Data rilevata: ${date}. Chiama IMMEDIATAMENTE check_availability con date="${date}", time="${time}", people=${people}. NON rispondere prima di aver chiamato il tool.`
+          }]
+        }
+      });
+      this.send({ type: 'response.create' });
+    } catch(e) {
+      console.error('❌ Errore auto-trigger:', e);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
