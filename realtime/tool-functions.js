@@ -104,22 +104,25 @@ export const realtimeTools = [
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
-      // 🛡️ Se l'orario non è stato detto esplicitamente dal cliente, blocca
+      // 🛡️ Controlla PRIMA giorno chiuso (non serve orario per saperlo)
+      if (date) {
+        if (isDateInPast(date, timezone)) {
+          return { available: false, reason: 'date_in_past', message: `La data ${date} è nel passato. Oggi è ${getTodayISO(timezone)}.` };
+        }
+        const dayOfWeek = new Date(date + 'T12:00:00').getDay();
+        if (restaurantConfig.weekly_closing_days?.includes(dayOfWeek)) {
+          return { available: false, reason: 'day_closed', message: `Il ristorante è chiuso il ${getDayName(dayOfWeek)}. Comunicarlo subito al cliente e proporre altro giorno.` };
+        }
+      }
+
+      // 🛡️ Solo dopo aver verificato che il giorno è aperto, richiedi l'orario
       if (!time) {
         return { available: false, reason: 'missing_time', message: 'Orario non specificato. Chiedere al cliente: "A che ora preferisce?"' };
       }
 
       console.log(`🔍 check_availability: ${date} ${time} per ${people} persone`);
 
-      if (isDateInPast(date, timezone)) {
-        return { available: false, reason: 'date_in_past', message: `La data ${date} è nel passato. Oggi è ${getTodayISO(timezone)}.` };
-      }
-
       const dayOfWeek = new Date(date + 'T12:00:00').getDay();
-      if (restaurantConfig.weekly_closing_days?.includes(dayOfWeek)) {
-        return { available: false, reason: 'day_closed', message: `Il ristorante è chiuso il ${getDayName(dayOfWeek)}. Proporre altro giorno.` };
-      }
-
       const hour = parseInt(time.split(':')[0]);
       const isLunch = hour < 15;
       if (isLunch && restaurantConfig.lunch_closed_days?.includes(dayOfWeek)) {
