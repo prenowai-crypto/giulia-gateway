@@ -118,12 +118,22 @@ async function getRestaurantConfig(phoneNumber) {
 
 function parseIntArray(value) {
   if (!value) return [];
-  if (Array.isArray(value)) return value.map(v => parseInt(v));
+  if (Array.isArray(value)) return value.map(v => parseInt(v)).filter(n => !isNaN(n));
+  const str = String(value).trim();
+  // Gestisce "1" o "1,3,4" (formato CSV da Google Sheets)
+  if (str.includes(',')) {
+    return str.split(',').map(v => parseInt(v.trim())).filter(n => !isNaN(n));
+  }
+  // Prova JSON parse per array come "[1,2]"
   try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(v => parseInt(v)) : [];
-  } catch {
+    const parsed = JSON.parse(str);
+    if (Array.isArray(parsed)) return parsed.map(v => parseInt(v)).filter(n => !isNaN(n));
+    if (!isNaN(parseInt(parsed))) return [parseInt(parsed)];
     return [];
+  } catch {
+    // Stringa numerica singola come "1"
+    const n = parseInt(str);
+    return isNaN(n) ? [] : [n];
   }
 }
 
