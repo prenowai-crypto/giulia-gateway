@@ -99,14 +99,14 @@ export const realtimeTools = [
     handler: async (args, context) => {
       const cd = context?.sessionState?.collectedData || {};
       const date   = cd.date   || args.date;
-      const time   = cd.time   || args.time;
+      const time   = cd.time;   // ← SOLO server-side, NO fallback GPT
       const people = cd.people || args.people || 2;
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
       // 🛡️ Se l'orario non è stato detto esplicitamente dal cliente, blocca
       if (!time) {
-        return { available: false, reason: 'missing_time', message: 'Orario non specificato dal cliente. Chiedere esplicitamente: "A che ora preferisce?"' };
+        return { available: false, reason: 'missing_time', message: 'Orario non specificato. Chiedere al cliente: "A che ora preferisce?"' };
       }
 
       console.log(`🔍 check_availability: ${date} ${time} per ${people} persone`);
@@ -179,11 +179,11 @@ export const realtimeTools = [
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
       // 🆕 v3.0.0: collectedData è la FONTE DI VERITÀ (server-side, deterministico)
-      // I parametri GPT sono usati solo come fallback per campi non ancora parsati
+      // Per nome e orario: SOLO server-side. GPT non può inventarli.
       const cd = sessionState?.collectedData || {};
-      const name   = cd.name   || args.name;
+      const name   = cd.name;                    // ← SOLO server, NO fallback GPT
+      const time   = cd.time;                    // ← SOLO server, NO fallback GPT
       const date   = cd.date   || args.date;
-      const time   = cd.time   || args.time;
       const people = cd.people || args.people;
       const email  = cd.email  || args.email;
       const notes  = args.notes;
@@ -193,8 +193,12 @@ export const realtimeTools = [
       console.log(`   [GPT]     name="${args.name}" date="${args.date}" time="${args.time}" people=${args.people}`);
       console.log(`   [FINALE]  name="${name}" date="${date}" time="${time}" people=${people} tel="${callerPhone}"`);
 
-      if (!isValidName(name)) {
-        return { ready: false, missing: 'name', message: `Nome non valido: "${name}". Chiedere il nome reale al cliente.` };
+      // Blocca se nome o orario non sono stati detti esplicitamente dal cliente
+      if (!name || !isValidName(name)) {
+        return { ready: false, missing: 'name', message: 'Nome non ancora acquisito. Chiedere il nome al cliente prima di procedere.' };
+      }
+      if (!time) {
+        return { ready: false, missing: 'time', message: 'Orario non ancora acquisito. Chiedere al cliente: "A che ora preferisce?"' };
       }
 
       // Telefono viene dal caller ID automaticamente
