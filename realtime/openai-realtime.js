@@ -251,6 +251,7 @@ export class OpenAIRealtimeClient {
         people: null,
         name: null,
         email: null,
+        mealContext: null,  // 'pranzo' | 'cena' | null
       }
     };
 
@@ -411,16 +412,35 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
 
     console.log(`📊 [SERVER] collectedData:`, JSON.stringify(cd));
 
+    // 🆕 Parsing contesto pasto (pranzo/cena) — non imposta orario ma serve per check chiusura
+    if (!locked) {
+      const tLower = transcript.toLowerCase();
+      if (/\bpranzo\b|\blunch\b|\bmeriggio\b|\bmezzogiorno\b/.test(tLower) && cd.mealContext !== 'pranzo') {
+        cd.mealContext = 'pranzo';
+        console.log(`🍽️ [SERVER] mealContext: → "pranzo"`);
+      } else if (/\bcena\b|\bdinner\b|\bstasera\b|\bsera\b/.test(tLower) && cd.mealContext !== 'cena') {
+        cd.mealContext = 'cena';
+        console.log(`🍽️ [SERVER] mealContext: → "cena"`);
+      }
+    }
+
     // 🆕 AUTO-TRIGGER: se è stata parsata una nuova data, verifica subito chiusura
     if (cd.date && cd.date !== prevDate && !locked) {
       const dayOfWeek = new Date(cd.date + 'T12:00:00').getDay();
       const closingDays = this.restaurantConfig?.weekly_closing_days || [];
-      console.log(`🚀 [SERVER] Auto-trigger: data=${cd.date} dayOfWeek=${dayOfWeek} closingDays=${JSON.stringify(closingDays)}`);
+      const lunchClosedDays = this.restaurantConfig?.lunch_closed_days || [];
+      const dinnerClosedDays = this.restaurantConfig?.dinner_closed_days || [];
+      console.log(`🚀 [SERVER] Auto-trigger: data=${cd.date} dayOfWeek=${dayOfWeek} closingDays=${JSON.stringify(closingDays)} meal=${cd.mealContext}`);
 
       if (closingDays.includes(dayOfWeek)) {
-        // Giorno chiuso: inietta risultato direttamente senza chiamare il tool
         console.log(`🔒 [SERVER] Giorno chiuso rilevato server-side: ${cd.date}`);
-        this._injectClosedDayMessage(cd.date, dayOfWeek);
+        this._injectClosedDayMessage(cd.date, dayOfWeek, 'day');
+      } else if (cd.mealContext === 'pranzo' && lunchClosedDays.includes(dayOfWeek)) {
+        console.log(`🔒 [SERVER] Pranzo chiuso rilevato server-side: ${cd.date}`);
+        this._injectClosedDayMessage(cd.date, dayOfWeek, 'lunch');
+      } else if (cd.mealContext === 'cena' && dinnerClosedDays.includes(dayOfWeek)) {
+        console.log(`🔒 [SERVER] Cena chiusa rilevata server-side: ${cd.date}`);
+        this._injectClosedDayMessage(cd.date, dayOfWeek, 'dinner');
       } else {
         // Giorno aperto: trigger normale per check_availability
         const timeForCheck = cd.time || '20:00';
@@ -431,18 +451,24 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
   }
 
   // Comunica chiusura direttamente a GPT senza tool call
-  _injectClosedDayMessage(date, dayOfWeek) {
+  _injectClosedDayMessage(date, dayOfWeek, type) {
     const giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
     const nomeGiorno = giorni[dayOfWeek] || 'quel giorno';
+    let istruzioni;
+    if (type === 'lunch') {
+      istruzioni = `Non facciamo pranzo il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, il ${nomeGiorno} siamo chiusi a pranzo. Posso aiutarla a prenotare per la cena o per un altro giorno?"`;
+    } else if (type === 'dinner') {
+      istruzioni = `Non facciamo cena il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, il ${nomeGiorno} siamo chiusi a cena. Posso aiutarla a prenotare per il pranzo o per un altro giorno?"`;
+    } else {
+      istruzioni = `Il ristorante è chiuso il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, siamo chiusi il ${nomeGiorno}. Vuole prenotare per un altro giorno?"`;
+    }
     try {
       this.send({ type: 'response.cancel' });
       setTimeout(() => {
         try {
           this.send({
             type: 'response.create',
-            response: {
-              instructions: `Il ristorante è chiuso il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, siamo chiusi il ${nomeGiorno}. Vuole prenotare per un altro giorno?" Non raccogliere altri dati prima di comunicare la chiusura.`
-            }
+            response: { instructions: istruzioni }
           });
         } catch(e) {
           console.error('❌ Errore inject closed day:', e);
