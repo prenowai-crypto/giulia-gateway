@@ -529,8 +529,16 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
     console.log(`🔧 Tool call: ${name}`);
     console.log(`📊 collectedData:`, JSON.stringify(this.sessionState.collectedData));
 
+    // 🛡️ Fix barge-in: se il JSON è troncato (utente ha interrotto), ignora silenziosamente
+    let args;
     try {
-      const args = JSON.parse(argsString);
+      args = JSON.parse(argsString);
+    } catch (e) {
+      console.warn(`⚠️ Tool call ${name} ignorato: JSON malformato (barge-in durante tool call). argsString="${argsString?.substring(0,50)}"`);
+      // Non mandare nulla a OpenAI — la risposta è già stata interrotta dal barge-in
+      return;
+    }
+    try {
       const tool = this.tools.find(t => t.name === name);
       if (!tool) throw new Error(`Tool non trovato: ${name}`);
 
