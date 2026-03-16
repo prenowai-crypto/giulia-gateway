@@ -314,12 +314,13 @@ REGOLA MODIFICA - OBBLIGATORIA:
 Prima di chiamare modify_reservation, chiama SEMPRE check_availability per la NUOVA data e il NUOVO orario richiesti dal cliente. Se lo slot non è disponibile (giorno chiuso, pranzo chiuso, pieno), comunicalo subito e proponi alternative. MAI chiamare modify_reservation senza prima verificare il nuovo slot.
 
 FLUSSO PRENOTAZIONE - OBBLIGATORIO E NON DEROGABILE:
-1. check_availability (appena hai la data)
-2. Raccogliere nome ed eventuale email
-3. prepare_reservation → leggere il riepilogo al cliente PAROLA PER PAROLA
-4. Attendere conferma esplicita ("sì", "confermo", "va bene")
-5. create_reservation (SOLO dopo prepare_reservation e conferma)
-MAI chiamare create_reservation senza aver chiamato prepare_reservation prima. MAI saltare step.
+1. check_availability (appena hai data E orario esplicito)
+2. Chiedere nome se non ancora noto
+3. Chiedere email: "Vuole ricevere un'email di conferma?" — OBBLIGATORIO, non saltare
+4. prepare_reservation → leggere il riepilogo al cliente PAROLA PER PAROLA
+5. Attendere conferma esplicita ("sì", "confermo", "va bene")
+6. create_reservation (SOLO dopo prepare_reservation e conferma)
+MAI saltare lo step email. MAI chiamare create_reservation senza aver chiamato prepare_reservation prima.
 
 REGOLA CONFERMA - CRITICA:
 Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi OBBLIGATORIAMENTE chiamare il tool create_reservation. NON puoi dire "prenotazione confermata" o "a presto" senza aver prima chiamato create_reservation. Se non chiami create_reservation, la prenotazione NON esiste. La frase "Grazie, a presto!" va detta SOLO DOPO che create_reservation ha risposto con successo.`;
@@ -363,6 +364,7 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
   // 🆕 v3.0.0: aggiorna collectedData parsando la trascrizione
   _parseAndStore(transcript) {
     const cd = this.sessionState.collectedData;
+    const locked = this.sessionState.pendingConfirmation === true;
 
     const date = parseDate(transcript);
     if (date && cd.date !== date) {
@@ -382,16 +384,26 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
       cd.people = people;
     }
 
-    const name = parseName(transcript);
-    if (name && cd.name !== name) {
-      console.log(`👤 [SERVER] name: "${cd.name}" → "${name}"`);
-      cd.name = name;
-    }
+    // 🛡️ Nome e email: non aggiornare se siamo in attesa di conferma
+    // (evita che "sì, va benissimo" sovrascriva il nome)
+    if (!locked) {
+      const name = parseName(transcript);
+      if (name && cd.name !== name) {
+        console.log(`👤 [SERVER] name: "${cd.name}" → "${name}"`);
+        cd.name = name;
+      }
 
-    const email = parseEmail(transcript);
-    if (email && cd.email !== email) {
-      console.log(`📧 [SERVER] email: "${cd.email}" → "${email}"`);
-      cd.email = email;
+      const email = parseEmail(transcript);
+      if (email && cd.email !== email) {
+        console.log(`📧 [SERVER] email: "${cd.email}" → "${email}"`);
+        cd.email = email;
+      }
+    } else {
+      // Logga solo per debug
+      const name = parseName(transcript);
+      if (name && cd.name !== name) {
+        console.log(`🔒 [SERVER] name LOCKED - ignorato: "${name}" (pendingConfirmation=true)`);
+      }
     }
 
     console.log(`📊 [SERVER] collectedData:`, JSON.stringify(cd));
