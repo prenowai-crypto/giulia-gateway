@@ -173,7 +173,9 @@ function parseName(text) {
   const EXCLUDE = [
     'si','no','ok','sì','yes','grazie','prego','esatto','confermo','giusto','certo',
     'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','buonanotte',
-    'io','me','noi','lui','lei','uno','una','un'
+    'io','me','noi','lui','lei','uno','una','un',
+    // parole telefoniche comuni che non sono nomi
+    'pronto','salve','allora','ecco','dunque','quindi','però','anche','magari','cioè'
   ];
   // Preposizioni/congiunzioni che interrompono il nome
   const STOP_AFTER_NAME = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|o|a|un|una|uno)\b/i;
@@ -297,7 +299,11 @@ REGOLA ANTI-INVENZIONE:
 NON inventare MAI dati non detti esplicitamente dal cliente.
 Se manca il nome: chiedilo. NON inventarlo.
 Se manca la data: chiedi. NON inventarla.
-Se l'email NON è stata fornita: NON includerla nel riepilogo. NON inventare email di esempio come "mirko@example.com". Se email=null, il riepilogo deve semplicemente non menzionarla.
+Se manca l'orario: chiedilo SEMPRE esplicitamente. NON usare un orario di default. "Sera" non è un orario: chiedi "A che ora preferisce?".
+Se l'email NON è stata fornita: NON includerla nel riepilogo. NON inventare email di esempio. Se email=null, non menzionarla.
+
+REGOLA RECAP - CRITICA:
+Quando prepare_reservation restituisce il campo "recap", devi leggerlo AL CLIENTE ESATTAMENTE COME È SCRITTO, parola per parola. NON riformularlo. NON usare orari o dati diversi da quelli nel recap. Il recap è la fonte di verità assoluta.
 
 REGOLA CHIUSURA - PRIORITÀ ASSOLUTA:
 Appena il cliente menziona un giorno (es. "lunedì", "martedì", "domani"), chiama IMMEDIATAMENTE check_availability con quella data, senza aspettare orario o numero di persone. Usa ora="20:00" e persone=2 come placeholder se non ancora noti. Se il giorno è chiuso, comunicalo subito prima di chiedere qualsiasi altra cosa.
