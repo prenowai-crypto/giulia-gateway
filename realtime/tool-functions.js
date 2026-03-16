@@ -99,10 +99,15 @@ export const realtimeTools = [
     handler: async (args, context) => {
       const cd = context?.sessionState?.collectedData || {};
       const date   = cd.date   || args.date;
-      const time   = cd.time   || args.time   || '20:00';
+      const time   = cd.time   || args.time;
       const people = cd.people || args.people || 2;
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
+
+      // 🛡️ Se l'orario non è stato detto esplicitamente dal cliente, blocca
+      if (!time) {
+        return { available: false, reason: 'missing_time', message: 'Orario non specificato dal cliente. Chiedere esplicitamente: "A che ora preferisce?"' };
+      }
 
       console.log(`🔍 check_availability: ${date} ${time} per ${people} persone`);
 
