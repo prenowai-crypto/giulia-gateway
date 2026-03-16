@@ -105,9 +105,32 @@ async function getRestaurantConfig(phoneNumber) {
     dinner_start: config.dinner_start || '19:00',
     dinner_end: config.dinner_end || '22:30',
     
-    weekly_closing_days: parseIntArray(config.weekly_closing_days) || [1],
-    lunch_closed_days: parseIntArray(config.lunch_closed_days) || [],
-    dinner_closed_days: parseIntArray(config.dinner_closed_days) || [],
+    weekly_closing_days: (function() {
+      // Priorità: weekly_closing_days esplicito → derivato da OPEN_DAYS → derivato da closed_days → default lunedì
+      if (config.weekly_closing_days) return parseIntArray(config.weekly_closing_days);
+      if (config.closed_days) return parseIntArray(config.closed_days);
+      // Derivo da OPEN_DAYS (es. "TUE,WED,THU,FRI,SAT,SUN" → chiusi domenica=0 e lunedì=1)
+      const dayMap = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6,
+                       domenica:0, lunedi:1, martedi:2, mercoledi:3, giovedi:4, venerdi:5, sabato:6 };
+      const openDaysStr = config.OPEN_DAYS || config.open_days || '';
+      if (openDaysStr) {
+        const openDays = openDaysStr.toLowerCase().split(',').map(d => dayMap[d.trim()]).filter(d => d !== undefined);
+        const allDays = [0,1,2,3,4,5,6];
+        return allDays.filter(d => !openDays.includes(d));
+      }
+      return [1]; // default: chiuso lunedì
+    })(),
+    lunch_closed_days: (function() {
+      if (config.lunch_closed_days) return parseIntArray(config.lunch_closed_days);
+      const dayMap = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+      const lunchClosedStr = config.LUNCH_CLOSED_DAYS || '';
+      if (lunchClosedStr) return lunchClosedStr.toLowerCase().split(',').map(d => dayMap[d.trim()]).filter(d => d !== undefined);
+      return [];
+    })(),
+    dinner_closed_days: (function() {
+      if (config.dinner_closed_days) return parseIntArray(config.dinner_closed_days);
+      return [];
+    })(),
     
     slot_capacity: parseInt(config.slot_capacity) || 30,
     
@@ -115,6 +138,8 @@ async function getRestaurantConfig(phoneNumber) {
     calendar_id: config.calendar_id,
   };
 }
+
+function _buildConfig_unused() {}
 
 function parseIntArray(value) {
   if (!value) return [];
