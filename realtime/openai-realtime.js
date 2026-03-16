@@ -411,13 +411,57 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
 
     console.log(`📊 [SERVER] collectedData:`, JSON.stringify(cd));
 
-    // 🆕 AUTO-TRIGGER: se è stata parsata una nuova data, inietta istruzione
-    // per forzare check_availability immediato (evita che GPT ignori il tool call)
+    // 🆕 AUTO-TRIGGER: se è stata parsata una nuova data, verifica subito chiusura
     if (cd.date && cd.date !== prevDate && !locked) {
-      const timeForCheck = cd.time || '20:00';
-      const peopleForCheck = cd.people || 2;
-      console.log(`🚀 [SERVER] Auto-trigger check_availability per data ${cd.date}`);
-      this._injectCheckAvailabilityHint(cd.date, timeForCheck, peopleForCheck);
+      const dayOfWeek = new Date(cd.date + 'T12:00:00').getDay();
+      const closingDays = this.restaurantConfig?.weekly_closing_days || [];
+      console.log(`🚀 [SERVER] Auto-trigger: data=${cd.date} dayOfWeek=${dayOfWeek} closingDays=${JSON.stringify(closingDays)}`);
+
+      if (closingDays.includes(dayOfWeek)) {
+        // Giorno chiuso: inietta risultato direttamente senza chiamare il tool
+        console.log(`🔒 [SERVER] Giorno chiuso rilevato server-side: ${cd.date}`);
+        this._injectClosedDayMessage(cd.date, dayOfWeek);
+      } else {
+        // Giorno aperto: trigger normale per check_availability
+        const timeForCheck = cd.time || '20:00';
+        const peopleForCheck = cd.people || 2;
+        this._injectCheckAvailabilityHint(cd.date, timeForCheck, peopleForCheck);
+      }
+    }
+  }
+
+  // Comunica chiusura direttamente a GPT senza tool call
+  _injectClosedDayMessage(date, dayOfWeek) {
+    const giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+    const nomeGiorno = giorni[dayOfWeek] || 'quel giorno';
+    try {
+      this.send({ type: 'response.cancel' });
+      setTimeout(() => {
+        try {
+          this.send({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: 'server_closure_check',
+              output: JSON.stringify({
+                available: false,
+                reason: 'day_closed',
+                message: `Il ristorante è chiuso il ${nomeGiorno}. Comunicarlo subito al cliente e proporre altro giorno.`
+              })
+            }
+          });
+          this.send({
+            type: 'response.create',
+            response: {
+              instructions: `Il ristorante è chiuso il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, siamo chiusi il ${nomeGiorno}. Vuole prenotare per un altro giorno?" Non raccogliere altri dati prima di comunicare la chiusura.`
+            }
+          });
+        } catch(e) {
+          console.error('❌ Errore inject closed day:', e);
+        }
+      }, 200);
+    } catch(e) {
+      console.error('❌ Errore cancel per closed day:', e);
     }
   }
 
