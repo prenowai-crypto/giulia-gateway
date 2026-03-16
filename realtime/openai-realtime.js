@@ -424,18 +424,33 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
   // Inietta un messaggio sistema che spinge GPT a chiamare check_availability subito
   _injectCheckAvailabilityHint(date, time, people) {
     try {
-      this.send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'system',
-          content: [{
-            type: 'input_text',
-            text: `[SISTEMA] Data rilevata: ${date}. Chiama IMMEDIATAMENTE check_availability con date="${date}", time="${time}", people=${people}. NON rispondere prima di aver chiamato il tool.`
-          }]
+      // Cancella eventuale risposta in corso prima di iniettare
+      this.send({ type: 'response.cancel' });
+
+      // Piccolo delay per permettere la cancellazione
+      setTimeout(() => {
+        try {
+          this.send({
+            type: 'conversation.item.create',
+            item: {
+              type: 'message',
+              role: 'user',
+              content: [{
+                type: 'input_text',
+                text: `[verifica disponibilità per ${date}]`
+              }]
+            }
+          });
+          this.send({
+            type: 'response.create',
+            response: {
+              instructions: `Chiama IMMEDIATAMENTE il tool check_availability con date="${date}", time="${time}", people=${people}. Questo è obbligatorio prima di qualsiasi risposta.`
+            }
+          });
+        } catch(e) {
+          console.error('❌ Errore auto-trigger (delayed):', e);
         }
-      });
-      this.send({ type: 'response.create' });
+      }, 200);
     } catch(e) {
       console.error('❌ Errore auto-trigger:', e);
     }
