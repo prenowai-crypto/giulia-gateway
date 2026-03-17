@@ -114,8 +114,8 @@ function parseTime(text) {
       allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
-  // Pattern 2: "alle 12" senza minuti
-  const re2 = /(?:alle|ore|per le|at)\s*(\d{1,2})\b/gi;
+  // Pattern 2: "alle 12" senza minuti — include varianti Whisper: "l'E21", "le 21", "l'21"
+  const re2 = /(?:alle|ore|per le|l['\s]e?|at)\s*(\d{1,2})\b/gi;
   while ((m = re2.exec(t)) !== null) {
     let h = parseInt(m[1]);
     if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
@@ -357,6 +357,7 @@ FLUSSO PRENOTAZIONE - SOLO SE IL GIORNO È APERTO:
 3. check_availability di nuovo con orario reale del cliente
    - Se "missing_time": chiedi "A che ora preferisce?"
    - Se "slot_full": di' che quello slot è pieno e chiedi un orario diverso. NON proporre tu un orario alternativo — lascia scegliere al cliente
+   - Se "outside_hours": di' SOLO gli orari disponibili (es. "La cena è dalle 21:00 alle 22:30"). NON dire che un orario non verificato non è disponibile — hai solo verificato l'orario richiesto, non gli altri
    - Se disponibile: procedi al passo 4
 4. Chiedere nome se non ancora noto
 5. Chiedere email: "Vuole ricevere un'email di conferma?" — OBBLIGATORIO
