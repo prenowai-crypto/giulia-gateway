@@ -308,12 +308,18 @@ DATE ASSOLUTE prossimi 30 giorni: ${absoluteDatesLines}
 🍽️ INFORMAZIONI RISTORANTE
 ═══════════════════════════════════════════════════════════════════════════════
 - Nome: ${config.restaurant_name}
-- ${closedDaysText}
+- Chiuso il: ${formatClosedDaysOnly(config, isItalian)}
 - Orari pranzo: ${config.lunch_start || '12:00'} - ${config.lunch_end || '14:30'}
 - Orari cena: ${config.dinner_start || '19:00'} - ${config.dinner_end || '22:30'}
 - Capienza per slot: ${config.slot_capacity || 30} persone
 - Gruppi > ${config.large_group_threshold || 10} persone: in attesa conferma ristoratore
 - Gruppi > ${config.event_threshold || 45} persone: suggerire email a ${config.owner_email || 'il ristorante'}
+═══════════════════════════════════════════════════════════════════════════════
+
+⚠️ REGOLA CRITICA — CHIUSURE PARZIALI (pranzo/cena):
+NON dire MAI al cliente che siamo "chiusi a pranzo" o "chiusi a cena" un giorno specifico
+senza aver prima chiamato check_availability. Il tool restituirà l'informazione corretta.
+Se non chiami check_availability, potresti dare informazioni false.
 ═══════════════════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -442,6 +448,18 @@ ALWAYS say "One moment..." before any tool call.`;
 // ═══════════════════════════════════════════════════════════════════════════════
 // FORMAT CLOSED DAYS
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// Solo chiusure settimanali totali (no pranzo/cena — gestite da check_availability)
+function formatClosedDaysOnly(config, isItalian) {
+  const dayNames = isItalian
+    ? ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato']
+    : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  if (config.weekly_closing_days?.length > 0) {
+    const days = config.weekly_closing_days.map(d => dayNames[d]).join(', ');
+    return isItalian ? days : days;
+  }
+  return isItalian ? 'Nessuna chiusura fissa' : 'No fixed closures';
+}
 
 function formatClosedDays(config, isItalian) {
   const dayNames = isItalian
