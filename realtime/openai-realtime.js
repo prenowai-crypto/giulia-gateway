@@ -395,6 +395,8 @@ const NAME_EXCLUDE = new Set([
   // Placeholder — MAI nomi reali
   "l'utente",'utente','cliente','client','unknown','sconosciuto',
   'prenotazione','reservation','tavolo','table',
+  // Parole tecniche/web che Whisper trascrive a volte
+  'org','com','net','www','http','html','amara',
 ]);
 
 const VERB_START = /^(vorrei|voglio|volevo|potrei|potevo|dovrei|ho|ha|hai|abbiamo|avevo|avrei|sono|sei|siamo|stavo|sto|cerco|chiamo|posso|possiamo|vorremmo)\b/i;
@@ -749,11 +751,20 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     const people = parsePeople(transcript);
     if (people && cd.people !== people) { console.log(`👥 [SERVER] people: ${cd.people} → ${people}`); cd.people = people; }
 
-    // 5. Nome: lock solo se già acquisito (FIX v3.9.21)
-    const nameLocked = locked && cd.name !== null;
+    // 5. Nome: lock protegge il nome già acquisito, MA lascia passare correzioni esplicite
+    // Es: "io mi chiamo Simone", "il mio nome è X", "a nome X" — sempre accettate
+    const EXPLICIT_NAME = /\b(mi\s+chiamo|il\s+(?:mio\s+)?nome\s+[èe]|sono\s+[A-Za-z]|a\s+nome|i'?m\s+|my\s+name\s+is)\s+/i;
+    const isExplicitName = EXPLICIT_NAME.test(transcript);
+    const nameLocked = locked && cd.name !== null && !isExplicitName;
     if (!nameLocked) {
       const name = parseName(transcript);
-      if (name && cd.name !== name) { console.log(`👤 [SERVER] name: "${cd.name}" → "${name}"`); cd.name = name; }
+      if (name && cd.name !== name) {
+        if (locked && cd.name !== null) console.log(`👤 [SERVER] name AGGIORNATO (correzione esplicita): "${cd.name}" → "${name}"`);
+        else console.log(`👤 [SERVER] name: "${cd.name}" → "${name}"`);
+        cd.name = name;
+        // Aggiorna anche pendingReservation se esiste
+        if (this.state.pendingReservation) this.state.pendingReservation.name = name;
+      }
     } else {
       const name = parseName(transcript);
       if (name && cd.name !== name) console.log(`🔒 [SERVER] name LOCKED (già: "${cd.name}") — ignorato: "${name}"`);
@@ -875,6 +886,32 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     if (this.recentAiPhrases.length > this.MAX_AI_HISTORY * 2) this.recentAiPhrases.pop();
   }
 
+  // Rileva audio di sottofondo non pertinente (TV, radio, sottotitoli, ecc.)
+  _isBackgroundNoise(text) {
+    if (!text) return true;
+    const t = text.toLowerCase().trim();
+
+    // Pattern tipici di sottofondo TV/sottotitoli
+    const noisePatterns = [
+      /sottotitoli/i,
+      /amara\.org/i,
+      /alla\s+prossima/i,
+      /copyright/i,
+      /tutti\s+i\s+diritti/i,
+      /^(ciao|ok|eh|ah|uhm|mhm|hmm)\s*$/i,
+      /subtitles?\s+by/i,
+      /transcribed\s+by/i,
+    ];
+    for (const p of noisePatterns) {
+      if (p.test(t)) return true;
+    }
+
+    // Troppo corto E non contiene nulla di utile
+    if (t.length < 3) return true;
+
+    return false;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // MESSAGE HANDLER
   // ─────────────────────────────────────────────────────────────────────────
@@ -917,6 +954,8 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
         if (msg.transcript) {
           const t = msg.transcript.trim();
           if (this._isEcho(t)) { console.log(`🔇 Trascrizione IGNORATA (echo)`); return; }
+          // Filtro rumore di fondo: testo non pertinente a una prenotazione
+          if (this._isBackgroundNoise(t)) { console.log(`🔇 Trascrizione IGNORATA (rumore): "${t.substring(0,40)}"`); return; }
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
           this._parseAndStore(t);
