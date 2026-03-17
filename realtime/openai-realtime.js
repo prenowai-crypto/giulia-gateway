@@ -1,19 +1,137 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - OPENAI REALTIME CLIENT v3.0.0
+// PRENOW - OPENAI REALTIME CLIENT v4.0.0
 //
-// 🆕 v3.0.0 - SERVER-SIDE STATE MANAGER (anti-hallucination):
-//   - Parsing deterministico di data/ora/persone/nome da ogni trascrizione
-//   - sessionState.collectedData: fonte di verità lato server
-//   - GPT non può inventare dati: prepare_reservation usa collectedData
-//   - "Un attimo..." automatico prima di ogni tool call (via system prompt)
-//
-// FIX v2.2.1 (ereditate):
-//   - Constructor: salva callerPhone
-//   - sessionState: aggiunto foundReservation
-//   - handleToolCall: passa callerPhone al context
+// 🆕 v4.0.0 - STATE MANAGER integrato:
+//   - sessionState.phase: fase conversazionale (collecting, awaiting_confirm, ecc.)
+//   - Tool call bloccate se non permesse nella fase corrente
+//   - System prompt dinamico per fase
+//   - Transizioni automatiche dopo ogni tool call
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE MANAGER — fasi conversazionali
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PHASES = {
+  INITIAL:                 'initial',
+  COLLECTING:              'collecting',
+  AWAITING_CONFIRM:        'awaiting_confirm',
+  FINDING:                 'finding',
+  AWAITING_MODIFY_DETAILS: 'awaiting_modify_details',
+  AWAITING_MODIFY_CONFIRM: 'awaiting_modify_confirm',
+  AWAITING_CANCEL_CONFIRM: 'awaiting_cancel_confirm',
+  COMPLETED:               'completed',
+};
+
+const ALLOWED_TOOLS = {
+  initial:                  ['check_availability', 'find_reservation'],
+  collecting:               ['check_availability', 'prepare_reservation'],
+  awaiting_confirm:         ['create_reservation', 'prepare_reservation'],
+  finding:                  ['find_reservation'],
+  awaiting_modify_details:  ['check_availability', 'prepare_reservation', 'find_reservation'],
+  awaiting_modify_confirm:  ['modify_reservation', 'prepare_reservation'],
+  awaiting_cancel_confirm:  ['cancel_reservation'],
+  completed:                [],
+};
+
+function isToolAllowed(toolName, phase) {
+  return (ALLOWED_TOOLS[phase] || []).includes(toolName);
+}
+
+function initialPhaseForIntent(intent) {
+  if (intent === 'modify' || intent === 'cancel') return PHASES.FINDING;
+  return PHASES.COLLECTING;
+}
+
+function advancePhase(currentPhase, toolName, result, intent) {
+  if (toolName === 'check_availability') return currentPhase;
+  switch (currentPhase) {
+    case 'initial':
+    case 'collecting':
+      if (toolName === 'prepare_reservation' && result.ready) return PHASES.AWAITING_CONFIRM;
+      return currentPhase;
+    case 'awaiting_confirm':
+      if (toolName === 'create_reservation' && result.success) return PHASES.COMPLETED;
+      if (toolName === 'prepare_reservation') return PHASES.AWAITING_CONFIRM;
+      return currentPhase;
+    case 'finding':
+      if (toolName === 'find_reservation') {
+        if (result.found === true)
+          return intent === 'cancel' ? PHASES.AWAITING_CANCEL_CONFIRM : PHASES.AWAITING_MODIFY_DETAILS;
+        return PHASES.INITIAL; // non trovata
+      }
+      return currentPhase;
+    case 'awaiting_modify_details':
+      if (toolName === 'prepare_reservation' && result.ready) return PHASES.AWAITING_MODIFY_CONFIRM;
+      return currentPhase;
+    case 'awaiting_modify_confirm':
+      if (toolName === 'modify_reservation' && result.success) return PHASES.COMPLETED;
+      if (toolName === 'prepare_reservation') return PHASES.AWAITING_MODIFY_CONFIRM;
+      return currentPhase;
+    case 'awaiting_cancel_confirm':
+      if (toolName === 'cancel_reservation' && result.success) return PHASES.COMPLETED;
+      return currentPhase;
+    default:
+      return currentPhase;
+  }
+}
+
+function buildPhaseInstructions(phase, sessionState) {
+  const cd = sessionState.collectedData;
+  const found = sessionState.foundReservation;
+  switch (phase) {
+    case 'initial':
+      return 'Nessuna prenotazione trovata. Informa il cliente e chiedi se vuole fare una nuova prenotazione.';
+    case 'collecting': {
+      const missing = [];
+      if (!cd.date)   missing.push('la data');
+      if (!cd.time)   missing.push("l'orario");
+      if (!cd.people) missing.push('il numero di persone');
+      if (!cd.name)   missing.push('il nome');
+      if (missing.length === 0) return 'Tutti i dati sono pronti. Chiama prepare_reservation.';
+      return `Stai raccogliendo i dati. Manca ancora: ${missing.join(', ')}. Chiedi solo la prossima informazione mancante, una alla volta.`;
+    }
+    case 'awaiting_confirm':
+      return 'Hai letto il riepilogo. Aspetta conferma esplicita. Se "sì/confermo/va bene" → chiama create_reservation. Se vuole cambiare → raccogli i nuovi dati.';
+    case 'finding':
+      return 'Chiama find_reservation con il nome della prenotazione.';
+    case 'awaiting_modify_details': {
+      if (!found) return 'Chiama find_reservation prima.';
+      return `Prenotazione trovata: ${found.people} persone il ${found.date} alle ${(found.time||'').substring(0,5)} a nome ${found.name}. Chiedi cosa vuole modificare (orario, data, persone). Poi check_availability e prepare_reservation.`;
+    }
+    case 'awaiting_modify_confirm':
+      return 'Hai letto il riepilogo della modifica. Aspetta conferma. Se conferma → modify_reservation. Se vuole cambiare → raccogli nuovi dati.';
+    case 'awaiting_cancel_confirm': {
+      if (!found) return 'Chiama find_reservation prima.';
+      return `Prenotazione trovata: ${found.people} persone il ${found.date} alle ${(found.time||'').substring(0,5)} a nome ${found.name}. Chiedi conferma: "Confermi di volerla cancellare?". Se sì → cancel_reservation. Se no → NON cancellare.`;
+    }
+    case 'completed':
+      return 'Richiesta completata. Saluta il cliente.';
+    default:
+      return null;
+  }
+}
+
+function _blockedToolMessage(toolName, phase) {
+  switch (toolName) {
+    case 'create_reservation':
+      return `Non puoi creare senza prepare_reservation e conferma cliente. Fase: ${phase}.`;
+    case 'cancel_reservation':
+      return phase === 'finding'
+        ? 'Prima trova la prenotazione con find_reservation.'
+        : 'Prima chiedi conferma esplicita al cliente.';
+    case 'modify_reservation':
+      return phase === 'finding'
+        ? 'Prima trova la prenotazione con find_reservation.'
+        : 'Prima chiedi conferma con prepare_reservation.';
+    case 'find_reservation':
+      return 'Stai creando una nuova prenotazione, non cercare prenotazioni esistenti.';
+    default:
+      return `Tool "${toolName}" non permessa in fase "${phase}".`;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 🆕 v3.0.0: PARSING DETERMINISTICO (porta logica da v3.9.31)
@@ -617,7 +735,7 @@ function parseMealContext(text) {
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-
+// Messaggio da restituire quando una tool è bloccata per fase
 // ─────────────────────────────────────────────────────────────────────────────
 // CLASSE PRINCIPALE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -646,15 +764,17 @@ export class OpenAIRealtimeClient {
       pendingConfirmation: false,
       foundReservation: null,
       initialIntent: null,  // 'create' | 'modify' | 'cancel' — rilevato alla prima frase
+      phase: PHASES.INITIAL,  // fase conversazionale corrente
+      cancelConfirmed: false,
 
-      // 🆕 v3.0.0: fonte di verità server-side (GPT non può sovrascrivere)
+      // fonte di verità server-side (GPT non può sovrascrivere)
       collectedData: {
         date: null,
         time: null,
         people: null,
         name: null,
         email: null,
-        mealContext: null,  // 'pranzo' | 'cena' | null
+        mealContext: null,
       }
     };
 
@@ -716,6 +836,19 @@ Se l'email NON è stata fornita: NON includerla nel riepilogo. NON inventare ema
 REGOLA RECAP - CRITICA:
 Quando prepare_reservation restituisce il campo "recap", devi leggerlo AL CLIENTE ESATTAMENTE COME È SCRITTO, parola per parola. NON riformularlo. NON usare orari o dati diversi da quelli nel recap. Il recap è la fonte di verità assoluta.
 
+REGOLA ERRORI PREPARE - CRITICA:
+Se prepare_reservation restituisce ready=false:
+- NON fare il recap da solo
+- NON inventare dati (orari, nomi, date) che non hai verificato
+- Leggi SOLO il campo "message" dell'errore e seguilo
+- Esempi:
+  - missing:name → chiedi SOLO "A che nome prenoto?"
+  - missing:time → chiedi SOLO "A che ora preferisce?"
+  - missing:date → chiedi SOLO "Per quale giorno?"
+  - outside_hours → di' gli orari disponibili e aspetta che il cliente scelga
+- Dopo che il cliente risponde, richiama prepare_reservation — NON chiamare create_reservation senza prepare
+- MAI dire "la prenotazione è confermata" o fare un recap prima che prepare risponda con ready=true
+
 REGOLA CHIUSURA - MASSIMA PRIORITÀ, ESEGUIRE PRIMA DI QUALSIASI ALTRA COSA:
 Appena il cliente menziona un giorno qualsiasi (es. "lunedì", "martedì", "domani", "giovedì prossimo"), devi chiamare IMMEDIATAMENTE check_availability con quella data, usando time="20:00" e people=2 come placeholder. NON chiedere orario, persone o altro — prima verifica se il giorno è aperto. Se il tool risponde day_closed, comunicalo subito e proponi un altro giorno. Solo se il giorno è APERTO, poi chiedi orario e persone.
 
@@ -755,7 +888,10 @@ FLUSSO CANCELLAZIONE (CANCEL):
 MAI cancellare senza conferma esplicita.
 
 REGOLA CONFERMA - CRITICA:
-Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi OBBLIGATORIAMENTE chiamare il tool create_reservation. NON puoi dire "prenotazione confermata" o "a presto" senza aver prima chiamato create_reservation. Se non chiami create_reservation, la prenotazione NON esiste. La frase "Grazie, a presto!" va detta SOLO DOPO che create_reservation ha risposto con successo.`;
+Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi OBBLIGATORIAMENTE chiamare il tool create_reservation. NON puoi dire "prenotazione confermata" o "a presto" senza aver prima chiamato create_reservation. Se non chiami create_reservation, la prenotazione NON esiste. La frase "Grazie, a presto!" va detta SOLO DOPO che create_reservation ha risposto con successo.
+
+FASE CORRENTE: ${this.sessionState.phase.toUpperCase()}
+Segui le istruzioni specifiche per la fase corrente. Il sistema aggiornerà automaticamente le istruzioni dopo ogni azione completata.`;
 
     this.send({
       type: 'session.update',
@@ -799,11 +935,12 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
     const locked = this.sessionState.pendingConfirmation === true;
     const prevDate = cd.date;
 
-    // 🆕 Rileva intent alla prima frase (solo se non ancora impostato)
+    // Rileva intent alla prima frase (solo se non ancora impostato)
     if (!this.sessionState.initialIntent) {
       const intent = detectIntent(transcript);
       this.sessionState.initialIntent = intent;
-      console.log(`🎯 [SERVER] initialIntent: "${intent}"`);
+      this.sessionState.phase = initialPhaseForIntent(intent);
+      console.log(`🎯 [SERVER] initialIntent: "${intent}" → phase: "${this.sessionState.phase}"`);
     }
 
     const date = parseDate(transcript);
@@ -1084,23 +1221,36 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // TOOL CALL HANDLER v3.0.0
+  // TOOL CALL HANDLER v4.0.0 — con StateManager
   // ─────────────────────────────────────────────────────────────────────────
 
   async handleToolCall(message) {
     const { call_id, name, arguments: argsString } = message;
-    console.log(`🔧 Tool call: ${name}`);
+    const phase = this.sessionState.phase;
+    console.log(`🔧 Tool call: ${name} [fase: ${phase}]`);
     console.log(`📊 collectedData:`, JSON.stringify(this.sessionState.collectedData));
 
-    // 🛡️ Fix barge-in: se il JSON è troncato (utente ha interrotto), ignora silenziosamente
+    // 🛡️ Fix barge-in: se il JSON è troncato, ignora silenziosamente
     let args;
     try {
       args = JSON.parse(argsString);
     } catch (e) {
-      console.warn(`⚠️ Tool call ${name} ignorato: JSON malformato (barge-in durante tool call). argsString="${argsString?.substring(0,50)}"`);
-      // Non mandare nulla a OpenAI — la risposta è già stata interrotta dal barge-in
+      console.warn(`⚠️ Tool call ${name} ignorato: JSON malformato (barge-in)`);
       return;
     }
+
+    // 🛡️ Guard fase: blocca tool non permesse nella fase corrente
+    if (!isToolAllowed(name, phase)) {
+      console.warn(`⛔ Tool "${name}" NON permessa in fase "${phase}"`);
+      const msg = _blockedToolMessage(name, phase, this.sessionState);
+      this.send({
+        type: 'conversation.item.create',
+        item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: msg }) }
+      });
+      this.send({ type: 'response.create' });
+      return;
+    }
+
     try {
       const tool = this.tools.find(t => t.name === name);
       if (!tool) throw new Error(`Tool non trovato: ${name}`);
@@ -1114,11 +1264,32 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
 
       console.log(`✅ Tool result [${name}]:`, JSON.stringify(result).substring(0, 200));
 
+      // 🔄 Avanza fase in base al risultato
+      const newPhase = advancePhase(phase, name, result, this.sessionState.initialIntent);
+      if (newPhase !== phase) {
+        this.sessionState.phase = newPhase;
+        console.log(`📍 Fase: "${phase}" → "${newPhase}"`);
+      }
+
+      // 📋 Istruzioni dinamiche per la nuova fase
+      const phaseInstructions = buildPhaseInstructions(
+        newPhase, this.sessionState, this.restaurantConfig
+      );
+
       this.send({
         type: 'conversation.item.create',
         item: { type: 'function_call_output', call_id, output: JSON.stringify(result) }
       });
-      this.send({ type: 'response.create' });
+
+      // Inietta istruzioni di fase se disponibili
+      if (phaseInstructions) {
+        this.send({
+          type: 'response.create',
+          response: { instructions: phaseInstructions }
+        });
+      } else {
+        this.send({ type: 'response.create' });
+      }
 
     } catch (error) {
       console.error(`❌ Tool error (${name}):`, error);
