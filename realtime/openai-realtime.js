@@ -318,6 +318,26 @@ function parseTime(text) {
       allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
+  // "alle 20 e 30", "alle 8 e mezza", "alle 20 e trenta" — cifre + parola minuti
+  const minuteWordMap = { 'mezza':30,'mezzo':30,'trenta':30,'quindici':15,'quaranta':40,'quarantacinque':45,'venti':20,'dieci':10,'cinque':5 };
+  const reEWord = new RegExp(`(?:alle|ore|per le|at)\\s*(\\d{1,2})\\s+e\\s+(${Object.keys(minuteWordMap).join('|')})\\b`, 'gi');
+  while ((m = reEWord.exec(t)) !== null) {
+    let h = parseInt(m[1]);
+    const min = minuteWordMap[m[2].toLowerCase()] || 0;
+    if (h >= 1 && h <= 11 && !/mattina|pranzo|morning|lunch/.test(t)) h += 12;
+    if (h >= 0 && h <= 23)
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
+  }
+
+  // "alle 20 e 30" — cifre + cifre minuti
+  const reENum = /(?:alle|ore|per le|at)\s*(\d{1,2})\s+e\s+(\d{2})\b/gi;
+  while ((m = reENum.exec(t)) !== null) {
+    let h = parseInt(m[1]), min = parseInt(m[2]);
+    if (h >= 1 && h <= 11 && !/mattina|pranzo|morning|lunch/.test(t)) h += 12;
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
+  }
+
   const re2 = /(?:alle|ore|per le|l['\s]e?|at)\s*(\d{1,2})\b/gi;
   while ((m = re2.exec(t)) !== null) {
     let h = parseInt(m[1]);
@@ -884,7 +904,9 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
       istruzioni = `Il ristorante è chiuso il ${nomeGiorno}. Di' subito al cliente: "Mi dispiace, siamo chiusi il ${nomeGiorno}. Vuole prenotare per un altro giorno?"`;
     }
     try {
-      this.send({ type: 'response.cancel' });
+      if (this.isAiCurrentlySpeaking) {
+        this.send({ type: 'response.cancel' });
+      }
       setTimeout(() => {
         try {
           this.send({
@@ -894,7 +916,7 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
         } catch(e) {
           console.error('❌ Errore inject closed day:', e);
         }
-      }, 200);
+      }, this.isAiCurrentlySpeaking ? 300 : 50);
     } catch(e) {
       console.error('❌ Errore cancel per closed day:', e);
     }
@@ -904,7 +926,9 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
   _injectCheckAvailabilityHint(date, time, people) {
     const isPlaceholder = !this.sessionState.collectedData?.time;
     try {
-      this.send({ type: 'response.cancel' });
+      if (this.isAiCurrentlySpeaking) {
+        this.send({ type: 'response.cancel' });
+      }
       setTimeout(() => {
         try {
           this.send({
