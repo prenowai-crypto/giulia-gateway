@@ -267,6 +267,24 @@ export const realtimeTools = [
         return { ready: false, missing: 'date', message: `La data ${date} è nel passato.` };
       }
 
+      // 🛡️ Valida che l'orario sia dentro la finestra di apertura
+      const [h, m] = time.split(':').map(Number);
+      const timeMinutes = h * 60 + m;
+      const isLunchTime = h < 15;
+      if (isLunchTime) {
+        const [lhs, lhm] = (restaurantConfig.lunch_start || '12:00').split(':').map(Number);
+        const [les, lem] = (restaurantConfig.lunch_end   || '14:30').split(':').map(Number);
+        if (timeMinutes < lhs*60+lhm || timeMinutes >= les*60+lem) {
+          return { ready: false, missing: 'time', message: `L'orario ${time} è fuori dalla fascia pranzo (${restaurantConfig.lunch_start||'12:00'}-${restaurantConfig.lunch_end||'14:30'}). Chiedere un orario corretto.` };
+        }
+      } else {
+        const [dhs, dhm] = (restaurantConfig.dinner_start || '19:00').split(':').map(Number);
+        const [des, dem] = (restaurantConfig.dinner_end   || '22:30').split(':').map(Number);
+        if (timeMinutes < dhs*60+dhm || timeMinutes >= des*60+dem) {
+          return { ready: false, missing: 'time', message: `L'orario ${time} è fuori dalla fascia cena (${restaurantConfig.dinner_start||'19:00'}-${restaurantConfig.dinner_end||'22:30'}). Chiedere un orario corretto.` };
+        }
+      }
+
       // Costruisce note: email + note aggiuntive
       const noteParts = [];
       if (email) noteParts.push(`Email: ${email}`);
