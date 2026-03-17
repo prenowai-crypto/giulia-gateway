@@ -396,18 +396,22 @@ export const realtimeTools = [
     handler: async (args, context) => {
       const { restaurantConfig, sessionState, callerPhone } = context;
 
-      // 🆕 v3.0.0: usa collectedData come fonte primaria per nome e data
+      // 🆕 v3.0.0: per find_reservation, il telefono è la fonte primaria (sempre disponibile).
+      // La data viene da GPT (che conosce la data originale) NON da cd.date
+      // (cd.date durante una modifica contiene la data DESTINAZIONE, non l'originale).
+      // Il nome: preferisce cd.name se valido, altrimenti GPT.
       const cd = sessionState?.collectedData || {};
-      const name = cd.name || args.name;
-      const date = cd.date || args.date || '';
+      const name = (cd.name && isValidName(cd.name)) ? cd.name : args.name;
+      // ⚠️ NON usare cd.date: durante modify contiene la data nuova, non quella originale
+      const date = args.date || '';
 
       console.log(`🔍 find_reservation v3.0.0:`);
-      console.log(`   [SERVER] name="${cd.name}" date="${cd.date}"`);
+      console.log(`   [SERVER] name="${cd.name}" date="${cd.date}" (NON usata per find)`);
       console.log(`   [GPT]    name="${args.name}" date="${args.date}"`);
       console.log(`   [FINALE] name="${name}" date="${date}" tel="${callerPhone || 'n/a'}"`);
 
       if (!isValidName(name)) {
-        return { found: false, message: `Nome "${name}" non valido. Chiedere il nome della prenotazione.` };
+        return { found: false, message: `Nome non specificato. Chiedere il nome della prenotazione.` };
       }
 
       try {
