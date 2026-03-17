@@ -631,6 +631,7 @@ export class OpenAIRealtimeClient {
     this.MAX_AI_HISTORY    = 10;
     this.lastAiFinishedTime = 0;
     this.isAiCurrentlySpeaking = false;
+    this.isResponseActive  = false;  // true tra response.create e response.done
     this.speechStartedDuringAi = false;
     this.ECHO_WINDOW_MS    = 2500;
     this.audioSendCount    = 0;
@@ -677,8 +678,11 @@ REGOLE OPERATIVE — LEGGI PRIMA DI TUTTO:
    Se prepare_reservation restituisce ready=false → leggi SOLO il campo "message" e seguilo.
    NON fare recap da solo. NON chiamare create_reservation senza prepare.
 
-5. CONFERMA OBBLIGATORIA:
-   create_reservation → SOLO dopo prepare E conferma esplicita del cliente.
+5. CONFERMA OBBLIGATORIA (CRITICO):
+   Quando il cliente dice "sì", "confermo", "va bene" dopo il recap:
+   → Dì "Un attimo, registro la prenotazione..." → chiama create_reservation IMMEDIATAMENTE.
+   → NON dire mai "prenotazione confermata", "perfetto", "ti aspettiamo" PRIMA che create_reservation risponda con success=true.
+   → Se non chiami create_reservation, la prenotazione NON ESISTE nel sistema. Zero eccezioni.
    cancel_reservation → SOLO dopo find E conferma esplicita del cliente.
    modify_reservation → SOLO dopo find, check, prepare E conferma esplicita.
 
@@ -708,6 +712,7 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     });
 
     this.isAiCurrentlySpeaking = true;
+    this.isResponseActive = true;
     this.send({
       type: 'conversation.item.create',
       item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '[Cliente in linea. Saluta brevemente e chiedi come puoi aiutarlo.]' }] }
@@ -770,7 +775,7 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
 
     // 8. Auto-trigger chiusura/disponibilità quando arriva una nuova data
     const isModifyContext = !!this.state.foundReservation || this.state.initialIntent === 'modify' || this.state.initialIntent === 'cancel';
-    if (cd.date && cd.date !== prevDate && !locked && !isModifyContext && !this.isAiCurrentlySpeaking) {
+    if (cd.date && cd.date !== prevDate && !locked && !isModifyContext && !this.isResponseActive) {
       this._handleNewDate(cd.date, cd.mealContext);
     }
   }
@@ -801,21 +806,24 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
   }
 
   _injectMessage(instructions) {
-    if (this.isAiCurrentlySpeaking) this.send({ type: 'response.cancel' });
+    if (this.isResponseActive) this.send({ type: 'response.cancel' });
     setTimeout(() => {
-      try { this.send({ type: 'response.create', response: { instructions } }); }
-      catch(e) { console.error('❌ Errore inject:', e); }
-    }, this.isAiCurrentlySpeaking ? 300 : 50);
+      try {
+        this.isResponseActive = true;
+        this.send({ type: 'response.create', response: { instructions } });
+      } catch(e) { console.error('❌ Errore inject:', e); }
+    }, this.isResponseActive ? 300 : 50);
   }
 
   _injectCheckHint(date, time, people, isPlaceholder) {
-    if (this.isAiCurrentlySpeaking) this.send({ type: 'response.cancel' });
+    if (this.isResponseActive) this.send({ type: 'response.cancel' });
     setTimeout(() => {
       try {
         this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[verifica disponibilità per ${date}]` }] } });
         const instructions = isPlaceholder
           ? `Chiama check_availability con date="${date}", time="${time}", people=${people}. IMPORTANTE: l'orario è solo un placeholder — dopo il check, chiedi l'orario esplicito al cliente.`
           : `Chiama check_availability con date="${date}", time="${time}", people=${people}.`;
+        this.isResponseActive = true;
         this.send({ type: 'response.create', response: { instructions } });
       } catch(e) { console.error('❌ Errore inject check:', e); }
     }, 200);
@@ -868,6 +876,7 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
         break;
       case 'response.audio.delta':
         this.isAiCurrentlySpeaking = true;
+        this.isResponseActive = true;
         if (msg.delta) this.onAudioDelta(msg.delta);
         break;
       case 'response.audio_transcript.done':
@@ -879,6 +888,7 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
         break;
       case 'response.done':
         this.isAiCurrentlySpeaking = false;
+        this.isResponseActive = false;
         this.lastAiFinishedTime = Date.now();
         if (msg.response?.status === 'failed') console.error('❌ Risposta fallita:', msg.response.status_details);
         break;
@@ -954,11 +964,13 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
       const phaseInstr = buildPhaseInstructions(newPhase, this.state);
 
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify(result) } });
+      this.isResponseActive = true;
       this.send(phaseInstr ? { type: 'response.create', response: { instructions: phaseInstr } } : { type: 'response.create' });
 
     } catch(err) {
       console.error(`❌ Tool error (${name}):`, err);
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ error: err.message }) } });
+      this.isResponseActive = true;
       this.send({ type: 'response.create' });
     }
   }
