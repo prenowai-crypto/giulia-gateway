@@ -485,11 +485,9 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
 
   // Inietta un messaggio sistema che spinge GPT a chiamare check_availability subito
   _injectCheckAvailabilityHint(date, time, people) {
+    const isPlaceholder = !this.sessionState.collectedData?.time;
     try {
-      // Cancella eventuale risposta in corso prima di iniettare
       this.send({ type: 'response.cancel' });
-
-      // Piccolo delay per permettere la cancellazione
       setTimeout(() => {
         try {
           this.send({
@@ -503,11 +501,12 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
               }]
             }
           });
+          const instructions = isPlaceholder
+            ? `Chiama check_availability con date="${date}", time="${time}", people=${people}. IMPORTANTE: l'orario ${time} è solo un placeholder per verificare se il giorno è aperto — NON proporlo al cliente. Dopo il check, chiedi l'orario esplicito al cliente.`
+            : `Chiama check_availability con date="${date}", time="${time}", people=${people}.`;
           this.send({
             type: 'response.create',
-            response: {
-              instructions: `Chiama IMMEDIATAMENTE il tool check_availability con date="${date}", time="${time}", people=${people}. Questo è obbligatorio prima di qualsiasi risposta.`
-            }
+            response: { instructions }
           });
         } catch(e) {
           console.error('❌ Errore auto-trigger (delayed):', e);
