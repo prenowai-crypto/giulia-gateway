@@ -425,7 +425,9 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
     }
 
     // 🆕 AUTO-TRIGGER: se è stata parsata una nuova data, verifica subito chiusura
-    if (cd.date && cd.date !== prevDate && !locked) {
+    // NON scatta se siamo in contesto modifica (foundReservation già presente)
+    const isModifyContext = !!this.sessionState.foundReservation;
+    if (cd.date && cd.date !== prevDate && !locked && !isModifyContext) {
       const dayOfWeek = new Date(cd.date + 'T12:00:00').getDay();
       const closingDays = this.restaurantConfig?.weekly_closing_days || [];
       const lunchClosedDays = this.restaurantConfig?.lunch_closed_days || [];
@@ -447,6 +449,8 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
         const peopleForCheck = cd.people || 2;
         this._injectCheckAvailabilityHint(cd.date, timeForCheck, peopleForCheck);
       }
+    } else if (cd.date && cd.date !== prevDate && isModifyContext) {
+      console.log(`⏭️ [SERVER] Auto-trigger saltato: contesto modifica (foundReservation presente)`);
     }
   }
 
