@@ -68,6 +68,15 @@ function formatDateForSpeech(dateStr) {
   } catch { return dateStr; }
 }
 
+// Formatta orario per il TTS — omette i minuti se sono 00
+// "21:00" → "21" (TTS legge "ventuno"), "21:30" → "21:30" (TTS legge "ventuno e trenta")
+function formatTimeForSpeech(timeStr) {
+  if (!timeStr) return '';
+  const t = timeStr.substring(0, 5);
+  const [h, m] = t.split(':');
+  return m === '00' ? h : t;
+}
+
 function getDayName(dayIndex, italian = true) {
   const names = italian
     ? ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato']
@@ -224,10 +233,9 @@ export const realtimeTools = [
       // In contesto MODIFICA: usa foundReservation come fallback per time/people
       const cd = sessionState?.collectedData || {};
       const found = sessionState?.foundReservation;
-      // Nome: server-side prioritario. Se cd.name è null ma GPT ha il nome (race condition transcript),
-      // accetta args.name come fallback di emergenza — verrà aggiornato nel prossimo giro
-      const name   = cd.name || (isValidName(args.name) ? args.name : null);
-      const time   = cd.time || found?.time;               // fallback da prenotazione trovata
+      // Nome: SOLO server-side. Zero fallback GPT — GPT inventa nomi come "l'utente"
+      const name   = cd.name || null;
+      const time   = cd.time || found?.time;
       const date   = cd.date || args.date;
       const people = cd.people || found?.people || args.people;
       const email  = cd.email || args.email;
@@ -299,7 +307,7 @@ export const realtimeTools = [
       }
 
       const dateDisplay = formatDateForSpeech(date);
-      const timeDisplay = time.substring(0, 5);
+      const timeDisplay = formatTimeForSpeech(time);
       const firstName = name.split(' ')[0];
       const largeGroupThreshold = restaurantConfig?.large_group_threshold || 10;
       const isLargeGroup = people > largeGroupThreshold;
@@ -426,9 +434,9 @@ export const realtimeTools = [
           const dateDisplay = formatDateForSpeech(date);
           const firstName = name.split(' ')[0];
           if (status === 'PENDING_OWNER') {
-            return { success: true, status: 'PENDING_OWNER', message: `Richiesta registrata per ${people} persone a nome ${name} per ${dateDisplay} alle ${time.substring(0,5)}. Il ristoratore ti contatterà per confermare.` };
+            return { success: true, status: 'PENDING_OWNER', message: `Richiesta registrata per ${people} persone a nome ${name} per ${dateDisplay} alle ${formatTimeForSpeech(time)}. Il ristoratore ti contatterà per confermare.` };
           }
-          return { success: true, status: 'CONFIRMED', message: `Prenotazione confermata! ${people} persone, ${dateDisplay} alle ${time.substring(0,5)}, a nome ${name}. Ti aspettiamo!` };
+          return { success: true, status: 'CONFIRMED', message: `Prenotazione confermata! ${people} persone, ${dateDisplay} alle ${formatTimeForSpeech(time)}, a nome ${name}. Ti aspettiamo!` };
         } else {
           return { success: false, reason: result.reason || 'unknown', message: result.message || 'Errore creazione. Riprovare.' };
         }
@@ -505,7 +513,7 @@ export const realtimeTools = [
             people: r.people || r.persone,
             name: r.name || r.nome,
             phone: r.phone || r.telefono || callerPhone || '',
-            displayText: `${formatDateForSpeech(r.date || r.data)} alle ${(r.time || r.ora || '').substring(0, 5)} per ${r.people || r.persone} persone`
+            displayText: `${formatDateForSpeech(r.date || r.data)} alle ${formatTimeForSpeech(r.time || r.ora || '')} per ${r.people || r.persone} persone`
           }));
 
           // ✅ FIX: salva in sessionState per modify/cancel
@@ -593,7 +601,7 @@ export const realtimeTools = [
         if (result.success) {
           const parts = [];
           if (newDate) parts.push(`data: ${formatDateForSpeech(newDate)}`);
-          if (newTime) parts.push(`orario: ${newTime.substring(0, 5)}`);
+          if (newTime) parts.push(`orario: ${formatTimeForSpeech(newTime)}`);
           if (newPeople) parts.push(`persone: ${newPeople}`);
           
           // Pulisci stato
@@ -641,7 +649,7 @@ export const realtimeTools = [
         const day = dateObj.getDate();
         const months = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
         const monthName = months[dateObj.getMonth()];
-        const time = found.time?.substring(0,5) || '';
+        const time = formatTimeForSpeech(found.time) || '';
         return {
           success: false,
           reason: 'awaiting_cancel_confirm',
