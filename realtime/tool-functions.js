@@ -454,7 +454,8 @@ export const realtimeTools = [
             found: true,
             count: reservations.length,
             reservations,
-            message: `Trovata/e ${reservations.length} prenotazione/i a nome ${name}.`
+            message: `Trovata/e ${reservations.length} prenotazione/i a nome ${name}.`,
+            ISTRUZIONE: `Prenotazione trovata: ${reservations[0].displayText}. Per la modifica, usa data/orario/persone di questa prenotazione come punto di partenza — NON inventare orari diversi. Chiedi al cliente SOLO le modifiche specifiche che vuole.`
           };
         }
 
