@@ -168,24 +168,19 @@ function parsePeople(text) {
 
 function parseName(text) {
   if (!text) return null;
-  // Strip "nome " o "nome: " iniziale (es. "Nome Mirko" → "Mirko")
-  // Strip anche punteggiatura finale (es. "Mirko." → "Mirko")
-  let t = text.trim()
-    .replace(/^nome\s*:?\s*/i, '')
-    .replace(/[.,!?]+$/, '')
-    .trim();
+
   const EXCLUDE = [
     'si','no','ok','sì','yes','grazie','prego','esatto','confermo','giusto','certo',
     'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','buonanotte',
-    'io','me','noi','lui','lei','uno','una','un',
-    // parole telefoniche comuni che non sono nomi
+    'io','me','noi','lui','lei','uno','una','un','mille','tanto','molto','subito',
     'pronto','salve','allora','ecco','dunque','quindi','però','anche','magari','cioè',
-    // frasi di controllo linea
-    'ci sei','ci siete','mi senti','mi sentite','pronto pronto'
+    'ci sei','ci siete','mi senti','mi sentite','pronto pronto','grazie mille',
+    'nessuno','nessuna','senza','mail','email'
   ];
-  // Preposizioni/congiunzioni che interrompono il nome
-  const STOP_AFTER_NAME = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|ed|o|a|un|una|uno)\b/i;
 
+  const STOP_AFTER_NAME = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|ed|o|a|un|una|uno|senza|email|mail)\b/i;
+
+  // 1. Cerca pattern espliciti "nome X", "a nome X", ecc. nel testo originale
   const patterns = [
     /\ba\s+nome\s+(?:di\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
     /\bil\s+(?:mio\s+)?nome\s+[èe]\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
@@ -194,19 +189,32 @@ function parseName(text) {
     /\bname\s+is\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
     /\bi'?m\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
     /\bunder\s+(?:the\s+)?name\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)\b/i,
-    // Risposta secca: solo 1-2 parole che sembrano un nome (max 2 token)
-    /^([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]{1,}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)$/,
+    // "nome Francesco" ovunque nella frase (es. "per 4 persone, nome Francesco")
+    /\bnome\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
   ];
+
+  const t = text.trim();
   for (const p of patterns) {
     const m = t.match(p);
     if (m && m[1]) {
-      // Tronca il nome prima di stop words (es. "Simone alle" → "Simone")
       let name = m[1].trim();
       const stopMatch = name.match(STOP_AFTER_NAME);
       if (stopMatch) name = name.substring(0, stopMatch.index).trim();
       if (name.length >= 2 && !EXCLUDE.includes(name.toLowerCase())) return name;
     }
   }
+
+  // 2. Risposta secca: solo 1-2 parole che sembrano un nome
+  const stripped = t.replace(/[.,!?]+$/, '').trim();
+  const words = stripped.split(/\s+/);
+  if (words.length <= 2) {
+    const candidate = stripped;
+    if (/^[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]{1,}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?$/.test(candidate)
+        && !EXCLUDE.includes(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+
   return null;
 }
 
