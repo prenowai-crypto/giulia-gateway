@@ -224,7 +224,9 @@ export const realtimeTools = [
       // In contesto MODIFICA: usa foundReservation come fallback per time/people
       const cd = sessionState?.collectedData || {};
       const found = sessionState?.foundReservation;
-      const name   = cd.name;                              // ← SOLO server, NO fallback GPT
+      // Nome: server-side prioritario. Se cd.name è null ma GPT ha il nome (race condition transcript),
+      // accetta args.name come fallback di emergenza — verrà aggiornato nel prossimo giro
+      const name   = cd.name || (isValidName(args.name) ? args.name : null);
       const time   = cd.time || found?.time;               // fallback da prenotazione trovata
       const date   = cd.date || args.date;
       const people = cd.people || found?.people || args.people;
