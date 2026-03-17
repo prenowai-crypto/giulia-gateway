@@ -98,8 +98,8 @@ export const realtimeTools = [
     },
     handler: async (args, context) => {
       const cd = context?.sessionState?.collectedData || {};
-      const date   = cd.date   || args.date;
-      const time   = cd.time;   // ← SOLO server-side, NO fallback GPT
+      const date   = cd.date;           // ← SOLO server-side, NO fallback GPT
+      const time   = cd.time;           // ← SOLO server-side, NO fallback GPT
       const people = cd.people || args.people || 2;
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
