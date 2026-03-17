@@ -447,7 +447,17 @@ function parseName(text) {
     'always','sempre','ancora','proprio','stesso','solito',
     // parole comuni che Whisper trascrive come nomi
     'nome','mio','mia','suo','sua','il','la','lo','un','una','per','alle',
+    // verbi comuni — MAI nomi
+    'vorrei','voglio','volevo','volrei','volevo','potrei','potevo','dovrei','dovevo',
+    'prenotare','prenoto','prenoterei','cancellare','cancello','modificare','modifico',
+    'chiamare','chiamo','parlare','parlo','sentire','sento','capire','capisco',
+    'aiutare','aiuto','confermare','confermo','verificare','verifico',
   ];
+
+  // Frasi che iniziano con verbo → sicuramente non un nome
+  if (/^(vorrei|voglio|volevo|potrei|potevo|dovrei|ho|ha|hai|abbiamo|avevo|avrei|sono|sei|siamo|stavo|sto|cerco|cerchi|cerca|chiamo|chiama|vorremmo|volevo|posso|possiamo)\b/i.test(t)) {
+    return null;
+  }
 
   const STOP_AFTER = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|ed|o|a|un|una|uno|senza|email|mail)\b/i;
 
@@ -476,12 +486,14 @@ function parseName(text) {
     }
   }
 
-  // Risposta secca: 1-2 parole che sembrano un nome
+  // Risposta secca: 1 parola sola (NON 2 — troppo pericoloso con frasi verbali)
+  // Es: "Francesco", "Rossi" — ma NON "vorrei prenotare", "va bene"
   const stripped = t.replace(/[.,!?]+$/, '').trim();
   const words = stripped.split(/\s+/);
-  if (words.length <= 2) {
-    if (/^[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]{1,}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?$/.test(stripped)
-        && !EXCLUDE.includes(stripped.toLowerCase())) {
+  if (words.length === 1) {
+    if (/^[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]{1,}$/.test(stripped)
+        && !EXCLUDE.includes(stripped.toLowerCase())
+        && stripped.length >= 3) {
       return stripped;
     }
   }
@@ -738,7 +750,7 @@ Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi
           type: 'server_vad',
           threshold: 0.4,
           prefix_padding_ms: 300,
-          silence_duration_ms: 500
+          silence_duration_ms: 1200
         },
         tools: this.tools.map(t => ({
           type: 'function',
