@@ -188,13 +188,14 @@ export const realtimeTools = [
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
 
       // 🆕 v3.0.0: collectedData è la FONTE DI VERITÀ (server-side, deterministico)
-      // Per nome e orario: SOLO server-side. GPT non può inventarli.
+      // In contesto MODIFICA: usa foundReservation come fallback per time/people
       const cd = sessionState?.collectedData || {};
-      const name   = cd.name;                    // ← SOLO server, NO fallback GPT
-      const time   = cd.time;                    // ← SOLO server, NO fallback GPT
-      const date   = cd.date   || args.date;
-      const people = cd.people || args.people;
-      const email  = cd.email  || args.email;
+      const found = sessionState?.foundReservation;
+      const name   = cd.name;                              // ← SOLO server, NO fallback GPT
+      const time   = cd.time || found?.time;               // fallback da prenotazione trovata
+      const date   = cd.date || args.date;
+      const people = cd.people || found?.people || args.people;
+      const email  = cd.email || args.email;
       const notes  = args.notes;
 
       console.log(`📋 prepare_reservation v3.0.0:`);
@@ -307,6 +308,11 @@ export const realtimeTools = [
       console.log(`   [PENDING] name="${pending.name}" date="${pending.date}" time="${pending.time}" people=${pending.people}`);
       console.log(`   [GPT]     name="${args.name}" date="${args.date}" time="${args.time}" people=${args.people}`);
       console.log(`   [FINALE]  name="${name}" date="${date}" time="${time}" people=${people} tel="${phone}"`);
+
+      // 🛡️ Guard: se foundReservation esiste, siamo in contesto MODIFICA → usa modify_reservation
+      if (sessionState?.foundReservation) {
+        return { success: false, reason: 'use_modify', message: 'Stai modificando una prenotazione esistente. Chiama modify_reservation, non create_reservation.' };
+      }
 
       if (sessionState && !sessionState.pendingConfirmation) {
         return { success: false, reason: 'missing_prepare', message: 'Prima chiamare prepare_reservation.' };
