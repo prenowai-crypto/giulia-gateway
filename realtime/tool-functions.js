@@ -129,8 +129,41 @@ export const realtimeTools = [
 
       console.log(`🔍 check_availability: ${date} ${time} per ${people} persone`);
 
-      const hour = parseInt(time.split(':')[0]);
-      const isLunch = hour < 15;
+      const [h, m] = time.split(':').map(Number);
+      const timeMinutes = h * 60 + m;
+      const isLunch = h < 15;
+
+      // 🛡️ Controlla che l'orario sia dentro la finestra di apertura
+      if (isLunch) {
+        const lunchStart = restaurantConfig.lunch_start || '12:00';
+        const lunchEnd   = restaurantConfig.lunch_end   || '14:30';
+        const [lhs, lhm] = lunchStart.split(':').map(Number);
+        const [les, lem] = lunchEnd.split(':').map(Number);
+        const lunchStartMin = lhs * 60 + lhm;
+        const lunchEndMin   = les * 60 + lem;
+        if (timeMinutes < lunchStartMin || timeMinutes >= lunchEndMin) {
+          return {
+            available: false,
+            reason: 'outside_hours',
+            message: `Il pranzo è disponibile dalle ${lunchStart} alle ${lunchEnd}. Chiedere un orario in quella fascia.`
+          };
+        }
+      } else {
+        const dinnerStart = restaurantConfig.dinner_start || '19:00';
+        const dinnerEnd   = restaurantConfig.dinner_end   || '22:30';
+        const [dhs, dhm] = dinnerStart.split(':').map(Number);
+        const [des, dem] = dinnerEnd.split(':').map(Number);
+        const dinnerStartMin = dhs * 60 + dhm;
+        const dinnerEndMin   = des * 60 + dem;
+        if (timeMinutes < dinnerStartMin || timeMinutes >= dinnerEndMin) {
+          return {
+            available: false,
+            reason: 'outside_hours',
+            message: `La cena è disponibile dalle ${dinnerStart} alle ${dinnerEnd}. Chiedere un orario in quella fascia.`
+          };
+        }
+      }
+
       if (isLunch && restaurantConfig.lunch_closed_days?.includes(dayOfWeek)) {
         return { available: false, reason: 'lunch_closed', message: `Il pranzo non è disponibile quel giorno.` };
       }
