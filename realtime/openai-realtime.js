@@ -102,41 +102,68 @@ function parseTime(text) {
   if (/mezzogiorno|noon/.test(t)) return '12:00';
   if (/mezzanotte|midnight/.test(t)) return '00:00';
 
-  // "alle 12.30" o "alle 12:30" (sia punto che due punti come separatore)
-  const m1 = t.match(/(?:alle|ore|per le|at)\s*(\d{1,2})[\.:](\d{2})/i);
-  if (m1) {
-    let h = parseInt(m1[1]), min = parseInt(m1[2]);
+  const allTimes = [];
+  let m;
+
+  // Pattern 1: "alle 12.30" o "alle 12:30"
+  const re1 = /(?:alle|ore|per le|at)\s*(\d{1,2})[\.:](\d{2})/gi;
+  while ((m = re1.exec(t)) !== null) {
+    let h = parseInt(m[1]), min = parseInt(m[2]);
     if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
-      return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
-  // "alle 12" senza minuti
-  const m1b = t.match(/(?:alle|ore|per le|at)\s*(\d{1,2})\b/i);
-  if (m1b) {
-    let h = parseInt(m1b[1]);
+
+  // Pattern 2: "alle 12" senza minuti
+  const re2 = /(?:alle|ore|per le|at)\s*(\d{1,2})\b/gi;
+  while ((m = re2.exec(t)) !== null) {
+    let h = parseInt(m[1]);
     if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
-    if (h >= 0 && h <= 23) return `${String(h).padStart(2,'0')}:00`;
+    if (h >= 0 && h <= 23)
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:00` });
   }
 
-  const m2 = t.match(/\b(\d{1,2})[\.:](\d{2})\b/);
-  if (m2) {
-    const h = parseInt(m2[1]), min = parseInt(m2[2]);
+  // Pattern 3: "21.30" o "21:30" standalone
+  const re3 = /\b(\d{1,2})[\.:](\d{2})\b/g;
+  while ((m = re3.exec(t)) !== null) {
+    let h = parseInt(m[1]);
+    const min = parseInt(m[2]);
+    // Se ora 1-11 e non contesto AM → +12 (contesto ristorante = sera)
+    if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
-      return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
-  const m3 = t.match(/\b(\d{1,2})\s*(pm|am)\b/i);
-  if (m3) {
-    let h = parseInt(m3[1]);
-    if (m3[2].toLowerCase() === 'pm' && h < 12) h += 12;
-    if (m3[2].toLowerCase() === 'am' && h === 12) h = 0;
-    return `${String(h).padStart(2,'0')}:00`;
+  // Pattern 4: am/pm
+  const re4 = /\b(\d{1,2})\s*(pm|am)\b/gi;
+  while ((m = re4.exec(t)) !== null) {
+    let h = parseInt(m[1]);
+    if (m[2].toLowerCase() === 'pm' && h < 12) h += 12;
+    if (m[2].toLowerCase() === 'am' && h === 12) h = 0;
+    allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:00` });
   }
 
-  // NON mappiamo "pranzo/cena/sera" a un orario fisso: il cliente deve specificarlo esplicitamente
-  // if (/\bpranzo\b|\blunch\b/.test(t)) return '13:00';
-  // if (/\bcena\b|\bdinner\b|\bsera\b/.test(t)) return '20:00';
-  return null;
+  // Parole italiane: "alle venti e trenta", "alle otto e mezza"
+  const wordMap = { 'mezza':30,'mezzo':30,'trenta':30,'quindici':15,'quaranta':40,'quarantacinque':45,'venti':20,'dieci':10,'cinque':5 };
+  const hourWords = { 'dodici':12,'tredici':13,'quattordici':14,'quindici':15,'sedici':16,'diciassette':17,'diciotto':18,'diciannove':19,'venti':20,'ventuno':21,'ventidue':22,'ventitre':23,'ventitré':23,'undici':11,'dieci':10,'nove':9,'otto':8,'sette':7,'sei':6,'cinque':5,'quattro':4,'tre':3,'due':2,'una':1,'uno':1 };
+  const re5 = new RegExp(`(?:alle|ore|per le)\\s+(${Object.keys(hourWords).join('|')})(?:\\s+e\\s+(${Object.keys(wordMap).join('|')}))?`, 'gi');
+  while ((m = re5.exec(t)) !== null) {
+    let h = hourWords[m[1].toLowerCase()];
+    if (h === undefined) continue;
+    const min = m[2] ? (wordMap[m[2].toLowerCase()] || 0) : 0;
+    if (h >= 1 && h <= 11 && !/mattina|morning|pranzo|lunch/.test(t)) h += 12;
+    if (h >= 0 && h <= 23)
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
+  }
+
+  if (allTimes.length === 0) return null;
+
+  // Prende l'ULTIMO orario menzionato (gestisce correzioni "anzi...")
+  allTimes.sort((a, b) => a.pos - b.pos);
+  const last = allTimes[allTimes.length - 1];
+  if (allTimes.length > 1)
+    console.log(`⏰ parseTime: trovati ${allTimes.length} orari, uso ULTIMO: "${last.time}"`);
+  return last.time;
 }
 
 function parsePeople(text) {
@@ -328,12 +355,16 @@ FLUSSO PRENOTAZIONE - SOLO SE IL GIORNO È APERTO:
 1. check_availability con la data appena disponibile (anche senza orario — usa placeholder)
 2. Se aperto: chiedere orario esplicito, poi persone se mancanti
 3. check_availability di nuovo con orario reale del cliente
+   - Se "missing_time": chiedi "A che ora preferisce?"
+   - Se "slot_full": di' che quello slot è pieno e chiedi un orario diverso. NON proporre tu un orario alternativo — lascia scegliere al cliente
+   - Se disponibile: procedi al passo 4
 4. Chiedere nome se non ancora noto
 5. Chiedere email: "Vuole ricevere un'email di conferma?" — OBBLIGATORIO
 6. prepare_reservation → leggere il riepilogo PAROLA PER PAROLA
 7. Attendere conferma esplicita ("sì", "confermo", "va bene")
 8. create_reservation (SOLO dopo prepare e conferma)
 MAI saltare step. MAI chiamare create senza prepare.
+MAI proporre orari di tua iniziativa: se uno slot non è disponibile, chiedi al cliente quale orario preferisce.
 
 REGOLA CONFERMA - CRITICA:
 Dopo che il cliente dice "sì", "confermo", "va bene" o qualsiasi conferma, devi OBBLIGATORIAMENTE chiamare il tool create_reservation. NON puoi dire "prenotazione confermata" o "a presto" senza aver prima chiamato create_reservation. Se non chiami create_reservation, la prenotazione NON esiste. La frase "Grazie, a presto!" va detta SOLO DOPO che create_reservation ha risposto con successo.`;
