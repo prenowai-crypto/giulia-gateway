@@ -775,8 +775,22 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
 
     // 8. Auto-trigger chiusura/disponibilità quando arriva una nuova data
     const isModifyContext = !!this.state.foundReservation || this.state.initialIntent === 'modify' || this.state.initialIntent === 'cancel';
-    if (cd.date && cd.date !== prevDate && !locked && !isModifyContext && !this.isResponseActive) {
-      this._handleNewDate(cd.date, cd.mealContext);
+    if (cd.date && cd.date !== prevDate && !locked && !isModifyContext) {
+      // Se risposta attiva → aspetta che finisca, poi inietta
+      if (this.isResponseActive) {
+        const dateToCheck = cd.date;
+        const mealToCheck = cd.mealContext;
+        const waitAndInject = (attempt = 0) => {
+          if (!this.isResponseActive) {
+            this._handleNewDate(dateToCheck, mealToCheck);
+          } else if (attempt < 15) { // max 3 secondi
+            setTimeout(() => waitAndInject(attempt + 1), 200);
+          }
+        };
+        setTimeout(() => waitAndInject(), 200);
+      } else {
+        this._handleNewDate(cd.date, cd.mealContext);
+      }
     }
   }
 
