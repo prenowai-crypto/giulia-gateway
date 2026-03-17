@@ -365,6 +365,11 @@ export const realtimeTools = [
         return { success: false, reason: 'use_modify', message: 'Stai modificando una prenotazione esistente. Chiama modify_reservation, non create_reservation.' };
       }
 
+      // 🛡️ Guard: se intent iniziale era modify/cancel, non permettere create
+      if (sessionState?.initialIntent === 'modify' || sessionState?.initialIntent === 'cancel') {
+        return { success: false, reason: 'wrong_intent', message: `Il cliente vuole ${sessionState.initialIntent} una prenotazione esistente, non crearne una nuova. Chiama find_reservation prima.` };
+      }
+
       if (sessionState && !sessionState.pendingConfirmation) {
         return { success: false, reason: 'missing_prepare', message: 'Prima chiamare prepare_reservation.' };
       }
@@ -623,6 +628,24 @@ export const realtimeTools = [
       const found = sessionState?.foundReservation;
       if (!found) {
         return { success: false, message: 'Prima chiamare find_reservation per trovare la prenotazione.' };
+      }
+
+      // 🛡️ Guard: richiede conferma esplicita prima di cancellare
+      if (!sessionState?.cancelConfirmed) {
+        const firstName = found.name?.split(' ')[0] || found.name;
+        const dateObj = new Date(found.date + 'T12:00:00');
+        const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+        const dayName = dayNames[dateObj.getDay()];
+        const day = dateObj.getDate();
+        const months = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+        const monthName = months[dateObj.getMonth()];
+        const time = found.time?.substring(0,5) || '';
+        return {
+          success: false,
+          reason: 'awaiting_cancel_confirm',
+          message: `${firstName}, ho trovato la prenotazione per ${found.people} persone ${dayName} ${day} ${monthName} alle ${time}. Vuoi davvero cancellarla?`,
+          ISTRUZIONE: 'Leggi il messaggio al cliente e ASPETTA una conferma esplicita. Se dice "sì/confermo/cancella", imposta sessionState.cancelConfirmed=true e richiama cancel_reservation. Se dice "no/lascia stare", non cancellare.'
+        };
       }
 
       console.log(`🗑️ cancel_reservation: ${found.name}, ${found.date} ${found.time}`);
