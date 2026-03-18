@@ -445,10 +445,11 @@ const VERB_START = /^(vorrei|voglio|volevo|potrei|potevo|dovrei|ho|ha|hai|abbiam
 function parseName(text) {
   if (!text) return null;
   const t = text.trim();
-  if (VERB_START.test(t)) return null;
 
   const STOP = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|ed|o|a|un|una|uno|senza|email|mail)\b/i;
 
+  // Prova prima i pattern espliciti — "sono Giovanni", "mi chiamo X", ecc.
+  // VERB_START NON deve bloccare questi: li gestiamo qui
   const patterns = [
     /\ba\s+nome\s+(?:di\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
     /\bil\s+(?:mio\s+)?nome\s+[èe]\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
@@ -467,11 +468,13 @@ function parseName(text) {
       let name = m[1].trim();
       const stop = name.match(STOP);
       if (stop) name = name.substring(0, stop.index).trim();
-      // Capitalizza
       name = name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
       if (name.length >= 2 && !NAME_EXCLUDE.has(name.toLowerCase())) return name;
     }
   }
+
+  // Solo per risposte secche (1-2 parole senza verbi) controlla VERB_START
+  if (VERB_START.test(t)) return null;
 
   // Risposta secca: 1 parola sola, min 3 caratteri
   const stripped = t.replace(/[.,!?]+$/, '').trim();
@@ -482,7 +485,7 @@ function parseName(text) {
       return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
   }
   // Risposta secca: 2 parole (Nome Cognome)
-  if (words.length === 2 && !VERB_START.test(stripped)) {
+  if (words.length === 2) {
     const [w1, w2] = words;
     if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w1) && /^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w2)
         && !NAME_EXCLUDE.has(w1.toLowerCase()) && !NAME_EXCLUDE.has(w2.toLowerCase()))
