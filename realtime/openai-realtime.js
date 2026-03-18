@@ -799,30 +799,33 @@ REGOLE OPERATIVE:
       const cd = this.state.collectedData;
 
       if (name === 'check_availability') {
-        // Il server gestisce check_availability direttamente.
-        // Se ha già date+time+people → il server sta già eseguendo il check (async).
-        // In questo caso: chiudi il tool call silenziosamente e NON creare response.
-        // Sarà _injectWithWait a parlare quando il check è pronto.
         const serverCheckRunning = cd.date && cd.time && cd.people;
+
         if (serverCheckRunning) {
-          console.log(`⏳ check_availability bloccata ma server check in corso — silenzio`);
-          this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ pending: true, message: 'Verifica in corso, attendi.' }) } });
-          // NON creare response — lascia che _injectWithWait gestisca
-          return;
+          // Server check in corso — dai istruzione ultra-specifica di aspettare in silenzio
+          console.log(`⏳ check_availability bloccata — server check in corso`);
+          this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ status: 'verifying' }) } });
+          this.isResponseActive = true;
+          this._send({ type: 'response.create', response: { instructions: 'Dì SOLO: "Un attimo..." — poi TACI e aspetta il risultato della verifica. NON aggiungere nulla.' } });
+        } else {
+          // Mancano dati — di' esattamente quale domanda fare
+          let exact_phrase;
+          if (!cd.date)        exact_phrase = 'Dì SOLO: "Per quale giorno vuole prenotare?"';
+          else if (!cd.time)   exact_phrase = 'Dì SOLO: "A che ora preferisce?"';
+          else if (!cd.people) exact_phrase = 'Dì SOLO: "Per quante persone?"';
+          else                 exact_phrase = 'Dì SOLO: "Un attimo..."';
+          console.log(`📋 check_availability bloccata — dati mancanti → "${exact_phrase}"`);
+          this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ status: 'missing_data' }) } });
+          this.isResponseActive = true;
+          this._send({ type: 'response.create', response: { instructions: exact_phrase } });
         }
-        // Mancano ancora dati → chiedi il dato mancante usando getPhaseInstructions
-        // che include i dati già acquisiti, così GPT non chiede cose già note
-        const phaseInstr = getPhaseInstructions(this.state);
-        this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true }) } });
-        this.isResponseActive = true;
-        this._send({ type: 'response.create', response: { instructions: phaseInstr || 'Chiedi il dato mancante.' } });
         return;
       }
 
       // Altri tool bloccati
       let blocked_msg = `Tool "${name}" non permessa in questa fase.`;
       if (name === 'create_reservation') {
-        blocked_msg = `Devi chiamare prepare_reservation prima di create_reservation. Dati: data=${cd.date}, orario=${cd.time}, persone=${cd.people}, nome=${cd.name}.`;
+        blocked_msg = `Devi chiamare prepare_reservation prima. Dati disponibili: data=${cd.date}, orario=${cd.time}, persone=${cd.people}, nome=${cd.name}. Chiama prepare_reservation ORA.`;
       }
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: blocked_msg }) } });
       this.isResponseActive = true;
