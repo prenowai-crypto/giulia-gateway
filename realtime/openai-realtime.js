@@ -476,20 +476,29 @@ function parseName(text) {
   // Solo per risposte secche (1-2 parole senza verbi) controlla VERB_START
   if (VERB_START.test(t)) return null;
 
-  // Risposta secca: 1 parola sola, min 3 caratteri
+  // Normalizza: rimuovi punteggiatura finale
   const stripped = t.replace(/[.,!?]+$/, '').trim();
   const words = stripped.split(/\s+/);
-  if (words.length === 1) {
-    const w = words[0];
-    if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{3,}$/.test(w) && !NAME_EXCLUDE.has(w.toLowerCase()))
-      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-  }
-  // Risposta secca: 2 parole (Nome Cognome)
-  if (words.length === 2) {
-    const [w1, w2] = words;
-    if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w1) && /^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w2)
-        && !NAME_EXCLUDE.has(w1.toLowerCase()) && !NAME_EXCLUDE.has(w2.toLowerCase()))
-      return [w1,w2].map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+
+  // Rimuovi prefissi conferma: "Sì, Giovanni" → "Giovanni"
+  const CONFIRM_PREFIX = /^(?:sì|si|yes|certo|esatto|giusto|ok|confermo|perfetto|allora|ecco)[,\s]+/i;
+  const DENY_PREFIX    = /^(?:no|non)[,\s]+/i;
+  const withoutPrefix  = stripped.replace(CONFIRM_PREFIX, '').replace(DENY_PREFIX, '').trim();
+  const prefixWords    = withoutPrefix.split(/\s+/);
+
+  // Prova prima senza prefisso poi con testo intero
+  for (const candidate of [prefixWords, words]) {
+    if (candidate.length === 1) {
+      const w = candidate[0];
+      if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{3,}$/.test(w) && !NAME_EXCLUDE.has(w.toLowerCase()))
+        return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    }
+    if (candidate.length === 2) {
+      const [w1, w2] = candidate;
+      if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w1) && /^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w2)
+          && !NAME_EXCLUDE.has(w1.toLowerCase()) && !NAME_EXCLUDE.has(w2.toLowerCase()))
+        return [w1,w2].map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    }
   }
   return null;
 }
