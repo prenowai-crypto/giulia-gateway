@@ -669,21 +669,11 @@ function buildPhaseInstructions(phase, state) {
       return 'Nessuna prenotazione trovata. Informa il cliente e chiedi se vuole fare una nuova prenotazione.';
     case 'collecting': {
       const acq = acquired();
-      const missing = [];
-      if (!cd.date)   missing.push('la data');
-      if (!cd.time)   missing.push("l'orario");
-      if (!cd.people) missing.push('il numero di persone');
-      if (!cd.name)   missing.push('il nome');
-      // Tutti pronti
-      if (missing.length === 0) return `${acq} Tutti i dati sono pronti. Chiama prepare_reservation.`;
-      // Ha data+orario+persone → check poi nome
-      if (cd.date && cd.time && cd.people) {
-        return `${acq} Hai data, orario e persone. Chiama ORA check_availability. Dopo il check chiedi nome ed email (opzionale).`;
-      }
-      // Mancano ancora dati base → NON chiamare check
-      const order = 'Ordine richiesto: 1)data 2)orario 3)numero persone → poi check_availability → poi nome.';
-      const what = !cd.date ? 'Chiedi la data.' : !cd.time ? 'Chiedi l\'orario.' : 'Chiedi il numero di persone.';
-      return `${acq} ${what} NON chiamare check_availability ora. ${order}`;
+      if (!cd.date)   return `${acq} Chiedi: "Per quale giorno vuole prenotare?"`;
+      if (!cd.time)   return `${acq} Chiedi: "A che ora preferisce?"`;
+      if (!cd.people) return `${acq} Chiedi: "Per quante persone?"`;
+      if (!cd.name)   return `${acq} La disponibilità è stata verificata. Chiedi il nome.`;
+      return `${acq} Tutti i dati sono pronti. Chiama prepare_reservation.`;
     }
     case 'awaiting_confirm':
       return `${acquired()} Hai letto il riepilogo. Aspetta conferma esplicita ("sì/confermo/va bene") → create_reservation. Se corregge → aggiorna e richiama prepare_reservation.`;
@@ -758,6 +748,7 @@ export class OpenAIRealtimeClient {
       initialIntent:       null,
       phase:               PHASES.INITIAL,
       cancelConfirmed:     false,
+      availabilityChecked: false,
     };
 
     // Echo detection
@@ -797,29 +788,26 @@ export class OpenAIRealtimeClient {
 
 REGOLE OPERATIVE — PRIORITÀ ASSOLUTA:
 
-1. FLUSSO PRENOTAZIONE — SEGUI QUESTO ORDINE ESATTO:
-   STEP 1: Raccogli data (se non fornita)
-   STEP 2: Raccogli orario (se non fornito)
-   STEP 3: Raccogli numero persone (se non fornito)
-   STEP 4: Solo ora chiama check_availability con data+orario+persone
-   STEP 5: Chiedi nome
-   STEP 6: Chiedi email (opzionale)
-   STEP 7: Chiama prepare_reservation → leggi recap
-   STEP 8: Aspetta conferma → chiama create_reservation
-   ⚠️ NON chiamare check_availability prima di avere data E orario E persone.
+1. FLUSSO PRENOTAZIONE — SEGUI QUESTO ORDINE:
+   STEP 1: Chiedi data (se non fornita)
+   STEP 2: Chiedi orario (se non fornito)
+   STEP 3: Chiedi numero persone (se non fornito)
+   → Il sistema verifica automaticamente la disponibilità
+   STEP 4: Chiedi nome
+   STEP 5: Chiedi email (opzionale)
+   STEP 6: Chiama prepare_reservation → leggi recap parola per parola
+   STEP 7: Aspetta conferma → chiama create_reservation
 
 2. ANTI-INVENZIONE:
-   NON inventare MAI nomi. Se manca → chiedi "A che nome prenoto?".
-   NON usare "l'utente", "cliente", "unknown" o placeholder come nome.
-   NON inventare orari. Se manca → chiedi "A che ora preferisce?".
-   NON dire mai che siamo chiusi a pranzo/cena senza aver chiamato check_availability.
+   NON inventare MAI nomi → chiedi "A che nome prenoto?"
+   NON usare "l'utente", "cliente", "unknown" come nome
+   NON inventare orari → chiedi "A che ora preferisce?"
 
 3. RECAP VERBATIM:
    Quando prepare_reservation restituisce "recap", leggilo PAROLA PER PAROLA.
 
 4. ERRORI PREPARE:
    Se ready=false → leggi SOLO il campo "message" e seguilo.
-   NON fare recap da solo. NON chiamare create_reservation senza prepare.
 
 5. CREATE OBBLIGA PREPARE:
    Quando il cliente dice "sì" dopo il recap → dì "Un attimo, registro..." → chiama create_reservation SUBITO.
@@ -827,10 +815,6 @@ REGOLE OPERATIVE — PRIORITÀ ASSOLUTA:
 
 6. NOMI = NOMI:
    "a nome Cancelleri", "mi chiamo Sposta", "sono Annulli" → sempre cognomi, MAI comandi.
-
-7. QUANDO DIRE "UN ATTIMO":
-   Dì "Un attimo..." SOLO prima di prepare_reservation, create_reservation, modify_reservation, cancel_reservation.
-   NON dirlo prima di check_availability — chiedi semplicemente l'orario se manca.
 
 FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
 
@@ -844,7 +828,11 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
         output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model: 'whisper-1', language: 'it' },
         turn_detection: { type: 'server_vad', threshold: 0.4, prefix_padding_ms: 300, silence_duration_ms: 1200 },
-        tools: this.tools.map(t => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }))
+        // check_availability è ESCLUSA: il server la chiama direttamente quando ha tutti i dati.
+        // GPT non deve mai chiamarla — altrimenti la chiama prima di avere l'orario.
+        tools: this.tools
+          .filter(t => t.name !== 'check_availability')
+          .map(t => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }))
       }
     });
 
@@ -929,73 +917,84 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
 
     console.log(`📊 [SERVER] collectedData:`, JSON.stringify(cd));
 
-    // 10. Auto-trigger chiusura/disponibilità
+    // 10. AUTO-TRIGGER CHECK DISPONIBILITÀ
+    // Il server chiama check_availability direttamente quando ha tutti i dati.
+    // GPT non ha questo tool — non può chiamarlo mai da solo.
     const isModifyContext = !!this.state.foundReservation || this.state.initialIntent === 'modify' || this.state.initialIntent === 'cancel';
-    if (cd.date && cd.date !== prevDate && !locked && !isModifyContext) {
-      if (this.isResponseActive) {
-        const dateToCheck = cd.date, mealToCheck = cd.mealContext;
-        const waitAndInject = (attempt = 0) => {
-          if (!this.isResponseActive) { this._handleNewDate(dateToCheck, mealToCheck); }
-          else if (attempt < 15) { setTimeout(() => waitAndInject(attempt + 1), 200); }
-        };
-        setTimeout(() => waitAndInject(), 200);
-      } else {
-        this._handleNewDate(cd.date, cd.mealContext);
+    const readyToCheck = cd.date && cd.time && cd.people && !locked && !isModifyContext && !this.state.availabilityChecked;
+
+    if (readyToCheck) {
+      // Verifica giorno chiuso prima del check
+      const dow = new Date(cd.date + 'T12:00:00').getDay();
+      const closingDays = this.restaurantConfig?.weekly_closing_days || [];
+      const lunchClosed = this.restaurantConfig?.lunch_closed_days || [];
+      const dinnerClosed = this.restaurantConfig?.dinner_closed_days || [];
+      const giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+
+      if (closingDays.includes(dow)) {
+        this._injectMessage(`Il ristorante è chiuso il ${giorni[dow]}. Di': "Mi dispiace, siamo chiusi il ${giorni[dow]}. Vuole prenotare per un altro giorno?"`);
+        return;
+      }
+      if (cd.mealContext === 'pranzo' && lunchClosed.includes(dow)) {
+        this._injectMessage(`Non facciamo pranzo il ${giorni[dow]}. Di': "Mi dispiace, il ${giorni[dow]} siamo chiusi a pranzo."`);
+        return;
+      }
+      if (cd.mealContext === 'cena' && dinnerClosed.includes(dow)) {
+        this._injectMessage(`Non facciamo cena il ${giorni[dow]}. Di': "Mi dispiace, il ${giorni[dow]} siamo chiusi a cena."`);
+        return;
+      }
+
+      // Giorno aperto — esegui check server-side
+      this.state.availabilityChecked = true;
+      console.log(`🔍 [SERVER] Auto-check: ${cd.date} ${cd.time} per ${cd.people} persone`);
+      this._serverCheckAvailability(cd.date, cd.time, cd.people);
+    }
+    // Nuova data arrivata ma manca ancora orario o persone — aggiorna solo se giorno chiuso
+    else if (cd.date && cd.date !== prevDate && !locked && !isModifyContext) {
+      const dow = new Date(cd.date + 'T12:00:00').getDay();
+      const closingDays = this.restaurantConfig?.weekly_closing_days || [];
+      const giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+      if (closingDays.includes(dow)) {
+        this._injectMessage(`Il ristorante è chiuso il ${giorni[dow]}. Di': "Mi dispiace, siamo chiusi il ${giorni[dow]}. Vuole prenotare per un altro giorno?"`);
       }
     }
   }
 
-  _handleNewDate(date, mealContext) {
-    const dow          = new Date(date + 'T12:00:00').getDay();
-    const closingDays  = this.restaurantConfig?.weekly_closing_days || [];
-    const lunchClosed  = this.restaurantConfig?.lunch_closed_days   || [];
-    const dinnerClosed = this.restaurantConfig?.dinner_closed_days  || [];
-    const giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-    console.log(`🚀 [SERVER] Auto-trigger: data=${date} dayOfWeek=${dow}`);
+  async _serverCheckAvailability(date, time, people) {
+    try {
+      const tool = this.tools.find(t => t.name === 'check_availability');
+      if (!tool) return;
+      const result = await tool.handler(
+        { date, time, people },
+        { callSid: this.callSid, restaurantConfig: this.restaurantConfig, sessionState: this.state, callerPhone: this.callerPhone }
+      );
+      console.log(`✅ [SERVER] check_availability result:`, JSON.stringify(result));
 
-    // Giorno completamente chiuso → comunicalo subito
-    if (closingDays.includes(dow)) {
-      this._injectMessage(`Il ristorante è chiuso il ${giorni[dow]}. Di' subito: "Mi dispiace, siamo chiusi il ${giorni[dow]}. Vuole prenotare per un altro giorno?"`);
-      return;
+      if (result.available) {
+        // Slot disponibile → dì al GPT di chiedere nome
+        const waitAndInject = (attempt = 0) => {
+          if (!this.isResponseActive) {
+            this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[disponibilità verificata: ${date} ${time} per ${people} persone — slot libero]` }] } });
+            this.isResponseActive = true;
+            this.send({ type: 'response.create', response: { instructions: `Slot disponibile per ${formatDateForSpeech(date)} alle ${time} per ${people} persone. Comunica al cliente che c'è disponibilità e chiedi il nome.` } });
+          } else if (attempt < 20) { setTimeout(() => waitAndInject(attempt + 1), 150); }
+        };
+        waitAndInject();
+      } else if (result.reason === 'day_closed') {
+        this._injectMessage(result.message || 'Giorno chiuso. Chiedi un altro giorno.');
+      } else if (result.reason === 'slot_full') {
+        const waitAndInject = (attempt = 0) => {
+          if (!this.isResponseActive) {
+            this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[slot pieno: ${date} ${time}]` }] } });
+            this.isResponseActive = true;
+            this.send({ type: 'response.create', response: { instructions: `Lo slot delle ${time} è pieno. Di' al cliente che purtroppo siamo al completo a quell'orario e proponi orari alternativi vicini.` } });
+          } else if (attempt < 20) { setTimeout(() => waitAndInject(attempt + 1), 150); }
+        };
+        waitAndInject();
+      }
+    } catch(err) {
+      console.error(`❌ [SERVER] check_availability error:`, err);
     }
-    // Pranzo chiuso questo giorno
-    if (mealContext === 'pranzo' && lunchClosed.includes(dow)) {
-      this._injectMessage(`Non facciamo pranzo il ${giorni[dow]}. Di' subito: "Mi dispiace, il ${giorni[dow]} siamo chiusi a pranzo. Posso aiutarla per la cena o un altro giorno?"`);
-      return;
-    }
-    // Cena chiusa questo giorno
-    if (mealContext === 'cena' && dinnerClosed.includes(dow)) {
-      this._injectMessage(`Non facciamo cena il ${giorni[dow]}. Di' subito: "Mi dispiace, il ${giorni[dow]} siamo chiusi a cena. Posso aiutarla per il pranzo o un altro giorno?"`);
-      return;
-    }
-
-    // Giorno aperto — se abbiamo già orario e persone, chiedi check
-    // Se time è null: NON fare nulla. Il tool result "missing_time" chiederà l'orario.
-    const cd = this.state.collectedData;
-    if (!cd.time) {
-      console.log(`🚀 [SERVER] Auto-trigger: time non ancora acquisito, skip inject (il tool result gestisce)`);
-      return;
-    }
-    this._injectCheckHint(date, cd.time, cd.people || 2);
-  }
-
-  _injectMessage(instructions) {
-    if (this.isResponseActive) this.send({ type: 'response.cancel' });
-    setTimeout(() => {
-      try { this.isResponseActive = true; this.send({ type: 'response.create', response: { instructions } }); }
-      catch(e) { console.error('❌ Errore inject:', e); }
-    }, this.isResponseActive ? 300 : 50);
-  }
-
-  _injectCheckHint(date, time, people) {
-    if (this.isResponseActive) this.send({ type: 'response.cancel' });
-    setTimeout(() => {
-      try {
-        this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[verifica disponibilità per ${date}]` }] } });
-        this.isResponseActive = true;
-        this.send({ type: 'response.create', response: { instructions: `Chiama check_availability con date="${date}", time="${time}", people=${people}.` } });
-      } catch(e) { console.error('❌ Errore inject check:', e); }
-    }, 200);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1088,34 +1087,12 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     // RACE CONDITION FIX: check_availability arriva prima che _parseAndStore finisca.
     // Se manca il time, aspettiamo fino a 800ms che Whisper completi la trascrizione.
     // Solo dopo valutiamo se il tool è permesso o va bloccato.
-    if (name === 'check_availability' && !this.state.collectedData.time) {
-      console.log(`⏳ check_availability: time mancante, attendo _parseAndStore (max 800ms)...`);
-      await new Promise(resolve => {
-        const check = (attempt = 0) => {
-          if (this.state.collectedData.time || attempt >= 8) resolve();
-          else setTimeout(() => check(attempt + 1), 100);
-        };
-        check();
-      });
-      console.log(`⏳ dopo attesa: time="${this.state.collectedData.time}"`);
-    }
-
     if (!isToolAllowed(name, phase, this.state)) {
-      const cd = this.state.collectedData;
       console.warn(`⛔ Tool "${name}" NON permessa in fase "${phase}"`);
       const msg_blocked = blockedToolMessage(name, phase, this.state);
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: msg_blocked }) } });
-
-      // Istruzione diretta specifica per ogni caso — niente scuse
-      let instruction = msg_blocked;
-      if (name === 'check_availability' && !cd.time) {
-        instruction = 'Chiedi solo: "A che ora preferisce?" — nessuna scusa, nessuna spiegazione, solo questa domanda.';
-      } else if (name === 'check_availability' && !cd.date) {
-        instruction = 'Chiedi solo: "Per quale giorno vuole prenotare?" — nessuna scusa, solo questa domanda.';
-      }
-
       this.isResponseActive = true;
-      this.send({ type: 'response.create', response: { instructions: instruction } });
+      this.send({ type: 'response.create', response: { instructions: msg_blocked } });
       return;
     }
 
@@ -1124,12 +1101,6 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
       if (!tool) throw new Error(`Tool non trovato: ${name}`);
       const result = await tool.handler(args, { callSid: this.callSid, restaurantConfig: this.restaurantConfig, sessionState: this.state, callerPhone: this.callerPhone });
       console.log(`✅ Tool result [${name}]:`, JSON.stringify(result).substring(0, 200));
-
-      // Dopo check_availability, sincronizza cd.people se era null (GPT lo conosce da args)
-      if (name === 'check_availability' && !this.state.collectedData.people && args.people) {
-        this.state.collectedData.people = args.people;
-        console.log(`👥 [SERVER] people sincronizzato da check_availability: ${args.people}`);
-      }
 
       const newPhase = advancePhase(phase, name, result, this.state.initialIntent);
       if (newPhase !== phase) { this.state.phase = newPhase; console.log(`📍 Fase: "${phase}" → "${newPhase}"`); }
