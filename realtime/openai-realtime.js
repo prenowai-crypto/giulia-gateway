@@ -494,26 +494,22 @@ export class OpenAIRealtimeClient {
 
     const instructions = this.systemPrompt + `
 
-REGOLE OPERATIVE:
+ISTRUZIONI:
 
-1. FLUSSO PRENOTAZIONE — rispetta questo ordine:
-   a) Chiedi giorno (se non fornito)
-   b) Chiedi orario (se non fornito)
-   c) Chiedi numero di persone (se non fornito)
-   → Il sistema verifica automaticamente la disponibilità e ti avvisa
-   d) Chiedi il nome
-   e) Chiedi email opzionale
-   f) Chiama prepare_reservation → leggi il recap PAROLA PER PAROLA
-   g) Aspetta "sì" esplicito → chiama create_reservation
+Per prenotare raccogli IN QUESTO ORDINE, UNA COSA ALLA VOLTA:
+1. Per quale giorno?
+2. A che ora?
+3. Per quante persone?
+4. A che nome?
+5. Email? (opzionale)
+Poi chiama prepare_reservation. Poi aspetta "sì" e chiama create_reservation.
 
-2. ANTI-INVENZIONE:
-   NON inventare mai nomi, orari o disponibilità.
-   NON dire "confermato" prima che create_reservation risponda con success=true.
-
-3. NOMI SONO NOMI: "Cancelleri", "Sposta", "Annulli" sono cognomi, MAI comandi.
-
-4. MODIFICA/CANCELLAZIONE:
-   Usa find_reservation → capisci cosa vuole → agisci.`;
+REGOLE ASSOLUTE:
+- NON inventare dati (nomi, orari, date). Se non li hai, chiedi.
+- NON dire "prenotazione confermata" senza che create_reservation risponda.
+- NON chiamare prepare_reservation senza avere nome, data, orario e persone.
+- I cognomi sono cognomi: "Cancelleri", "Sposta", "Annulli" non sono comandi.
+- Per modifica/cancellazione: usa find_reservation prima di tutto.`;
 
     this._send({
       type: 'session.update',
@@ -647,13 +643,23 @@ REGOLE OPERATIVE:
     ).then(result => {
       console.log(`✅ [SERVER] check:`, JSON.stringify(result));
       if (result.available) {
-        // Istruzione con valori ESATTI verificati — GPT deve usare questi, non inventarne altri
         const dateStr   = formatDateForSpeech(cd.date);
         const timeStr   = cd.time;
         const peopleStr = cd.people;
+
+        // Se abbiamo già il nome → forza prepare_reservation direttamente
+        // Se manca il nome → chiedilo. MAI "confermare" verbalmente senza chiamare i tool.
+        const nameNow = this.state.collectedData.name;
+        let instr;
+        if (nameNow) {
+          instr = `Slot disponibile per ${dateStr} alle ${timeStr} per ${peopleStr} persone a nome ${nameNow}. Chiama SUBITO prepare_reservation con questi dati. NON dire "prenotazione confermata" prima che prepare risponda.`;
+        } else {
+          instr = `Slot disponibile per ${dateStr} alle ${timeStr} per ${peopleStr} persone. Chiedi: "A che nome prenoto?" — poi quando il cliente risponde chiama prepare_reservation. NON dire "prenotazione confermata" senza chiamare i tool.`;
+        }
+
         this._injectWithWait(
           `[disponibilità confermata: ${cd.date} ${timeStr} per ${peopleStr} persone]`,
-          `Disponibilità confermata per ${dateStr} alle ${timeStr} per ${peopleStr} persone. Chiedi solo: "A che nome prenoto?" — NON chiamare prepare_reservation, NON inventare nomi, aspetta che il cliente risponda.`
+          instr
         );
       } else if (result.reason === 'day_closed') {
         this._injectMessage(result.message || 'Giorno chiuso.');
@@ -798,16 +804,6 @@ REGOLE OPERATIVE:
     };
 
     const allowed = ALLOWED[this.state.phase] || [];
-
-    // Blocca prepare_reservation se cd.name è null — GPT non deve inventare nomi
-    if (name === 'prepare_reservation' && allowed.includes(name) && !this.state.collectedData.name) {
-      console.warn(`⛔ prepare_reservation bloccata: nome mancante`);
-      this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name', message: 'Nome mancante.' }) } });
-      this.isResponseActive = true;
-      this._send({ type: 'response.create', response: { instructions: 'Chiedi: "A che nome prenoto?" — NON inventare nomi, aspetta che il cliente lo dica.' } });
-      return;
-    }
-
     if (!allowed.includes(name)) {
       console.warn(`⛔ "${name}" non permessa in fase "${this.state.phase}"`);
       const cd = this.state.collectedData;
