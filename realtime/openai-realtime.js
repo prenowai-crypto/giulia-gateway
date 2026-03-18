@@ -1086,17 +1086,21 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
 
 
     if (!isToolAllowed(name, phase, this.state)) {
+      const cd = this.state.collectedData;
       console.warn(`⛔ Tool "${name}" NON permessa in fase "${phase}"`);
       const msg_blocked = blockedToolMessage(name, phase, this.state);
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: msg_blocked }) } });
-      // Se GPT tenta create senza prepare → forza prepare con istruzione diretta
-      if (name === 'create_reservation' && (phase === 'collecting' || phase === 'initial')) {
-        this.isResponseActive = true;
-        this.send({ type: 'response.create', response: { instructions: msg_blocked } });
-      } else {
-        this.isResponseActive = true;
-        this.send({ type: 'response.create' });
+
+      // Istruzione diretta specifica per ogni caso — niente scuse
+      let instruction = msg_blocked;
+      if (name === 'check_availability' && !cd.time) {
+        instruction = 'Chiedi solo: "A che ora preferisce?" — nessuna scusa, nessuna spiegazione, solo questa domanda.';
+      } else if (name === 'check_availability' && !cd.date) {
+        instruction = 'Chiedi solo: "Per quale giorno vuole prenotare?" — nessuna scusa, solo questa domanda.';
       }
+
+      this.isResponseActive = true;
+      this.send({ type: 'response.create', response: { instructions: instruction } });
       return;
     }
 
@@ -1105,6 +1109,12 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
       if (!tool) throw new Error(`Tool non trovato: ${name}`);
       const result = await tool.handler(args, { callSid: this.callSid, restaurantConfig: this.restaurantConfig, sessionState: this.state, callerPhone: this.callerPhone });
       console.log(`✅ Tool result [${name}]:`, JSON.stringify(result).substring(0, 200));
+
+      // Dopo check_availability, sincronizza cd.people se era null (GPT lo conosce da args)
+      if (name === 'check_availability' && !this.state.collectedData.people && args.people) {
+        this.state.collectedData.people = args.people;
+        console.log(`👥 [SERVER] people sincronizzato da check_availability: ${args.people}`);
+      }
 
       const newPhase = advancePhase(phase, name, result, this.state.initialIntent);
       if (newPhase !== phase) { this.state.phase = newPhase; console.log(`📍 Fase: "${phase}" → "${newPhase}"`); }
