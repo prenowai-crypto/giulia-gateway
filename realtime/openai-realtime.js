@@ -800,6 +800,12 @@ REGOLE OPERATIVE:
       let blocked_msg = `Tool "${name}" non permessa in questa fase.`;
       if (name === 'create_reservation') {
         blocked_msg = `Devi chiamare prepare_reservation prima di create_reservation. Dati: data=${cd.date}, orario=${cd.time}, persone=${cd.people}, nome=${cd.name}.`;
+      } else if (name === 'check_availability') {
+        // GPT non deve avere questo tool — se lo chiama è perché il filter non ha funzionato
+        if (!cd.date)   blocked_msg = 'Non hai ancora la data. Chiedi al cliente per quale giorno vuole prenotare. NON inventare date o orari.';
+        else if (!cd.time) blocked_msg = 'Non hai ancora l\'orario. Chiedi al cliente: "A che ora preferisce?" NON suggerire orari, NON dire che non puoi verificare. Solo fai la domanda.';
+        else if (!cd.people) blocked_msg = 'Non hai ancora il numero di persone. Chiedi: "Per quante persone?"';
+        else blocked_msg = 'Il sistema verificherà automaticamente la disponibilità. Aspetta la conferma prima di procedere.';
       }
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: blocked_msg }) } });
       this.isResponseActive = true;
