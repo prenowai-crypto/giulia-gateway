@@ -918,17 +918,31 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     const dinnerClosed = this.restaurantConfig?.dinner_closed_days  || [];
     const giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
     console.log(`🚀 [SERVER] Auto-trigger: data=${date} dayOfWeek=${dow}`);
+
+    // Giorno completamente chiuso → comunicalo subito
     if (closingDays.includes(dow)) {
       this._injectMessage(`Il ristorante è chiuso il ${giorni[dow]}. Di' subito: "Mi dispiace, siamo chiusi il ${giorni[dow]}. Vuole prenotare per un altro giorno?"`);
-    } else if (mealContext === 'pranzo' && lunchClosed.includes(dow)) {
-      this._injectMessage(`Non facciamo pranzo il ${giorni[dow]}. Di' subito: "Mi dispiace, il ${giorni[dow]} siamo chiusi a pranzo. Posso aiutarla per la cena o un altro giorno?"`);
-    } else if (mealContext === 'cena' && dinnerClosed.includes(dow)) {
-      this._injectMessage(`Non facciamo cena il ${giorni[dow]}. Di' subito: "Mi dispiace, il ${giorni[dow]} siamo chiusi a cena. Posso aiutarla per il pranzo o un altro giorno?"`);
-    } else {
-      const cd = this.state.collectedData;
-      const time = cd.time || '20:00', people = cd.people || 2, isPlaceholder = !cd.time;
-      this._injectCheckHint(date, time, people, isPlaceholder);
+      return;
     }
+    // Pranzo chiuso questo giorno
+    if (mealContext === 'pranzo' && lunchClosed.includes(dow)) {
+      this._injectMessage(`Non facciamo pranzo il ${giorni[dow]}. Di' subito: "Mi dispiace, il ${giorni[dow]} siamo chiusi a pranzo. Posso aiutarla per la cena o un altro giorno?"`);
+      return;
+    }
+    // Cena chiusa questo giorno
+    if (mealContext === 'cena' && dinnerClosed.includes(dow)) {
+      this._injectMessage(`Non facciamo cena il ${giorni[dow]}. Di' subito: "Mi dispiace, il ${giorni[dow]} siamo chiusi a cena. Posso aiutarla per il pranzo o un altro giorno?"`);
+      return;
+    }
+
+    // Giorno aperto — se abbiamo già orario e persone, chiedi check
+    // Se time è null: NON fare nulla. Il tool result "missing_time" chiederà l'orario.
+    const cd = this.state.collectedData;
+    if (!cd.time) {
+      console.log(`🚀 [SERVER] Auto-trigger: time non ancora acquisito, skip inject (il tool result gestisce)`);
+      return;
+    }
+    this._injectCheckHint(date, cd.time, cd.people || 2);
   }
 
   _injectMessage(instructions) {
@@ -939,16 +953,13 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     }, this.isResponseActive ? 300 : 50);
   }
 
-  _injectCheckHint(date, time, people, isPlaceholder) {
+  _injectCheckHint(date, time, people) {
     if (this.isResponseActive) this.send({ type: 'response.cancel' });
     setTimeout(() => {
       try {
         this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[verifica disponibilità per ${date}]` }] } });
-        const instructions = isPlaceholder
-          ? `Chiama check_availability con date="${date}", time="${time}", people=${people}. IMPORTANTE: l'orario è solo un placeholder — dopo il check, chiedi l'orario esplicito al cliente.`
-          : `Chiama check_availability con date="${date}", time="${time}", people=${people}.`;
         this.isResponseActive = true;
-        this.send({ type: 'response.create', response: { instructions } });
+        this.send({ type: 'response.create', response: { instructions: `Chiama check_availability con date="${date}", time="${time}", people=${people}.` } });
       } catch(e) { console.error('❌ Errore inject check:', e); }
     }, 200);
   }
