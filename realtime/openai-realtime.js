@@ -1051,12 +1051,12 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name} ignorato: JSON malformato`); return; }
 
-    // Attendi che _parseAndStore abbia aggiornato i dati se cd è ancora vuoto
-    // (GPT chiama il tool prima che Whisper finisca la trascrizione)
+    // Intercetta check_availability prima di eseguirla
     if (name === 'check_availability') {
       const cd = this.state.collectedData;
-      const isEmpty = !cd.date && !cd.time && !cd.people;
-      if (isEmpty) {
+
+      // Step 1: se cd è completamente vuoto, aspetta fino a 1.5s che _parseAndStore aggiorni
+      if (!cd.date && !cd.time && !cd.people) {
         console.log(`⏳ check_availability: cd vuoto, aspetto _parseAndStore...`);
         await new Promise(resolve => {
           const check = (attempt = 0) => {
@@ -1066,7 +1066,26 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
           };
           check();
         });
-        console.log(`⏳ check_availability: dati pronti → ${JSON.stringify(this.state.collectedData)}`);
+        console.log(`⏳ check_availability: dati dopo attesa → ${JSON.stringify(this.state.collectedData)}`);
+      }
+
+      // Step 2: se dopo l'attesa manca ancora il TIME, blocca il tool e chiedi direttamente
+      // GPT non deve fare check senza orario — non è un'informazione utile
+      if (!this.state.collectedData.time) {
+        console.log(`🚫 check_availability BLOCCATA: time mancante → chiedo orario direttamente`);
+        this.send({
+          type: 'conversation.item.create',
+          item: { type: 'function_call_output', call_id, output: JSON.stringify({
+            available: false,
+            reason: 'missing_time',
+            message: 'Orario mancante.'
+          })}
+        });
+        this.isResponseActive = true;
+        this.send({ type: 'response.create', response: {
+          instructions: 'Chiedi SUBITO l\'orario al cliente con una frase breve tipo "A che ora preferisce?" — nient\'altro, solo questa domanda.'
+        }});
+        return; // Non eseguire il tool
       }
     }
 
