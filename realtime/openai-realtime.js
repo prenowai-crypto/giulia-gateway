@@ -398,7 +398,7 @@ function getPhaseInstructions(state) {
       if (!cd.date)   return `${acq()}Chiedi per quale giorno vuole prenotare.`;
       if (!cd.time)   return `${acq()}Chiedi a che ora preferisce.`;
       if (!cd.people) return `${acq()}Chiedi per quante persone.`;
-      if (!cd.name)   return `${acq()}Chiedi a che nome prenota.`;
+      if (!cd.name)   return `${acq()}Chiedi: "A che nome prenoto?" — NON chiamare prepare_reservation finché il cliente non dice il nome.`;
       return `${acq()}Chiedi se vuole lasciare un'email per la conferma (è opzionale), poi chiama prepare_reservation.`;
 
     case 'awaiting_confirm':
@@ -857,7 +857,17 @@ REGOLE OPERATIVE:
 
       if (this.state.phase !== prev) console.log(`📍 Fase: "${prev}"→"${this.state.phase}"`);
 
-      const instr = getPhaseInstructions(this.state);
+      // Istruzione post-tool
+      let instr = getPhaseInstructions(this.state);
+      // prepare_reservation ready:false → istruzione diretta senza scuse
+      if (name === 'prepare_reservation' && result.ready === false) {
+        const cd = this.state.collectedData;
+        if (!cd.name)   instr = 'Chiedi solo: "A che nome prenoto?" — nessuna scusa, solo questa domanda.';
+        else if (!cd.date)   instr = 'Chiedi solo: "Per quale giorno?"';
+        else if (!cd.time)   instr = 'Chiedi solo: "A che ora preferisce?"';
+        else if (!cd.people) instr = 'Chiedi solo: "Per quante persone?"';
+      }
+
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify(result) } });
       this.isResponseActive = true;
       this._send(instr ? { type: 'response.create', response: { instructions: instr } } : { type: 'response.create' });
