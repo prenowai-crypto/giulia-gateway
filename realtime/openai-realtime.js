@@ -672,11 +672,14 @@ function buildPhaseInstructions(phase, state) {
       if (!cd.date)   return `${acq} Chiedi: "Per quale giorno vuole prenotare?"`;
       if (!cd.time)   return `${acq} Chiedi: "A che ora preferisce?"`;
       if (!cd.people) return `${acq} Chiedi: "Per quante persone?"`;
-      if (!cd.name)   return `${acq} La disponibilità è stata verificata. Chiedi il nome.`;
-      return `${acq} Tutti i dati sono pronti. Chiama prepare_reservation.`;
+      if (!cd.name)   return `${acq} Chiedi SOLO: "A che nome prenoto?" — nient'altro.`;
+      // Nome presente — chiedi email UNA volta sola, poi prepare
+      const emailDone = cd.email || this.state.emailAsked;
+      if (!emailDone) return `${acq} Chiedi SOLO: "Vuole lasciare un'email per la conferma? È opzionale." — una domanda, poi chiama prepare_reservation.`;
+      return `${acq} Tutti i dati sono pronti. Chiama prepare_reservation SUBITO senza fare altre domande.`;
     }
     case 'awaiting_confirm':
-      return `${acquired()} Hai letto il riepilogo. Aspetta conferma esplicita ("sì/confermo/va bene") → create_reservation. Se corregge → aggiorna e richiama prepare_reservation.`;
+      return `${acquired()} Hai appena letto il recap. Aspetta che il cliente dica "sì" o "confermo" → chiama create_reservation. NON aggiungere altre domande. NON fare riepiloghi aggiuntivi.`;
     case 'finding':
       return 'Chiama find_reservation con il nome e la data della prenotazione.';
     case 'awaiting_modify_details':
@@ -749,6 +752,7 @@ export class OpenAIRealtimeClient {
       phase:               PHASES.INITIAL,
       cancelConfirmed:     false,
       availabilityChecked: false,
+      emailAsked: false,
     };
 
     // Echo detection
@@ -892,6 +896,12 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     if (!locked) {
       const email = parseEmail(transcript);
       if (email && cd.email !== email) { console.log(`📧 [SERVER] email: "${cd.email}" → "${email}"`); cd.email = email; }
+      // Rifiuto email esplicito → marca emailAsked per non richiedere
+      const emailRefusal = /\b(no|niente|nessuna|non voglio|non ho|senza)\b.*\b(email|mail|e-mail)\b|\b(email|mail)\b.*\b(no|niente|nessuna)\b/i;
+      if (!this.state.emailAsked && emailRefusal.test(transcript)) {
+        this.state.emailAsked = true;
+        console.log(`📧 [SERVER] email rifiutata, emailAsked=true`);
+      }
     }
 
     // 7. Meal context
@@ -976,7 +986,7 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
           if (!this.isResponseActive) {
             this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `[disponibilità verificata: ${date} ${time} per ${people} persone — slot libero]` }] } });
             this.isResponseActive = true;
-            this.send({ type: 'response.create', response: { instructions: `Slot disponibile per ${formatDateForSpeech(date)} alle ${time} per ${people} persone. Comunica al cliente che c'è disponibilità e chiedi il nome.` } });
+            this.send({ type: 'response.create', response: { instructions: `Disponibilità confermata. Chiedi SOLO: "A che nome prenoto?" — nessuna conferma di disponibilità, nessun "procediamo?", solo questa domanda.` } });
           } else if (attempt < 20) { setTimeout(() => waitAndInject(attempt + 1), 150); }
         };
         waitAndInject();
