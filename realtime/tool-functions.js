@@ -95,7 +95,7 @@ export const realtimeTools = [
   // ═══════════════════════════════════════════════════════════════════════════
   {
     name: 'check_availability',
-    description: `Verifica se uno slot è disponibile. Chiamare dopo aver raccolto data, orario e persone.`,
+    description: `Verifica se uno slot è disponibile. CHIAMARE SOLO quando si hanno TUTTI E TRE: data, orario E numero di persone. Se manca anche solo uno di questi, chiedere prima al cliente senza chiamare questo tool.`,
     parameters: {
       type: 'object',
       properties: {
@@ -133,7 +133,11 @@ export const realtimeTools = [
 
       // 🛡️ Solo dopo aver verificato che il giorno è aperto, richiedi l'orario
       if (!time) {
-        return { available: false, reason: 'missing_time', message: 'Orario non specificato. Chiedere al cliente: "A che ora preferisce?"' };
+        return {
+          available: false,
+          reason: 'missing_time',
+          message: 'STOP: orario mancante. NON richiamare check_availability. Chiedi subito al cliente: "A che ora preferisce?" e aspetta la risposta prima di fare qualsiasi altra cosa.'
+        };
       }
 
       console.log(`🔍 check_availability: ${date} ${time} per ${people} persone`);
