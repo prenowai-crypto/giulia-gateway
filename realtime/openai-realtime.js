@@ -397,6 +397,9 @@ const NAME_EXCLUDE = new Set([
   'prenotazione','reservation','tavolo','table',
   // Parole tecniche/web che Whisper trascrive a volte
   'org','com','net','www','http','html','amara',
+  // Giorni della settimana — mai nomi
+  'lunedì','martedì','mercoledì','giovedì','venerdì','sabato','domenica',
+  'lunedi','martedi','mercoledi','giovedi','venerdi',
 ]);
 
 const VERB_START = /^(vorrei|voglio|volevo|potrei|potevo|dovrei|ho|ha|hai|abbiamo|avevo|avrei|sono|sei|siamo|stavo|sto|cerco|chiamo|posso|possiamo|vorremmo)\b/i;
@@ -520,6 +523,13 @@ function advancePhase(phase, toolName, result, intent) {
   if (toolName === 'check_availability') return phase;
   switch (phase) {
     case 'initial':
+      // find_reservation può essere chiamato da initial (dopo retry) - avanza correttamente
+      if (toolName === 'find_reservation') {
+        if (result.found === true) return intent === 'cancel' ? PHASES.AWAITING_CANCEL_CONFIRM : PHASES.AWAITING_MODIFY_DETAILS;
+        return PHASES.INITIAL;
+      }
+      if (toolName === 'prepare_reservation' && result.ready) return PHASES.AWAITING_CONFIRM;
+      return phase;
     case 'collecting':
       if (toolName === 'prepare_reservation' && result.ready) return PHASES.AWAITING_CONFIRM;
       return phase;
@@ -550,27 +560,41 @@ function advancePhase(phase, toolName, result, intent) {
 function buildPhaseInstructions(phase, sessionState) {
   const cd = sessionState.collectedData;
   const found = sessionState.foundReservation;
+
+  // Costruisce stringa con dati già acquisiti — GPT non deve richiederli
+  function _acquired() {
+    const parts = [];
+    if (cd.date)   parts.push(`data: ${formatDateForSpeech(cd.date)}`);
+    if (cd.time)   parts.push(`orario: ${cd.time}`);
+    if (cd.people) parts.push(`persone: ${cd.people}`);
+    if (cd.name)   parts.push(`nome: ${cd.name}`);
+    return parts.length > 0 ? `Dati GIÀ ACQUISITI (NON richiedere): ${parts.join(', ')}.` : '';
+  }
+
   switch (phase) {
     case 'initial':
       return 'Nessuna prenotazione trovata. Informa il cliente e chiedi se vuole fare una nuova prenotazione.';
     case 'collecting': {
+      const acquired = _acquired();
       const missing = [];
-      if (!cd.date) missing.push('la data');
-      if (!cd.time) missing.push("l'orario");
+      if (!cd.date)   missing.push('la data');
+      if (!cd.time)   missing.push("l'orario");
       if (!cd.people) missing.push('il numero di persone');
-      if (!cd.name) missing.push('il nome');
-      if (missing.length === 0) return 'Tutti i dati sono pronti. Chiama prepare_reservation.';
-      return `Dati mancanti: ${missing.join(', ')}. Chiedi solo il prossimo dato mancante, uno alla volta.`;
+      if (!cd.name)   missing.push('il nome');
+      if (missing.length === 0) return `${acquired} Tutti i dati sono pronti. Chiama prepare_reservation.`;
+      return `${acquired} Manca ancora: ${missing.join(', ')}. Chiedi SOLO il prossimo dato mancante, uno alla volta. NON ripetere quelli già acquisiti.`;
     }
-    case 'awaiting_confirm':
-      return 'Hai letto il riepilogo. Aspetta conferma esplicita ("sì/confermo/va bene") → create_reservation. Se corregge → aggiorna e richiama prepare_reservation.';
+    case 'awaiting_confirm': {
+      const acquired = _acquired();
+      return `${acquired} Hai letto il riepilogo. Aspetta conferma esplicita ("sì/confermo/va bene") → create_reservation. Se corregge → aggiorna e richiama prepare_reservation.`;
+    }
     case 'finding':
       return 'Chiama find_reservation con il nome e la data della prenotazione.';
     case 'awaiting_modify_details':
       if (!found) return 'Chiama find_reservation prima.';
       return `Prenotazione trovata: ${found.people} persone il ${formatDateForSpeech(found.date)} alle ${(found.time||'').substring(0,5)} a nome ${found.name}. Chiedi cosa vuole modificare (orario, data, persone). Poi check_availability e prepare_reservation.`;
     case 'awaiting_modify_confirm':
-      return 'Hai letto il riepilogo della modifica. Aspetta conferma → modify_reservation. Se vuole cambiare → raccogli nuovi dati.';
+      return `${_acquired()} Hai letto il riepilogo della modifica. Aspetta conferma → modify_reservation. Se vuole cambiare → raccogli nuovi dati.`;
     case 'awaiting_cancel_confirm':
       if (!found) return 'Chiama find_reservation prima.';
       return `Prenotazione trovata: ${found.people} persone il ${formatDateForSpeech(found.date)} alle ${(found.time||'').substring(0,5)} a nome ${found.name}. Chiedi conferma ESPLICITA: "Confermi di volerla cancellare?". Se sì → cancel_reservation. Se no → NON cancellare.`;
@@ -783,6 +807,14 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     }
 
     console.log(`📊 [SERVER] collectedData:`, JSON.stringify(cd));
+
+    // 8. Cancel confirm: rilevato server-side dalla trascrizione (GPT non può modificare lo stato)
+    if (this.state.phase === PHASES.AWAITING_CANCEL_CONFIRM && !this.state.cancelConfirmed) {
+      if (isConfirmingCancellation(transcript) || isConfirming(transcript)) {
+        this.state.cancelConfirmed = true;
+        console.log(`✅ [SERVER] cancelConfirmed = true`);
+      }
+    }
 
     // 8. Auto-trigger chiusura/disponibilità quando arriva una nuova data
     const isModifyContext = !!this.state.foundReservation || this.state.initialIntent === 'modify' || this.state.initialIntent === 'cancel';
