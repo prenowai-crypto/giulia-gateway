@@ -246,6 +246,7 @@ const NAME_EXCLUDE = new Set([
   'io','me','noi','lui','lei','uno','una','mille','tanto','molto','ecco','allora',
   'senza','mail','email','nessuno','nessuna','nome','mio','mia','suo','sua',
   'il','la','lo','per','alle','dei','delle',
+  'mai','sempre','ancora','forse','però','oppure','quindi',
   'vorrei','voglio','volevo','potrei','dovrei',
   "l'utente",'utente','cliente','unknown','sconosciuto',
   'prenotazione','reservation','tavolo','table',
@@ -652,7 +653,7 @@ REGOLE OPERATIVE:
         const peopleStr = cd.people;
         this._injectWithWait(
           `[disponibilità confermata: ${cd.date} ${timeStr} per ${peopleStr} persone]`,
-          `Disponibilità confermata per ${dateStr} alle ${timeStr} per ${peopleStr} persone. Chiedi solo: "A che nome prenoto?" — usa ESATTAMENTE questi valori di data e orario nelle tue risposte, non inventarne altri.`
+          `Disponibilità confermata per ${dateStr} alle ${timeStr} per ${peopleStr} persone. Chiedi solo: "A che nome prenoto?" — NON chiamare prepare_reservation, NON inventare nomi, aspetta che il cliente risponda.`
         );
       } else if (result.reason === 'day_closed') {
         this._injectMessage(result.message || 'Giorno chiuso.');
@@ -797,6 +798,16 @@ REGOLE OPERATIVE:
     };
 
     const allowed = ALLOWED[this.state.phase] || [];
+
+    // Blocca prepare_reservation se cd.name è null — GPT non deve inventare nomi
+    if (name === 'prepare_reservation' && allowed.includes(name) && !this.state.collectedData.name) {
+      console.warn(`⛔ prepare_reservation bloccata: nome mancante`);
+      this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name', message: 'Nome mancante.' }) } });
+      this.isResponseActive = true;
+      this._send({ type: 'response.create', response: { instructions: 'Chiedi: "A che nome prenoto?" — NON inventare nomi, aspetta che il cliente lo dica.' } });
+      return;
+    }
+
     if (!allowed.includes(name)) {
       console.warn(`⛔ "${name}" non permessa in fase "${this.state.phase}"`);
       const cd = this.state.collectedData;
