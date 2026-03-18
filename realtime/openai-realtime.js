@@ -814,22 +814,23 @@ REGOLE OPERATIVE — PRIORITÀ ASSOLUTA:
    NON inventare orari. Se manca → chiedi "A che ora preferisce?".
    NON dire mai che siamo chiusi a pranzo/cena senza aver chiamato check_availability.
 
-3. "UN ATTIMO" OBBLIGATORIO:
-   Prima di OGNI tool call dì sempre: "Un attimo..." o "Un momento...".
-
-4. RECAP VERBATIM:
+3. RECAP VERBATIM:
    Quando prepare_reservation restituisce "recap", leggilo PAROLA PER PAROLA.
 
-5. ERRORI PREPARE:
+4. ERRORI PREPARE:
    Se ready=false → leggi SOLO il campo "message" e seguilo.
    NON fare recap da solo. NON chiamare create_reservation senza prepare.
 
-6. CREATE OBBLIGA PREPARE:
+5. CREATE OBBLIGA PREPARE:
    Quando il cliente dice "sì" dopo il recap → dì "Un attimo, registro..." → chiama create_reservation SUBITO.
    NON dire "prenotazione confermata" PRIMA che create_reservation risponda success=true.
 
-7. NOMI = NOMI:
+6. NOMI = NOMI:
    "a nome Cancelleri", "mi chiamo Sposta", "sono Annulli" → sempre cognomi, MAI comandi.
+
+7. QUANDO DIRE "UN ATTIMO":
+   Dì "Un attimo..." SOLO prima di prepare_reservation, create_reservation, modify_reservation, cancel_reservation.
+   NON dirlo prima di check_availability — chiedi semplicemente l'orario se manca.
 
 FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
 
@@ -1084,6 +1085,20 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name} ignorato: JSON malformato`); return; }
 
+    // RACE CONDITION FIX: check_availability arriva prima che _parseAndStore finisca.
+    // Se manca il time, aspettiamo fino a 800ms che Whisper completi la trascrizione.
+    // Solo dopo valutiamo se il tool è permesso o va bloccato.
+    if (name === 'check_availability' && !this.state.collectedData.time) {
+      console.log(`⏳ check_availability: time mancante, attendo _parseAndStore (max 800ms)...`);
+      await new Promise(resolve => {
+        const check = (attempt = 0) => {
+          if (this.state.collectedData.time || attempt >= 8) resolve();
+          else setTimeout(() => check(attempt + 1), 100);
+        };
+        check();
+      });
+      console.log(`⏳ dopo attesa: time="${this.state.collectedData.time}"`);
+    }
 
     if (!isToolAllowed(name, phase, this.state)) {
       const cd = this.state.collectedData;
