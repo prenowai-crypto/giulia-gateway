@@ -186,6 +186,23 @@ function parseTime(text) {
     return null;
   }
   times.sort((a,b) => a.pos - b.pos);
+
+  // Se c'è una negazione prima di un orario ("non per le 21:00, per le 21:30")
+  // usa l'orario che segue la virgola/congiunzione, non quello negato
+  if (times.length >= 2) {
+    const negPattern = /\b(non|no)\b/gi;
+    let m;
+    while ((m = negPattern.exec(t)) !== null) {
+      const negPos = m.index;
+      // Trova l'orario più vicino dopo la negazione
+      const negated = times.find(x => x.pos > negPos && x.pos < negPos + 20);
+      if (negated) {
+        const remaining = times.filter(x => x !== negated);
+        if (remaining.length > 0) return remaining[remaining.length - 1].time;
+      }
+    }
+  }
+
   return times[times.length - 1].time;
 }
 
@@ -618,6 +635,16 @@ REGOLE ASSOLUTE:
 
     // Auto-check disponibilità
     this._maybeCheckAvailability();
+
+    // GUIDA RISPOSTA: se siamo in collecting e GPT sta generando liberamente,
+    // cancelliamo e iniettiamo l'istruzione corretta per il prossimo dato da raccogliere.
+    // Questo previene che GPT salti passi o improvvisi.
+    if (this.state.phase === 'collecting' && !this.state.availabilityDone) {
+      const instr = getPhaseInstructions(this.state);
+      if (instr) {
+        this._injectMessage(instr);
+      }
+    }
   }
 
   // ────────────────────────────────────────────────
@@ -804,6 +831,15 @@ REGOLE ASSOLUTE:
     };
 
     const allowed = ALLOWED[this.state.phase] || [];
+
+    // BLOCCO HARD: prepare_reservation richiede cd.name dal server, non da GPT
+    if (name === 'prepare_reservation' && !this.state.collectedData.name) {
+      console.warn(`⛔ prepare bloccata: cd.name=null (GPT aveva: ${args.name})`);
+      this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name' }) } });
+      this.isResponseActive = true;
+      this._send({ type: 'response.create', response: { instructions: 'Dì SOLO: "A che nome prenoto?" — aspetta la risposta del cliente, non inventare nomi.' } });
+      return;
+    }
     if (!allowed.includes(name)) {
       console.warn(`⛔ "${name}" non permessa in fase "${this.state.phase}"`);
       const cd = this.state.collectedData;
