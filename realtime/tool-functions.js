@@ -108,16 +108,7 @@ export const realtimeTools = [
     handler: async (args, context) => {
       const cd = context?.sessionState?.collectedData || {};
       const date   = cd.date;
-      // Per il time: cd.time è la fonte primaria (server-side deterministico).
-      // Se cd.time è null ma args.time è valido, GPT ha già letto l'orario dalla trascrizione
-      // prima che _parseAndStore finisse (race condition Whisper). In questo caso
-      // usiamo args.time E aggiorniamo cd.time così i turni successivi lo trovano.
-      let time = cd.time;
-      if (!time && args.time && /^\d{1,2}:\d{2}/.test(args.time)) {
-        time = args.time.substring(0, 5);
-        cd.time = time; // sincronizza server-side
-        console.log(`⏰ [check_availability] race condition fix: cd.time aggiornato da args → "${time}"`);
-      }
+      const time   = cd.time;  // SOLO server-side — GPT inventa orari, non fidarsi
       const people = cd.people || args.people || 2;
       const { restaurantConfig } = context;
       const timezone = restaurantConfig?.timezone || 'Europe/Rome';
