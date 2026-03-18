@@ -646,10 +646,13 @@ REGOLE OPERATIVE:
     ).then(result => {
       console.log(`✅ [SERVER] check:`, JSON.stringify(result));
       if (result.available) {
-        const instr = getPhaseInstructions(this.state);
+        // Istruzione con valori ESATTI verificati — GPT deve usare questi, non inventarne altri
+        const dateStr   = formatDateForSpeech(cd.date);
+        const timeStr   = cd.time;
+        const peopleStr = cd.people;
         this._injectWithWait(
-          `[verifica OK: ${cd.date} ${cd.time} per ${cd.people} persone — disponibile]`,
-          instr || 'Lo slot è disponibile. Chiedi il nome per la prenotazione.'
+          `[disponibilità confermata: ${cd.date} ${timeStr} per ${peopleStr} persone]`,
+          `Disponibilità confermata per ${dateStr} alle ${timeStr} per ${peopleStr} persone. Chiedi solo: "A che nome prenoto?" — usa ESATTAMENTE questi valori di data e orario nelle tue risposte, non inventarne altri.`
         );
       } else if (result.reason === 'day_closed') {
         this._injectMessage(result.message || 'Giorno chiuso.');
@@ -657,7 +660,7 @@ REGOLE OPERATIVE:
       } else if (result.reason === 'slot_full') {
         this._injectWithWait(
           `[slot pieno: ${cd.date} ${cd.time}]`,
-          'Lo slot è pieno. Comunicalo e proponi orari alternativi vicini.'
+          `Lo slot delle ${cd.time} di ${formatDateForSpeech(cd.date)} è pieno. Comunicalo brevemente e chiedi se preferisce un altro orario.`
         );
         cd.time = null; this.state.availabilityDone = false;
       } else {
@@ -859,13 +862,20 @@ REGOLE OPERATIVE:
 
       // Istruzione post-tool
       let instr = getPhaseInstructions(this.state);
-      // prepare_reservation ready:false → istruzione diretta senza scuse
+
       if (name === 'prepare_reservation' && result.ready === false) {
+        // Race condition: _parseAndStore sta ancora aggiornando cd.name
+        // Aspetta 300ms prima di rispondere
+        await new Promise(r => setTimeout(r, 300));
         const cd = this.state.collectedData;
-        if (!cd.name)   instr = 'Chiedi solo: "A che nome prenoto?" — nessuna scusa, solo questa domanda.';
-        else if (!cd.date)   instr = 'Chiedi solo: "Per quale giorno?"';
-        else if (!cd.time)   instr = 'Chiedi solo: "A che ora preferisce?"';
-        else if (!cd.people) instr = 'Chiedi solo: "Per quante persone?"';
+        if (!cd.name)   instr = 'Chiedi: "A che nome prenoto?"';
+        else if (!cd.date)   instr = 'Chiedi: "Per quale giorno?"';
+        else if (!cd.time)   instr = 'Chiedi: "A che ora preferisce?"';
+        else if (!cd.people) instr = 'Chiedi: "Per quante persone?"';
+        else {
+          // Nome arrivato durante l'attesa — richiama prepare
+          instr = `Hai tutti i dati: ${cd.date}, ${cd.time}, ${cd.people} persone, nome ${cd.name}. Chiama prepare_reservation ORA.`;
+        }
       }
 
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify(result) } });
