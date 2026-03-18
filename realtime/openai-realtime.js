@@ -1028,6 +1028,25 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name} ignorato: JSON malformato`); return; }
 
+    // Attendi che _parseAndStore abbia aggiornato i dati se cd è ancora vuoto
+    // (GPT chiama il tool prima che Whisper finisca la trascrizione)
+    if (name === 'check_availability') {
+      const cd = this.state.collectedData;
+      const isEmpty = !cd.date && !cd.time && !cd.people;
+      if (isEmpty) {
+        console.log(`⏳ check_availability: cd vuoto, aspetto _parseAndStore...`);
+        await new Promise(resolve => {
+          const check = (attempt = 0) => {
+            const c = this.state.collectedData;
+            if (c.date || c.time || attempt >= 10) { resolve(); }
+            else { setTimeout(() => check(attempt + 1), 150); }
+          };
+          check();
+        });
+        console.log(`⏳ check_availability: dati pronti → ${JSON.stringify(this.state.collectedData)}`);
+      }
+    }
+
     if (!isToolAllowed(name, phase)) {
       console.warn(`⛔ Tool "${name}" NON permessa in fase "${phase}"`);
       const msg_blocked = blockedToolMessage(name, phase, this.state);
