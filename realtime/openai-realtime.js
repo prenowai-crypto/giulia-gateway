@@ -1023,8 +1023,22 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     // Guard fase
     if (!isToolAllowed(name, phase)) {
       console.warn(`⛔ Tool "${name}" NON permessa in fase "${phase}"`);
-      this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: blockedToolMessage(name, phase) }) } });
-      this.send({ type: 'response.create' });
+      const msg = blockedToolMessage(name, phase);
+      this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: msg }) } });
+      // Se GPT ha tentato create_reservation senza prepare → forza prepare ora
+      if (name === 'create_reservation' && (phase === 'collecting' || phase === 'initial')) {
+        const cd = this.state.collectedData;
+        const acquired = [];
+        if (cd.date)   acquired.push(`data: ${cd.date}`);
+        if (cd.time)   acquired.push(`orario: ${cd.time}`);
+        if (cd.people) acquired.push(`persone: ${cd.people}`);
+        if (cd.name)   acquired.push(`nome: ${cd.name}`);
+        this.isResponseActive = true;
+        this.send({ type: 'response.create', response: { instructions: `STOP. Non puoi chiamare create_reservation prima di prepare_reservation. Chiama SUBITO prepare_reservation con i dati: ${acquired.join(', ')}. È OBBLIGATORIO.` } });
+      } else {
+        this.isResponseActive = true;
+        this.send({ type: 'response.create' });
+      }
       return;
     }
 
