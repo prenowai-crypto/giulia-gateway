@@ -634,27 +634,17 @@ export const realtimeTools = [
     handler: async (args, context) => {
       const { restaurantConfig, sessionState, callerPhone } = context;
 
-      // ✅ FIX: recupera prenotazione da sessionState
       const found = sessionState?.foundReservation;
       if (!found) {
         return { success: false, message: 'Prima chiamare find_reservation per trovare la prenotazione.' };
       }
 
-      // 🛡️ Guard: richiede conferma esplicita prima di cancellare
+      // cancelConfirmed viene impostato dal server (in _parseAndStore) quando rileva conferma esplicita
       if (!sessionState?.cancelConfirmed) {
-        const firstName = found.name?.split(' ')[0] || found.name;
-        const dateObj = new Date(found.date + 'T12:00:00');
-        const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-        const dayName = dayNames[dateObj.getDay()];
-        const day = dateObj.getDate();
-        const months = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
-        const monthName = months[dateObj.getMonth()];
-        const time = formatTimeForSpeech(found.time) || '';
         return {
           success: false,
           reason: 'awaiting_cancel_confirm',
-          message: `${firstName}, ho trovato la prenotazione per ${found.people} persone ${dayName} ${day} ${monthName} alle ${time}. Vuoi davvero cancellarla?`,
-          ISTRUZIONE: 'Leggi il messaggio al cliente e ASPETTA una conferma esplicita. Se dice "sì/confermo/cancella", imposta sessionState.cancelConfirmed=true e richiama cancel_reservation. Se dice "no/lascia stare", non cancellare.'
+          message: `Aspetta conferma esplicita del cliente prima di cancellare.`
         };
       }
 
