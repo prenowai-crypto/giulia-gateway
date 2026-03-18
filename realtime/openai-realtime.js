@@ -635,16 +635,6 @@ REGOLE ASSOLUTE:
 
     // Auto-check disponibilità
     this._maybeCheckAvailability();
-
-    // GUIDA RISPOSTA: se siamo in collecting e GPT sta generando liberamente,
-    // cancelliamo e iniettiamo l'istruzione corretta per il prossimo dato da raccogliere.
-    // Questo previene che GPT salti passi o improvvisi.
-    if (this.state.phase === 'collecting' && !this.state.availabilityDone) {
-      const instr = getPhaseInstructions(this.state);
-      if (instr) {
-        this._injectMessage(instr);
-      }
-    }
   }
 
   // ────────────────────────────────────────────────
