@@ -797,15 +797,32 @@ REGOLE OPERATIVE:
     if (!allowed.includes(name)) {
       console.warn(`⛔ "${name}" non permessa in fase "${this.state.phase}"`);
       const cd = this.state.collectedData;
+
+      if (name === 'check_availability') {
+        // Il server gestisce check_availability direttamente.
+        // Se ha già date+time+people → il server sta già eseguendo il check (async).
+        // In questo caso: chiudi il tool call silenziosamente e NON creare response.
+        // Sarà _injectWithWait a parlare quando il check è pronto.
+        const serverCheckRunning = cd.date && cd.time && cd.people;
+        if (serverCheckRunning) {
+          console.log(`⏳ check_availability bloccata ma server check in corso — silenzio`);
+          this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ pending: true, message: 'Verifica in corso, attendi.' }) } });
+          // NON creare response — lascia che _injectWithWait gestisca
+          return;
+        }
+        // Mancano ancora dati → chiedi il dato mancante usando getPhaseInstructions
+        // che include i dati già acquisiti, così GPT non chiede cose già note
+        const phaseInstr = getPhaseInstructions(this.state);
+        this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true }) } });
+        this.isResponseActive = true;
+        this._send({ type: 'response.create', response: { instructions: phaseInstr || 'Chiedi il dato mancante.' } });
+        return;
+      }
+
+      // Altri tool bloccati
       let blocked_msg = `Tool "${name}" non permessa in questa fase.`;
       if (name === 'create_reservation') {
         blocked_msg = `Devi chiamare prepare_reservation prima di create_reservation. Dati: data=${cd.date}, orario=${cd.time}, persone=${cd.people}, nome=${cd.name}.`;
-      } else if (name === 'check_availability') {
-        // GPT non deve avere questo tool — se lo chiama è perché il filter non ha funzionato
-        if (!cd.date)   blocked_msg = 'Non hai ancora la data. Chiedi al cliente per quale giorno vuole prenotare. NON inventare date o orari.';
-        else if (!cd.time) blocked_msg = 'Non hai ancora l\'orario. Chiedi al cliente: "A che ora preferisce?" NON suggerire orari, NON dire che non puoi verificare. Solo fai la domanda.';
-        else if (!cd.people) blocked_msg = 'Non hai ancora il numero di persone. Chiedi: "Per quante persone?"';
-        else blocked_msg = 'Il sistema verificherà automaticamente la disponibilità. Aspetta la conferma prima di procedere.';
       }
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: blocked_msg }) } });
       this.isResponseActive = true;
