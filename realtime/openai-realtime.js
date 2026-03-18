@@ -535,25 +535,25 @@ function parseMealContext(text) {
 }
 
 // Rileva note cliente (allergie, richieste speciali) — portato da v3.9.30 J1-J10
-const NOTE_PATTERNS = {
-  /celiaco|celiaca|glutine|gluten|celiac/i: 'Allergia/intolleranza glutine',
-  /vegetariano|vegetariana|vegetarian/i: 'Vegetariano/a',
-  /vegano|vegana|vegan/i: 'Vegano/a',
-  /lattosio|lactose/i: 'Intolleranza lattosio',
-  /arachidi|peanut|noci nuts/i: 'Allergia frutta secca',
-  /seggiolone|seggiolino|highchair/i: 'Richiesto seggiolone',
-  /sedia a rotelle|carrozzina|wheelchair/i: 'Accessibilità richiesta',
-  /anniversario|anniversary/i: 'Anniversario',
-  /compleanno|birthday/i: 'Compleanno',
-  /romantico|romantic/i: 'Tavolo romantico',
-  /terrazza|esterno|outside|outdoor/i: 'Preferenza esterno',
-};
+const NOTE_PATTERNS = [
+  [/celiaco|celiaca|glutine|gluten|celiac/i, 'Allergia/intolleranza glutine'],
+  [/vegetariano|vegetariana|vegetarian/i, 'Vegetariano/a'],
+  [/vegano|vegana|vegan/i, 'Vegano/a'],
+  [/lattosio|lactose/i, 'Intolleranza lattosio'],
+  [/arachidi|peanut|noci\s+nuts/i, 'Allergia frutta secca'],
+  [/seggiolone|seggiolino|highchair/i, 'Richiesto seggiolone'],
+  [/sedia a rotelle|carrozzina|wheelchair/i, 'Accessibilità richiesta'],
+  [/anniversario|anniversary/i, 'Anniversario'],
+  [/compleanno|birthday/i, 'Compleanno'],
+  [/romantico|romantic/i, 'Tavolo romantico'],
+  [/terrazza|esterno|outside|outdoor/i, 'Preferenza esterno'],
+];
 
 function parseNotes(text) {
   if (!text) return null;
   const found = [];
-  for (const [re, note] of Object.entries(NOTE_PATTERNS)) {
-    if (new RegExp(re.source, 'i').test(text)) found.push(note);
+  for (const [re, note] of NOTE_PATTERNS) {
+    if (re.test(text)) found.push(note);
   }
   return found.length > 0 ? found.join('; ') : null;
 }
