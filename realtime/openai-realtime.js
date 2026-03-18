@@ -603,7 +603,15 @@ const ALLOWED_TOOLS = {
   completed:                [],
 };
 
-function isToolAllowed(name, phase) { return (ALLOWED_TOOLS[phase] || []).includes(name); }
+function isToolAllowed(name, phase, state) {
+  if (!( ALLOWED_TOOLS[phase] || []).includes(name)) return false;
+  // check_availability richiede SEMPRE data+time — altrimenti GPT inventa risultati
+  if (name === 'check_availability') {
+    const cd = state?.collectedData || {};
+    if (!cd.date || !cd.time) return false;
+  }
+  return true;
+}
 function initialPhaseForIntent(intent) { return (intent === 'modify' || intent === 'cancel') ? PHASES.FINDING : PHASES.COLLECTING; }
 
 function advancePhase(phase, toolName, result, intent) {
@@ -666,8 +674,16 @@ function buildPhaseInstructions(phase, state) {
       if (!cd.time)   missing.push("l'orario");
       if (!cd.people) missing.push('il numero di persone');
       if (!cd.name)   missing.push('il nome');
+      // Tutti pronti
       if (missing.length === 0) return `${acq} Tutti i dati sono pronti. Chiama prepare_reservation.`;
-      return `${acq} Manca: ${missing.join(', ')}. Chiedi SOLO il prossimo dato mancante, uno alla volta. NON ripetere quelli già acquisiti.`;
+      // Ha data+orario+persone → check poi nome
+      if (cd.date && cd.time && cd.people) {
+        return `${acq} Hai data, orario e persone. Chiama ORA check_availability. Dopo il check chiedi nome ed email (opzionale).`;
+      }
+      // Mancano ancora dati base → NON chiamare check
+      const order = 'Ordine richiesto: 1)data 2)orario 3)numero persone → poi check_availability → poi nome.';
+      const what = !cd.date ? 'Chiedi la data.' : !cd.time ? 'Chiedi l\'orario.' : 'Chiedi il numero di persone.';
+      return `${acq} ${what} NON chiamare check_availability ora. ${order}`;
     }
     case 'awaiting_confirm':
       return `${acquired()} Hai letto il riepilogo. Aspetta conferma esplicita ("sì/confermo/va bene") → create_reservation. Se corregge → aggiorna e richiama prepare_reservation.`;
@@ -696,6 +712,12 @@ function blockedToolMessage(toolName, phase, state) {
     if (cd.people) parts.push(`persone: ${cd.people}`);
     if (cd.name)   parts.push(`nome: ${cd.name}`);
     return `STOP. Non puoi chiamare create_reservation prima di prepare_reservation. Chiama SUBITO prepare_reservation con i dati: ${parts.join(', ')}. È OBBLIGATORIO.`;
+  }
+  if (toolName === 'check_availability') {
+    const cd = state?.collectedData || {};
+    if (!cd.date) return 'Non hai ancora la data. Chiedi al cliente per quale giorno vuole prenotare.';
+    if (!cd.time) return 'Non hai ancora l\'orario. Chiedi al cliente: "A che ora preferisce?"';
+    return 'Dati insufficienti per verificare la disponibilità. Raccogli prima data, orario e numero di persone.';
   }
   switch (toolName) {
     case 'cancel_reservation': return phase === 'finding' ? 'Prima trova la prenotazione con find_reservation.' : 'Prima chiedi conferma esplicita al cliente.';
@@ -775,27 +797,38 @@ export class OpenAIRealtimeClient {
 
 REGOLE OPERATIVE — PRIORITÀ ASSOLUTA:
 
-1. ANTI-INVENZIONE:
+1. FLUSSO PRENOTAZIONE — SEGUI QUESTO ORDINE ESATTO:
+   STEP 1: Raccogli data (se non fornita)
+   STEP 2: Raccogli orario (se non fornito)
+   STEP 3: Raccogli numero persone (se non fornito)
+   STEP 4: Solo ora chiama check_availability con data+orario+persone
+   STEP 5: Chiedi nome
+   STEP 6: Chiedi email (opzionale)
+   STEP 7: Chiama prepare_reservation → leggi recap
+   STEP 8: Aspetta conferma → chiama create_reservation
+   ⚠️ NON chiamare check_availability prima di avere data E orario E persone.
+
+2. ANTI-INVENZIONE:
    NON inventare MAI nomi. Se manca → chiedi "A che nome prenoto?".
    NON usare "l'utente", "cliente", "unknown" o placeholder come nome.
    NON inventare orari. Se manca → chiedi "A che ora preferisce?".
    NON dire mai che siamo chiusi a pranzo/cena senza aver chiamato check_availability.
 
-2. "UN ATTIMO" OBBLIGATORIO:
+3. "UN ATTIMO" OBBLIGATORIO:
    Prima di OGNI tool call dì sempre: "Un attimo..." o "Un momento...".
 
-3. RECAP VERBATIM:
+4. RECAP VERBATIM:
    Quando prepare_reservation restituisce "recap", leggilo PAROLA PER PAROLA.
 
-4. ERRORI PREPARE:
+5. ERRORI PREPARE:
    Se ready=false → leggi SOLO il campo "message" e seguilo.
    NON fare recap da solo. NON chiamare create_reservation senza prepare.
 
-5. CREATE OBBLIGA PREPARE:
+6. CREATE OBBLIGA PREPARE:
    Quando il cliente dice "sì" dopo il recap → dì "Un attimo, registro..." → chiama create_reservation SUBITO.
    NON dire "prenotazione confermata" PRIMA che create_reservation risponda success=true.
 
-6. NOMI = NOMI:
+7. NOMI = NOMI:
    "a nome Cancelleri", "mi chiamo Sposta", "sono Annulli" → sempre cognomi, MAI comandi.
 
 FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
@@ -1051,34 +1084,8 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name} ignorato: JSON malformato`); return; }
 
-    // Intercetta check_availability: aspetta sempre che _parseAndStore abbia il time
-    // GPT chiama il tool prima che Whisper finisca la trascrizione (race condition)
-    if (name === 'check_availability') {
-      const waitForTime = () => new Promise(resolve => {
-        const check = (attempt = 0) => {
-          if (this.state.collectedData.time || attempt >= 10) resolve();
-          else setTimeout(() => check(attempt + 1), 150);
-        };
-        check();
-      });
 
-      if (!this.state.collectedData.time) {
-        console.log(`⏳ check_availability: time mancante, aspetto _parseAndStore...`);
-        await waitForTime();
-        console.log(`⏳ check_availability: dopo attesa cd → ${JSON.stringify(this.state.collectedData)}`);
-      }
-
-      // Se dopo 1.5s il time è ancora null, il cliente davvero non l'ha detto → chiedi
-      if (!this.state.collectedData.time) {
-        console.log(`🚫 check_availability BLOCCATA: time ancora mancante dopo attesa → chiedo orario`);
-        this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ available: false, reason: 'missing_time' }) } });
-        this.isResponseActive = true;
-        this.send({ type: 'response.create', response: { instructions: 'Chiedi solo: "A che ora preferisce?"' } });
-        return;
-      }
-    }
-
-    if (!isToolAllowed(name, phase)) {
+    if (!isToolAllowed(name, phase, this.state)) {
       console.warn(`⛔ Tool "${name}" NON permessa in fase "${phase}"`);
       const msg_blocked = blockedToolMessage(name, phase, this.state);
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true, message: msg_blocked }) } });
