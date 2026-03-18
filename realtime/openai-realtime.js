@@ -1051,41 +1051,30 @@ FASE CORRENTE: ${this.state.phase.toUpperCase()}`;
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name} ignorato: JSON malformato`); return; }
 
-    // Intercetta check_availability prima di eseguirla
+    // Intercetta check_availability: aspetta sempre che _parseAndStore abbia il time
+    // GPT chiama il tool prima che Whisper finisca la trascrizione (race condition)
     if (name === 'check_availability') {
-      const cd = this.state.collectedData;
+      const waitForTime = () => new Promise(resolve => {
+        const check = (attempt = 0) => {
+          if (this.state.collectedData.time || attempt >= 10) resolve();
+          else setTimeout(() => check(attempt + 1), 150);
+        };
+        check();
+      });
 
-      // Step 1: se cd è completamente vuoto, aspetta fino a 1.5s che _parseAndStore aggiorni
-      if (!cd.date && !cd.time && !cd.people) {
-        console.log(`⏳ check_availability: cd vuoto, aspetto _parseAndStore...`);
-        await new Promise(resolve => {
-          const check = (attempt = 0) => {
-            const c = this.state.collectedData;
-            if (c.date || c.time || attempt >= 10) { resolve(); }
-            else { setTimeout(() => check(attempt + 1), 150); }
-          };
-          check();
-        });
-        console.log(`⏳ check_availability: dati dopo attesa → ${JSON.stringify(this.state.collectedData)}`);
+      if (!this.state.collectedData.time) {
+        console.log(`⏳ check_availability: time mancante, aspetto _parseAndStore...`);
+        await waitForTime();
+        console.log(`⏳ check_availability: dopo attesa cd → ${JSON.stringify(this.state.collectedData)}`);
       }
 
-      // Step 2: se dopo l'attesa manca ancora il TIME, blocca il tool e chiedi direttamente
-      // GPT non deve fare check senza orario — non è un'informazione utile
+      // Se dopo 1.5s il time è ancora null, il cliente davvero non l'ha detto → chiedi
       if (!this.state.collectedData.time) {
-        console.log(`🚫 check_availability BLOCCATA: time mancante → chiedo orario direttamente`);
-        this.send({
-          type: 'conversation.item.create',
-          item: { type: 'function_call_output', call_id, output: JSON.stringify({
-            available: false,
-            reason: 'missing_time',
-            message: 'Orario mancante.'
-          })}
-        });
+        console.log(`🚫 check_availability BLOCCATA: time ancora mancante dopo attesa → chiedo orario`);
+        this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ available: false, reason: 'missing_time' }) } });
         this.isResponseActive = true;
-        this.send({ type: 'response.create', response: {
-          instructions: 'Chiedi SUBITO l\'orario al cliente con una frase breve tipo "A che ora preferisce?" — nient\'altro, solo questa domanda.'
-        }});
-        return; // Non eseguire il tool
+        this.send({ type: 'response.create', response: { instructions: 'Chiedi solo: "A che ora preferisce?"' } });
+        return;
       }
     }
 
