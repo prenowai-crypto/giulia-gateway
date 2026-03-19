@@ -522,6 +522,8 @@ Per prenotare raccogli IN QUESTO ORDINE, UNA COSA ALLA VOLTA:
 Poi chiama prepare_reservation. Poi aspetta "sì" e chiama create_reservation.
 
 REGOLE ASSOLUTE:
+- NON dire mai "Un attimo verifico la disponibilità" o frasi simili.
+- NON suggerire orari ("posso prenotare alle 21?") — aspetta che il cliente dica l'orario.
 - NON inventare dati (nomi, orari, date). Se non li hai, chiedi.
 - NON dire "prenotazione confermata" senza che create_reservation risponda.
 - NON chiamare prepare_reservation senza avere nome, data, orario e persone.
@@ -846,10 +848,10 @@ REGOLE ASSOLUTE:
         } else {
           // Mancano dati — di' esattamente quale domanda fare
           let exact_phrase;
-          if (!cd.date)        exact_phrase = 'Dì SOLO: "Per quale giorno vuole prenotare?"';
-          else if (!cd.time)   exact_phrase = 'Dì SOLO: "A che ora preferisce?"';
-          else if (!cd.people) exact_phrase = 'Dì SOLO: "Per quante persone?"';
-          else                 exact_phrase = 'Dì SOLO: "Un attimo..."';
+          if (!cd.date)        exact_phrase = 'Chiedi SOLO: "Per quale giorno vuole prenotare?" — nessun\'altra parola.';
+          else if (!cd.time)   exact_phrase = 'Chiedi SOLO: "A che ora preferisce?" — NON suggerire orari come "21:00", aspetta che il cliente risponda.';
+          else if (!cd.people) exact_phrase = 'Chiedi SOLO: "Per quante persone?"';
+          else                 exact_phrase = 'Attendi la risposta del cliente.';
           console.log(`📋 check_availability bloccata — dati mancanti → "${exact_phrase}"`);
           this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ status: 'missing_data' }) } });
           this.isResponseActive = true;
