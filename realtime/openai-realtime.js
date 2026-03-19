@@ -429,7 +429,7 @@ function freshState() {
   return {
     phase: 'initial',
     intent: null,
-    cd: { date: null, time: null, people: null, name: null, email: null, notes: null, meal: null },
+    collectedData: { date: null, time: null, people: null, name: null, email: null, notes: null, meal: null },
     foundReservation: null,
     availabilityDone: false,
     cancelConfirmed: false,
@@ -727,7 +727,7 @@ REGOLE ASSOLUTE:
   // ───────────────────────────────────────────────────
 
   _parseAndStore(transcript) {
-    const cd = this.state.cd;
+    const cd = this.state.collectedData;
     const locked = this.state.phase === 'awaiting_confirm';
     const prevDate = cd.date;
 
@@ -816,7 +816,7 @@ REGOLE ASSOLUTE:
   // ───────────────────────────────────────────────────
 
   _maybeCheckAvailability() {
-    const cd = this.state.cd;
+    const cd = this.state.collectedData;
     if (!cd.date || !cd.time || !cd.people) return;
     if (this.state.availabilityDone) return;
 
@@ -832,7 +832,7 @@ REGOLE ASSOLUTE:
     ).then(result => {
       console.log(`✅ [SERVER] check:`, JSON.stringify(result));
 
-      const cd = this.state.cd;
+      const cd = this.state.collectedData;
       const dateStr = formatDateIT(cd.date);
 
       if (result.available) {
@@ -867,7 +867,7 @@ REGOLE ASSOLUTE:
     const g = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
 
     if (closingDays.includes(dow)) {
-      this.state.cd.date = null;
+      this.state.collectedData.date = null;
       this.state.availabilityDone = false;
       this._forceResponse(`Siamo chiusi il ${g[dow]}. Di': "Mi dispiace, siamo chiusi il ${g[dow]}. Per quale altro giorno posso aiutarla?"`);
     } else if (meal === 'pranzo' && lunchClosed.includes(dow)) {
@@ -912,14 +912,14 @@ REGOLE ASSOLUTE:
   async _handleToolCall(msg) {
     const { call_id, name, arguments: argsStr } = msg;
     console.log(`🔧 Tool: ${name} [fase: ${this.state.phase}]`);
-    console.log(`📊 cd:`, JSON.stringify(this.state.cd));
+    console.log(`📊 cd:`, JSON.stringify(this.state.collectedData));
 
     let args;
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name}: JSON malformato`); return; }
 
     // Blocco hard: prepare senza nome
-    if (name === 'prepare_reservation' && !this.state.cd.name) {
+    if (name === 'prepare_reservation' && !this.state.collectedData.name) {
       console.warn(`⛔ prepare bloccata: name=null (GPT aveva: ${args.name})`);
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name' }) } });
       this.isResponseActive = true;
@@ -943,7 +943,7 @@ REGOLE ASSOLUTE:
     if (!allowed.includes(name)) {
       console.warn(`⛔ "${name}" non permessa in fase "${this.state.phase}"`);
       const blocked_msg = name === 'create_reservation'
-        ? `Devi chiamare prepare_reservation PRIMA. Dati: ${JSON.stringify(this.state.cd)}`
+        ? `Devi chiamare prepare_reservation PRIMA. Dati: ${JSON.stringify(this.state.collectedData)}`
         : `Tool "${name}" non disponibile ora.`;
       this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ blocked: true }) } });
       this.isResponseActive = true;
@@ -981,7 +981,7 @@ REGOLE ASSOLUTE:
       // prepare ready:false con attesa per race condition nome
       if (name === 'prepare_reservation' && result.ready === false) {
         await new Promise(r => setTimeout(r, 300));
-        const cd = this.state.cd;
+        const cd = this.state.collectedData;
         if (!cd.name)   instr = { say: 'Chiedi: "A che nome prenoto?"' };
         else if (!cd.time)   instr = { say: 'Chiedi: "A che ora preferisce?"' };
         else if (!cd.people) instr = { say: 'Chiedi: "Per quante persone?"' };
