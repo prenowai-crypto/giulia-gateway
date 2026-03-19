@@ -680,11 +680,11 @@ REGOLE ASSOLUTE:
   _onSpeechStopped() {
     this._transcriptionPending = true;
 
-    // Cancella risposta automatica VAD immediatamente
-    if (this.isResponseActive) {
-      this._send({ type: 'response.cancel' });
-      console.log(`⏸️ Risposta automatica cancellata — aspetto trascrizione`);
-    }
+    // SEMPRE cancella — OpenAI VAD avvia risposta automatica anche se isResponseActive=false
+    // Dobbiamo bloccarla PRIMA che generi, poi la sostituiamo con la nostra istruzione
+    this._send({ type: 'response.cancel' });
+    this.isResponseActive = false;
+    console.log(`⏸️ response.cancel inviato — aspetto trascrizione Whisper`);
 
     // Safety timeout: se la trascrizione non arriva in 3s, crea risposta libera
     clearTimeout(this._transcriptionTimeout);
