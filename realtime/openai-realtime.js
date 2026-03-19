@@ -93,7 +93,7 @@ function parseDate(text) {
 
   // Relative
   if (/dopodomani|dopo\s*domani|day after tomorrow/.test(t)) return toISO(addDays(today,2));
-  if (/\bdomani(ssa|sera|s)?\b|\btomorrow\b/.test(t)) return toISO(addDays(today,1));
+  if (/\bdomani\b|\btomorrow\b/.test(t)) return toISO(addDays(today,1));
   if (/\boggi\b|\btoday\b|\bstasera\b|\bquesta\s*sera\b|\btonight\b/.test(t)) return toISO(today);
 
   const tra = t.match(/(?:tra|fra|in)\s*(\d+)\s*giorni/);
@@ -185,23 +185,21 @@ function parseTime(text) {
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
-  // HH e mezza / HH e un quarto — PRIMA di re2 così vince sul match generico "alle HH"
-  const reEM_keys = Object.keys(MIN_W).filter(k=>!k.includes(' ')).join('|');
-  const reEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(?:(${reEM_keys})|(un\\s+quarto))\\b`, 'gi');
-  while ((m = reEM.exec(t)) !== null) {
-    let h = parseInt(m[1]);
-    const minKey = m[3] ? 'un quarto' : m[2]?.toLowerCase();
-    const min = minKey === 'un quarto' ? 15 : (MIN_W[minKey]||0);
-    if (h >= 1 && h <= 11 && !isLunch) h += 12;
-    if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
-  }
-
-  // alle HH — generico, dopo reEM per non sovrascrivere match con minuti
+  // alle HH
   const re2 = /(?:alle|ore|per le|at)\s*(\d{1,2})\b/gi;
   while ((m = re2.exec(t)) !== null) {
     let h = parseInt(m[1]);
     if (h >= 1 && h <= 11 && !isLunch) h += 12;
     if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:00` });
+  }
+
+  // HH e mezza
+  const reEM_keys = Object.keys(MIN_W).filter(k=>!k.includes(' ')).join('|');
+  const reEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(${reEM_keys})\\b`, 'gi');
+  while ((m = reEM.exec(t)) !== null) {
+    let h = parseInt(m[1]); const min = MIN_W[m[2].toLowerCase()]||0;
+    if (h >= 1 && h <= 11 && !isLunch) h += 12;
+    if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
   // Standalone HH:MM
@@ -231,13 +229,7 @@ function parseTime(text) {
     }
   }
 
-  allTimes.sort((a,b) => {
-    if (a.pos !== b.pos) return a.pos - b.pos;
-    // stessa posizione → preferisce quello con minuti (più specifico)
-    const minA = parseInt(a.time.split(':')[1]);
-    const minB = parseInt(b.time.split(':')[1]);
-    return minA - minB; // il più alto va dopo → viene usato come ultimo
-  });
+  allTimes.sort((a,b) => a.pos - b.pos);
   if (allTimes.length > 1) console.log(`⏰ Trovati ${allTimes.length} orari, uso ULTIMO: ${allTimes[allTimes.length-1].time}`);
   return allTimes[allTimes.length-1].time;
 }
@@ -272,43 +264,22 @@ function parsePeople(text) {
   const t = text.toLowerCase();
   if (/ci sei|ci siete|mi senti|pronto/i.test(t)) return null;
 
-  // Pattern espliciti — priorità assoluta, controllati PRIMA di qualsiasi guard
-  const explicitPatterns = [
-    /(\d+)\s*in\s*totale/i, /siamo\s*(?:in\s*)?(\d+)/i,
-    /(?:per|saremo)\s*(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
-    /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
-    /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
-  ];
-  for (const p of explicitPatterns) {
-    const m = t.match(p); if (m) { const n = parseInt(m[1]); if (n>0&&n<100) return n; }
-  }
-  // Parole numeriche + "persone/pax" — esplicito → ha priorità sull'isTimeContext
-  const wordNums = {'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10};
-  for (const [w,n] of Object.entries(wordNums)) {
-    if (new RegExp(`(?:per\\s+)?${w}\\s+(?:person[ae]|pax|coperti)`, 'i').test(t)) return n;
-  }
-
-  // Da qui in poi: se il testo parla di orari, non estrarre numeri ambigui
-  // es. "le nove e venti", "alle 9:20", "nove e un quarto"
-  const isTimeContext = /\b(?:alle|ore|le)\s*(?:\d{1,2}|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici)\b/i.test(t)
-    || /\b(?:uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s+e\s+(?:un\s+)?(?:mezza|mezzo|quarto|venti|trenta|quaranta|cinque|dieci)/i.test(t);
-  if (isTimeContext) return null;
-
   // Correzione "anzi" → ultimo numero
   if (/anzi|no aspetta|facciamo|meglio|diciamo/i.test(t)) {
     const nums = t.match(/\b(\d+)\b/g);
     if (nums && nums.length >= 2) { const n = parseInt(nums[nums.length-1]); if (n>0&&n<100) return n; }
   }
 
-  // Pattern con solo numero (senza parola "persone") — solo se non contesto orario
-  const loosePatterns = [
-    /(?:per|saremo)\s*(\d+)\s*$/i,
+  const patterns = [
+    /(\d+)\s*in\s*totale/i, /siamo\s*(?:in\s*)?(\d+)/i,
+    /(?:per|saremo)\s*(\d+)\s*(?:person[ae]|pax|coperti|guests|people)?/i,
+    /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
+    /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
   ];
-  for (const p of loosePatterns) {
+  for (const p of patterns) {
     const m = t.match(p); if (m) { const n = parseInt(m[1]); if (n>0&&n<100) return n; }
   }
 
-  // Parole numeriche — solo se NON in contesto orario (già escluso sopra)
   const words = {'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10};
   for (const [w,n] of Object.entries(words)) { if (t.includes(w)) return n; }
   return null;
@@ -356,9 +327,6 @@ function parseName(text) {
       const stop = name.match(STOP);
       if (stop) name = name.substring(0, stop.index).trim();
       name = name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-      // Controlla ogni singola parola — "sono sempre io" → "sempre" e "io" sono escluse
-      const nameWords = name.toLowerCase().split(/\s+/);
-      if (nameWords.some(w => NAME_EXCLUDE.has(w))) continue;
       if (name.length >= 2 && !NAME_EXCLUDE.has(name.toLowerCase())) {
         console.log(`👤 parseName (explicit): "${name}"`);
         return name;
@@ -467,7 +435,6 @@ function freshState() {
     cancelConfirmed: false,
     emailDone: false,  // true quando email fornita o rifiutata
     nameAsked: false,  // true quando il nome è già stato chiesto
-    forcedInstruction: null, // istruzione prioritaria (es. giorno chiuso) — bypassa nextPhrase
   };
 }
 
@@ -749,15 +716,7 @@ REGOLE ASSOLUTE:
     this._parseAndStore(transcript);
 
     // Crea risposta con istruzione esatta
-    // Se _checkDayClosure ha settato forcedInstruction, ha priorità assoluta
-    let phrase;
-    if (this.state.forcedInstruction) {
-      phrase = { say: this.state.forcedInstruction };
-      this.state.forcedInstruction = null;
-      console.log(`🚫 Istruzione forzata (es. giorno chiuso): ${phrase.say.substring(0, 80)}...`);
-    } else {
-      phrase = nextPhrase(this.state, this.restaurantConfig);
-    }
+    const phrase = nextPhrase(this.state, this.restaurantConfig);
     if (phrase) {
       console.log(`💡 Istruzione: ${phrase.say.substring(0, 80)}...`);
       // Traccia se stiamo chiedendo il nome — per non ripeterlo dopo il check
@@ -897,13 +856,9 @@ REGOLE ASSOLUTE:
       const dateStr = formatDateIT(cd.date);
 
       if (result.available) {
-        // Non iniettare se il nome è già stato chiesto o già acquisito — evita doppia risposta
+        // Se il nome è già stato chiesto (dall'istruzione della trascrizione), non ripetere
         if (this.state.nameAsked && !this.state.collectedData.name) {
           console.log(`✅ [SERVER] check OK — nome già chiesto, non ripeto`);
-          return;
-        }
-        if (this.state.collectedData.name) {
-          console.log(`✅ [SERVER] check OK — nome già acquisito (${this.state.collectedData.name}), non interrompo flusso`);
           return;
         }
         const instr = nextPhrase(this.state, this.restaurantConfig);
@@ -938,11 +893,11 @@ REGOLE ASSOLUTE:
     if (closingDays.includes(dow)) {
       this.state.collectedData.date = null;
       this.state.availabilityDone = false;
-      this.state.forcedInstruction = `Di' ESATTAMENTE: "Mi dispiace, siamo chiusi il ${g[dow]}. Per quale altro giorno posso aiutarla?" — poi aspetta, NON suggerire tu un giorno.`;
+      this._forceResponse(`Siamo chiusi il ${g[dow]}. Di': "Mi dispiace, siamo chiusi il ${g[dow]}. Per quale altro giorno posso aiutarla?"`);
     } else if (meal === 'pranzo' && lunchClosed.includes(dow)) {
-      this.state.forcedInstruction = `Di' ESATTAMENTE: "Mi dispiace, il ${g[dow]} siamo aperti solo a cena. Vuole prenotare per cena?"`;
+      this._forceResponse(`Siamo chiusi a pranzo il ${g[dow]}. Di': "Mi dispiace, il ${g[dow]} siamo aperti solo a cena."`);
     } else if (meal === 'cena' && dinnerClosed.includes(dow)) {
-      this.state.forcedInstruction = `Di' ESATTAMENTE: "Mi dispiace, il ${g[dow]} siamo aperti solo a pranzo. Vuole prenotare per pranzo?"`;
+      this._forceResponse(`Siamo chiusi a cena il ${g[dow]}. Di': "Mi dispiace, il ${g[dow]} siamo aperti solo a pranzo."`);
     }
   }
 
