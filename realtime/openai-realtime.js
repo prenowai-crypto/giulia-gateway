@@ -443,7 +443,8 @@ function freshState() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function nextPhrase(state, restaurantConfig) {
-  const { phase, intent, cd, foundReservation } = state;
+  const { phase, intent, foundReservation } = state;
+  const cd = state.collectedData;
   const rc = restaurantConfig || {};
 
   // Acquisiti — per dare contesto a GPT
