@@ -433,6 +433,7 @@ function freshState() {
     foundReservation: null,
     availabilityDone: false,
     cancelConfirmed: false,
+    emailDone: false,  // true quando email fornita o rifiutata
   };
 }
 
@@ -463,8 +464,11 @@ function nextPhrase(state, restaurantConfig) {
       if (!cd.people) return { say: `${ctx}Chiedi: "Per quante persone?"`, tool: null };
       // Abbiamo data+orario+persone — il check va fatto dal server prima di arrivare qui
       if (!cd.name)   return { say: `${ctx}Chiedi SOLO: "A che nome prenoto?" — poi TACI e aspetta la risposta del cliente. NON chiamare prepare_reservation finché il cliente non ha risposto con il nome.`, tool: null };
-      // Abbiamo tutto — chiedi email poi prepare
-      return { say: `${ctx}Chiedi se vuole lasciare un'email (opzionale), poi chiama prepare_reservation.`, tool: null };
+      // Abbiamo tutto — se email già gestita chiama prepare, altrimenti chiedila
+      if (state.emailDone || cd.email) {
+        return { say: `${ctx}Chiama prepare_reservation SUBITO con questi dati esatti: data=${cd.date}, orario=${cd.time}, persone=${cd.people}, nome=${cd.name}. NON dire nulla, chiama il tool.`, tool: null };
+      }
+      return { say: `${ctx}Chiedi SOLO: "Vuole lasciare un'email? È opzionale." — poi in base alla risposta chiama prepare_reservation.`, tool: null };
 
     // ── AWAITING CONFIRM ───────────────────────────────────────────────
     case 'awaiting_confirm':
@@ -782,7 +786,16 @@ REGOLE ASSOLUTE:
     // Email
     if (!locked) {
       const email = parseEmail(transcript);
-      if (email && cd.email !== email) { console.log(`📧 [SERVER] email→"${email}"`); cd.email = email; }
+      if (email && cd.email !== email) {
+        console.log(`📧 [SERVER] email→"${email}"`);
+        cd.email = email;
+        this.state.emailDone = true;
+      }
+      // Rileva rifiuto esplicito email
+      if (!this.state.emailDone && /\b(no|niente|nessuna|non voglio|senza)\b/i.test(transcript) && cd.name) {
+        console.log(`📧 [SERVER] email rifiutata — emailDone=true`);
+        this.state.emailDone = true;
+      }
     }
 
     // Meal context
