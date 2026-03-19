@@ -919,13 +919,18 @@ REGOLE ASSOLUTE:
     try { args = JSON.parse(argsStr); }
     catch(e) { console.warn(`⚠️ Tool ${name}: JSON malformato`); return; }
 
-    // Blocco hard: prepare senza nome
+    // Blocco hard: prepare senza nome — ma aspetta 400ms per Whisper
     if (name === 'prepare_reservation' && !this.state.collectedData.name) {
-      console.warn(`⛔ prepare bloccata: name=null (GPT aveva: ${args.name})`);
-      this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name' }) } });
-      this.isResponseActive = true;
-      this._send({ type: 'response.create', response: { instructions: 'Chiedi: "A che nome prenoto?" — non inventare nomi, aspetta la risposta del cliente.' } });
-      return;
+      console.warn(`⏳ prepare: name=null (GPT aveva: ${args.name}) — aspetto Whisper 400ms`);
+      await new Promise(r => setTimeout(r, 400));
+      if (!this.state.collectedData.name) {
+        console.warn(`⛔ prepare bloccata: name ancora null dopo attesa`);
+        this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name' }) } });
+        this.isResponseActive = true;
+        this._send({ type: 'response.create', response: { instructions: 'Chiedi: "A che nome prenoto?" — non inventare nomi, aspetta la risposta del cliente.' } });
+        return;
+      }
+      console.log(`✅ prepare: nome arrivato da Whisper: "${this.state.collectedData.name}" — procedo`);
     }
 
     // Tool ammessi per fase
