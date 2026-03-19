@@ -434,6 +434,7 @@ function freshState() {
     availabilityDone: false,
     cancelConfirmed: false,
     emailDone: false,  // true quando email fornita o rifiutata
+    nameAsked: false,  // true quando il nome è già stato chiesto
   };
 }
 
@@ -718,6 +719,10 @@ REGOLE ASSOLUTE:
     const phrase = nextPhrase(this.state, this.restaurantConfig);
     if (phrase) {
       console.log(`💡 Istruzione: ${phrase.say.substring(0, 80)}...`);
+      // Traccia se stiamo chiedendo il nome — per non ripeterlo dopo il check
+      if (phrase.say.includes('A che nome prenoto') && !this.state.collectedData.name) {
+        this.state.nameAsked = true;
+      }
       this.isResponseActive = true;
       this._send({ type: 'response.create', response: { instructions: phrase.say } });
     } else {
@@ -779,6 +784,7 @@ REGOLE ASSOLUTE:
         if (name && cd.name !== name) {
           console.log(`👤 [SERVER] name: "${cd.name}"→"${name}"`);
           cd.name = name;
+          this.state.nameAsked = false; // nome ricevuto, resetta il flag
         }
       }
     }
@@ -850,7 +856,11 @@ REGOLE ASSOLUTE:
       const dateStr = formatDateIT(cd.date);
 
       if (result.available) {
-        // Inietta istruzione: ora il sistema chiede il nome
+        // Se il nome è già stato chiesto (dall'istruzione della trascrizione), non ripetere
+        if (this.state.nameAsked && !this.state.collectedData.name) {
+          console.log(`✅ [SERVER] check OK — nome già chiesto, non ripeto`);
+          return;
+        }
         const instr = nextPhrase(this.state, this.restaurantConfig);
         this._injectWhenFree(
           `[slot disponibile: ${cd.date} ${cd.time} per ${cd.people} persone]`,
