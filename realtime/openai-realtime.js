@@ -93,7 +93,7 @@ function parseDate(text) {
 
   // Relative
   if (/dopodomani|dopo\s*domani|day after tomorrow/.test(t)) return toISO(addDays(today,2));
-  if (/\bdomani\b|\btomorrow\b/.test(t)) return toISO(addDays(today,1));
+  if (/\bdomani(ssa|sera|s)?\b|\btomorrow\b/.test(t)) return toISO(addDays(today,1));
   if (/\boggi\b|\btoday\b|\bstasera\b|\bquesta\s*sera\b|\btonight\b/.test(t)) return toISO(today);
 
   const tra = t.match(/(?:tra|fra|in)\s*(\d+)\s*giorni/);
@@ -264,6 +264,12 @@ function parsePeople(text) {
   const t = text.toLowerCase();
   if (/ci sei|ci siete|mi senti|pronto/i.test(t)) return null;
 
+  // Non estrarre persone se il testo parla di orari
+  // es. "le nove e venti", "alle 9:20", "nove e un quarto", "nove e mezza"
+  const isTimeContext = /\b(?:alle|ore|le)\s*(?:\d{1,2}|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici)\b/i.test(t)
+    || /\b(?:uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s+e\s+(?:mezza|mezzo|quarto|venti|trenta|quaranta|cinque|dieci)/i.test(t);
+  if (isTimeContext) return null;
+
   // Correzione "anzi" → ultimo numero
   if (/anzi|no aspetta|facciamo|meglio|diciamo/i.test(t)) {
     const nums = t.match(/\b(\d+)\b/g);
@@ -280,6 +286,7 @@ function parsePeople(text) {
     const m = t.match(p); if (m) { const n = parseInt(m[1]); if (n>0&&n<100) return n; }
   }
 
+  // Parole numeriche — solo se NON in contesto orario (già escluso sopra)
   const words = {'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10};
   for (const [w,n] of Object.entries(words)) { if (t.includes(w)) return n; }
   return null;
