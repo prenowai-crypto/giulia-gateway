@@ -264,10 +264,26 @@ function parsePeople(text) {
   const t = text.toLowerCase();
   if (/ci sei|ci siete|mi senti|pronto/i.test(t)) return null;
 
-  // Non estrarre persone se il testo parla di orari
-  // es. "le nove e venti", "alle 9:20", "nove e un quarto", "nove e mezza"
+  // Pattern espliciti — priorità assoluta, controllati PRIMA di qualsiasi guard
+  const explicitPatterns = [
+    /(\d+)\s*in\s*totale/i, /siamo\s*(?:in\s*)?(\d+)/i,
+    /(?:per|saremo)\s*(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
+    /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
+    /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
+  ];
+  for (const p of explicitPatterns) {
+    const m = t.match(p); if (m) { const n = parseInt(m[1]); if (n>0&&n<100) return n; }
+  }
+  // Parole numeriche + "persone/pax" — esplicito → ha priorità sull'isTimeContext
+  const wordNums = {'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10};
+  for (const [w,n] of Object.entries(wordNums)) {
+    if (new RegExp(`(?:per\\s+)?${w}\\s+(?:person[ae]|pax|coperti)`, 'i').test(t)) return n;
+  }
+
+  // Da qui in poi: se il testo parla di orari, non estrarre numeri ambigui
+  // es. "le nove e venti", "alle 9:20", "nove e un quarto"
   const isTimeContext = /\b(?:alle|ore|le)\s*(?:\d{1,2}|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici)\b/i.test(t)
-    || /\b(?:uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s+e\s+(?:mezza|mezzo|quarto|venti|trenta|quaranta|cinque|dieci)/i.test(t);
+    || /\b(?:uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s+e\s+(?:un\s+)?(?:mezza|mezzo|quarto|venti|trenta|quaranta|cinque|dieci)/i.test(t);
   if (isTimeContext) return null;
 
   // Correzione "anzi" → ultimo numero
@@ -276,13 +292,11 @@ function parsePeople(text) {
     if (nums && nums.length >= 2) { const n = parseInt(nums[nums.length-1]); if (n>0&&n<100) return n; }
   }
 
-  const patterns = [
-    /(\d+)\s*in\s*totale/i, /siamo\s*(?:in\s*)?(\d+)/i,
-    /(?:per|saremo)\s*(\d+)\s*(?:person[ae]|pax|coperti|guests|people)?/i,
-    /(\d+)\s*(?:person[ae]|pax|coperti|guests|people)/i,
-    /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
+  // Pattern con solo numero (senza parola "persone") — solo se non contesto orario
+  const loosePatterns = [
+    /(?:per|saremo)\s*(\d+)\s*$/i,
   ];
-  for (const p of patterns) {
+  for (const p of loosePatterns) {
     const m = t.match(p); if (m) { const n = parseInt(m[1]); if (n>0&&n<100) return n; }
   }
 
