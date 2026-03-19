@@ -327,6 +327,9 @@ function parseName(text) {
       const stop = name.match(STOP);
       if (stop) name = name.substring(0, stop.index).trim();
       name = name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+      // Controlla ogni singola parola — "sono sempre io" → "sempre" e "io" sono escluse
+      const nameWords = name.toLowerCase().split(/\s+/);
+      if (nameWords.some(w => NAME_EXCLUDE.has(w))) continue;
       if (name.length >= 2 && !NAME_EXCLUDE.has(name.toLowerCase())) {
         console.log(`👤 parseName (explicit): "${name}"`);
         return name;
@@ -435,6 +438,7 @@ function freshState() {
     cancelConfirmed: false,
     emailDone: false,  // true quando email fornita o rifiutata
     nameAsked: false,  // true quando il nome è già stato chiesto
+    forcedInstruction: null, // istruzione prioritaria (es. giorno chiuso) — bypassa nextPhrase
   };
 }
 
@@ -716,7 +720,15 @@ REGOLE ASSOLUTE:
     this._parseAndStore(transcript);
 
     // Crea risposta con istruzione esatta
-    const phrase = nextPhrase(this.state, this.restaurantConfig);
+    // Se _checkDayClosure ha settato forcedInstruction, ha priorità assoluta
+    let phrase;
+    if (this.state.forcedInstruction) {
+      phrase = { say: this.state.forcedInstruction };
+      this.state.forcedInstruction = null;
+      console.log(`🚫 Istruzione forzata (es. giorno chiuso): ${phrase.say.substring(0, 80)}...`);
+    } else {
+      phrase = nextPhrase(this.state, this.restaurantConfig);
+    }
     if (phrase) {
       console.log(`💡 Istruzione: ${phrase.say.substring(0, 80)}...`);
       // Traccia se stiamo chiedendo il nome — per non ripeterlo dopo il check
@@ -893,11 +905,11 @@ REGOLE ASSOLUTE:
     if (closingDays.includes(dow)) {
       this.state.collectedData.date = null;
       this.state.availabilityDone = false;
-      this._forceResponse(`Siamo chiusi il ${g[dow]}. Di': "Mi dispiace, siamo chiusi il ${g[dow]}. Per quale altro giorno posso aiutarla?"`);
+      this.state.forcedInstruction = `Di' ESATTAMENTE: "Mi dispiace, siamo chiusi il ${g[dow]}. Per quale altro giorno posso aiutarla?" — poi aspetta, NON suggerire tu un giorno.`;
     } else if (meal === 'pranzo' && lunchClosed.includes(dow)) {
-      this._forceResponse(`Siamo chiusi a pranzo il ${g[dow]}. Di': "Mi dispiace, il ${g[dow]} siamo aperti solo a cena."`);
+      this.state.forcedInstruction = `Di' ESATTAMENTE: "Mi dispiace, il ${g[dow]} siamo aperti solo a cena. Vuole prenotare per cena?"`;
     } else if (meal === 'cena' && dinnerClosed.includes(dow)) {
-      this._forceResponse(`Siamo chiusi a cena il ${g[dow]}. Di': "Mi dispiace, il ${g[dow]} siamo aperti solo a pranzo."`);
+      this.state.forcedInstruction = `Di' ESATTAMENTE: "Mi dispiace, il ${g[dow]} siamo aperti solo a pranzo. Vuole prenotare per pranzo?"`;
     }
   }
 
