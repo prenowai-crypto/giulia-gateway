@@ -185,21 +185,23 @@ function parseTime(text) {
     if (h >= 0 && h <= 23 && min >= 0 && min <= 59) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
-  // alle HH
+  // HH e mezza / HH e un quarto — PRIMA di re2 così vince sul match generico "alle HH"
+  const reEM_keys = Object.keys(MIN_W).filter(k=>!k.includes(' ')).join('|');
+  const reEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(?:(${reEM_keys})|(un\\s+quarto))\\b`, 'gi');
+  while ((m = reEM.exec(t)) !== null) {
+    let h = parseInt(m[1]);
+    const minKey = m[3] ? 'un quarto' : m[2]?.toLowerCase();
+    const min = minKey === 'un quarto' ? 15 : (MIN_W[minKey]||0);
+    if (h >= 1 && h <= 11 && !isLunch) h += 12;
+    if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
+  }
+
+  // alle HH — generico, dopo reEM per non sovrascrivere match con minuti
   const re2 = /(?:alle|ore|per le|at)\s*(\d{1,2})\b/gi;
   while ((m = re2.exec(t)) !== null) {
     let h = parseInt(m[1]);
     if (h >= 1 && h <= 11 && !isLunch) h += 12;
     if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:00` });
-  }
-
-  // HH e mezza
-  const reEM_keys = Object.keys(MIN_W).filter(k=>!k.includes(' ')).join('|');
-  const reEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(${reEM_keys})\\b`, 'gi');
-  while ((m = reEM.exec(t)) !== null) {
-    let h = parseInt(m[1]); const min = MIN_W[m[2].toLowerCase()]||0;
-    if (h >= 1 && h <= 11 && !isLunch) h += 12;
-    if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
   // Standalone HH:MM
@@ -229,7 +231,13 @@ function parseTime(text) {
     }
   }
 
-  allTimes.sort((a,b) => a.pos - b.pos);
+  allTimes.sort((a,b) => {
+    if (a.pos !== b.pos) return a.pos - b.pos;
+    // stessa posizione → preferisce quello con minuti (più specifico)
+    const minA = parseInt(a.time.split(':')[1]);
+    const minB = parseInt(b.time.split(':')[1]);
+    return minA - minB; // il più alto va dopo → viene usato come ultimo
+  });
   if (allTimes.length > 1) console.log(`⏰ Trovati ${allTimes.length} orari, uso ULTIMO: ${allTimes[allTimes.length-1].time}`);
   return allTimes[allTimes.length-1].time;
 }
@@ -889,9 +897,13 @@ REGOLE ASSOLUTE:
       const dateStr = formatDateIT(cd.date);
 
       if (result.available) {
-        // Se il nome è già stato chiesto (dall'istruzione della trascrizione), non ripetere
+        // Non iniettare se il nome è già stato chiesto o già acquisito — evita doppia risposta
         if (this.state.nameAsked && !this.state.collectedData.name) {
           console.log(`✅ [SERVER] check OK — nome già chiesto, non ripeto`);
+          return;
+        }
+        if (this.state.collectedData.name) {
+          console.log(`✅ [SERVER] check OK — nome già acquisito (${this.state.collectedData.name}), non interrompo flusso`);
           return;
         }
         const instr = nextPhrase(this.state, this.restaurantConfig);
