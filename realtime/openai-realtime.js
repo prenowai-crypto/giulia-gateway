@@ -462,7 +462,7 @@ function nextPhrase(state, restaurantConfig) {
       if (!cd.time)   return { say: `${ctx}Chiedi: "A che ora preferisce?"`, tool: null };
       if (!cd.people) return { say: `${ctx}Chiedi: "Per quante persone?"`, tool: null };
       // Abbiamo data+orario+persone — il check va fatto dal server prima di arrivare qui
-      if (!cd.name)   return { say: `${ctx}Chiedi: "A che nome prenoto?"`, tool: null };
+      if (!cd.name)   return { say: `${ctx}Chiedi SOLO: "A che nome prenoto?" — poi TACI e aspetta la risposta del cliente. NON chiamare prepare_reservation finché il cliente non ha risposto con il nome.`, tool: null };
       // Abbiamo tutto — chiedi email poi prepare
       return { say: `${ctx}Chiedi se vuole lasciare un'email (opzionale), poi chiama prepare_reservation.`, tool: null };
 
@@ -841,7 +841,7 @@ REGOLE ASSOLUTE:
         const instr = nextPhrase(this.state, this.restaurantConfig);
         this._injectWhenFree(
           `[slot disponibile: ${cd.date} ${cd.time} per ${cd.people} persone]`,
-          instr ? instr.say : `Slot disponibile per ${dateStr} alle ${cd.time} per ${cd.people} persone. Chiedi: "A che nome prenoto?"`
+          instr ? instr.say : `Slot disponibile per ${dateStr} alle ${cd.time} per ${cd.people} persone. Chiedi SOLO: "A che nome prenoto?" — poi TACI e aspetta. NON chiamare prepare_reservation prima che il cliente risponda.`
         );
       } else if (result.reason === 'day_closed') {
         cd.date = null;
@@ -927,7 +927,7 @@ REGOLE ASSOLUTE:
         console.warn(`⛔ prepare bloccata: name ancora null dopo attesa`);
         this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id, output: JSON.stringify({ ready: false, missing: 'name' }) } });
         this.isResponseActive = true;
-        this._send({ type: 'response.create', response: { instructions: 'Chiedi: "A che nome prenoto?" — non inventare nomi, aspetta la risposta del cliente.' } });
+        this._send({ type: 'response.create', response: { instructions: 'Chiedi SOLO: "A che nome prenoto?" — poi TACI e aspetta la risposta. NON chiamare prepare_reservation prima che il cliente risponda.' } });
         return;
       }
       console.log(`✅ prepare: nome arrivato da Whisper: "${this.state.collectedData.name}" — procedo`);
