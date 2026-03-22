@@ -2,22 +2,6 @@ import WebSocket from 'ws';
 
 // ─── UTILITY ──────────────────────────────────────────────────────────────────
 
-function getNowRome() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));
-}
-
-function toISO(d) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-
-function addDays(d, n) {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r;
-}
-
-function norm(s) {
-  return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-}
-
 const DAY_IT = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
 
 function timeToMinutes(t) {
@@ -29,190 +13,31 @@ function minutesToTime(m) {
   return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
 }
 
-// ─── PARSER DATA ──────────────────────────────────────────────────────────────
-
-function parseDate(text) {
-  if (!text) return null;
-  const t = norm(text);
-  const now = getNowRome();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  const s = t.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-  if (s) {
-    const d = parseInt(s[1]), mo = parseInt(s[2])-1;
-    if (mo>=0 && mo<=11 && d>=1 && d<=31) {
-      let c = new Date(today.getFullYear(), mo, d);
-      if (c < today) c = new Date(today.getFullYear()+1, mo, d);
-      return toISO(c);
-    }
-  }
-
-  const MO = { gennaio:0,febbraio:1,marzo:2,aprile:3,maggio:4,giugno:5,luglio:6,agosto:7,settembre:8,ottobre:9,novembre:10,dicembre:11 };
-  const me = t.match(new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${Object.keys(MO).join('|')})`));
-  if (me) {
-    const d = parseInt(me[1]), mo = MO[me[2]];
-    if (d>=1 && d<=31) {
-      let c = new Date(today.getFullYear(), mo, d);
-      if (c < today) c = new Date(today.getFullYear()+1, mo, d);
-      return toISO(c);
-    }
-  }
-
-  if (/dopodomani|dopo\s*domani/.test(t)) return toISO(addDays(today,2));
-  if (/\bdomani\b/.test(t))               return toISO(addDays(today,1));
-  if (/\boggi\b|\bstasera\b|\bquesta\s*sera\b/.test(t)) return toISO(today);
-
-  const tra = t.match(/(?:tra|fra)\s*(\d+)\s*giorni/);
-  if (tra) return toISO(addDays(today, parseInt(tra[1])));
-
-  const WD = [
-    {p:['domenica'],i:0},{p:['lunedi'],i:1},{p:['martedi'],i:2},
-    {p:['mercoledi'],i:3},{p:['giovedi'],i:4},{p:['venerdi'],i:5},{p:['sabato'],i:6}
-  ];
-
-  for (const wd of WD) for (const p of wd.p) {
-    const m = t.match(new RegExp(`\\b${p}\\s+(\\d{1,2})\\b`));
-    if (m) {
-      const n = parseInt(m[1]);
-      if (n>=1 && n<=31) {
-        let c = new Date(today.getFullYear(), today.getMonth(), n);
-        if (c < today) c = new Date(today.getFullYear(), today.getMonth()+1, n);
-        return toISO(c);
-      }
-    }
-  }
-
-  let li=-1, lp=-1;
-  for (const wd of WD) for (const p of wd.p) {
-    const pos = t.lastIndexOf(p);
-    if (pos>lp) { lp=pos; li=wd.i; }
-  }
-  if (li!==-1) {
-    const diff = ((li - today.getDay())+7)%7;
-    return toISO(addDays(today, diff===0 ? 7 : diff));
-  }
-
-  return null;
-}
-
-// ─── PARSER ORARIO ────────────────────────────────────────────────────────────
-
-function parseTime(text) {
-  if (!text) return null;
-  const t = text.toLowerCase().trim();
-  const isLunch = /\bpranzo\b|\blunch\b/.test(t);
-
-  if (/mezzogiorno/.test(t)) return '12:00';
-  if (/mezzanotte/.test(t))  return '00:00';
-  if (/\bl['']una\b|all'una\b/i.test(t)) return '13:00';
-
-  const HWMAP = {
-    'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,
-    'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,'tredici':13,
-    'quattordici':14,'quindici':15,'sedici':16,'diciassette':17,'diciotto':18,
-    'diciannove':19,'venti':20,'ventuno':21,'ventidue':22,'ventitre':23
-  };
-  const MWMAP = {
-    'mezza':30,'mezzo':30,'trenta':30,'quindici':15,'quarantacinque':45,
-    'quaranta':40,'venti':20,'dieci':10,'cinque':5,'un quarto':15
-  };
-
-  const times = [];
-  let m;
-
-  const allHW = Object.keys(HWMAP).join('|');
-  const rW = new RegExp(`(?:alle|ore|per le)\\s+(${allHW})(?:\\s+e\\s+(un quarto|mezza|mezzo|trenta|quindici|quarantacinque|quaranta|venti|dieci|cinque))?`,'gi');
-  while ((m=rW.exec(t))!==null) {
-    let h = HWMAP[m[1].toLowerCase()]; if (!h) continue;
-    const min = m[2] ? (MWMAP[m[2].toLowerCase()]||0) : 0;
-    if (h>=1 && h<=11 && !isLunch) h+=12;
-    times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  const r1 = /(?:alle|ore|per le)\s*(\d{1,2})[\.:](\d{2})/gi;
-  while ((m=r1.exec(t))!==null) {
-    let h=parseInt(m[1]), min=parseInt(m[2]);
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23&&min>=0&&min<=59) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  const r2 = /(?:alle|ore|per le)\s*(\d{1,2})\b/gi;
-  while ((m=r2.exec(t))!==null) {
-    const after = t.substring(m.index+m[0].length).trimStart();
-    if (/^person[ae]\b|^pax\b|^coperti\b/i.test(after)) continue;
-    let h=parseInt(m[1]);
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:00`});
-  }
-
-  const mwk = Object.keys(MWMAP).filter(k=>!k.includes(' ')).join('|');
-  const rEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(${mwk})\\b`,'gi');
-  while ((m=rEM.exec(t))!==null) {
-    let h=parseInt(m[1]); const min=MWMAP[m[2].toLowerCase()]||0;
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  const r3 = /\b(\d{1,2})[\.:](\d{2})\b/g;
-  while ((m=r3.exec(t))!==null) {
-    let h=parseInt(m[1]), min=parseInt(m[2]);
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23&&min>=0&&min<=59) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  if (times.length===0) return isLunch ? '13:00' : null;
-  times.sort((a,b)=>a.pos-b.pos);
-  return times[times.length-1].t;
-}
-
-// ─── PARSER PERSONE ───────────────────────────────────────────────────────────
-
-function parsePeople(text) {
-  if (!text) return null;
-  const t = text.toLowerCase();
-
-  if (/ci sei|ci siete|mi senti|pronto|come stai/i.test(t)) return null;
-
-  if (/anzi|no aspetta|facciamo|meglio|diciamo/i.test(t)) {
-    const nums = t.match(/\b(\d+)\b/g);
-    if (nums?.length >= 2) { const n=parseInt(nums[nums.length-1]); if (n>0&&n<100) return n; }
-  }
-
-  // Numero + parola-persona (sempre, anche con orario nella frase)
-  const m1 = t.match(/(\d+)\s*(?:person[ae]|pax|coperti)/i);
-  if (m1) { const n=parseInt(m1[1]); if (n>0&&n<100) return n; }
-
-  // Parola-numero + parola-persona (sempre)
-  const WN = { 'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10 };
-  for (const [w,n] of Object.entries(WN)) {
-    if (new RegExp(`\\b${w}\\s+(?:person[ae]|pax|coperti)\\b`).test(t)) return n;
-  }
-
-  const patterns = [
-    /(\d+)\s*in\s*totale/i,
-    /siamo\s*(?:in\s*)?(\d+)/i,
-    /(?:per|saremo)\s*(\d+)(?:\s+(?:person[ae]|pax|coperti))?/i,
-    /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
-  ];
-  for (const p of patterns) {
-    const m=t.match(p); if (m) { const n=parseInt(m[1]); if (n>0&&n<100) return n; }
-  }
-
-  const isTime = /(?:alle|ore|per le|mezzogiorno|mezzanotte|\d\s*:\s*\d|\d\s*e\s*(?:mezza|mezzo|quarto))/i.test(t);
-  if (!isTime) {
-    for (const [w,n] of Object.entries(WN)) {
-      if (new RegExp(`\\b${w}\\b`).test(t)) return n;
-    }
-  }
-
-  return null;
-}
-
-// ─── NOISE ────────────────────────────────────────────────────────────────────
-
 function isNoise(text) {
   if (!text || text.trim().length < 3) return true;
   return /sottotitoli|amara\.org|copyright/i.test(text);
+}
+
+// ─── VALIDAZIONE VALORI DAL TOOL ──────────────────────────────────────────────
+
+function validateDate(date) {
+  if (!date || typeof date !== 'string') return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const d = new Date(date + 'T12:00:00');
+  if (isNaN(d.getTime())) return false;
+  // Non nel passato
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  return d >= today;
+}
+
+function validateTime(time) {
+  if (!time || typeof time !== 'string') return false;
+  return /^\d{2}:\d{2}$/.test(time);
+}
+
+function validatePeople(people) {
+  return Number.isInteger(people) && people > 0 && people < 100;
 }
 
 // ─── CHECK ① giorno chiuso ────────────────────────────────────────────────────
@@ -225,12 +50,12 @@ function checkDayClosed(date, rc) {
   return null;
 }
 
-// ─── CHECK ② fascia chiusa + ③ fuori orario ──────────────────────────────────
+// ─── CHECK ②③ fascia + range ──────────────────────────────────────────────────
 
 function checkTimeFeasibility(date, time, rc) {
   const dow  = new Date(date + 'T12:00:00').getDay();
   const mins = timeToMinutes(time);
-  const isLunch = mins < 15 * 60; // prima delle 15
+  const isLunch = mins < 15 * 60;
 
   if (isLunch) {
     if ((rc.lunch_closed_days||[]).includes(dow)) {
@@ -251,19 +76,17 @@ function checkTimeFeasibility(date, time, rc) {
       return `L'orario ${time} è fuori dalla fascia cena (${rc.dinner_start||'19:00'}-${rc.dinner_end||'22:30'}). Comunica gli orari corretti e chiedi un nuovo orario.`;
     }
   }
-
   return null;
 }
 
-// ─── CHECK ④ disponibilità Apps Script ───────────────────────────────────────
+// ─── CHECK ④ Apps Script ──────────────────────────────────────────────────────
 
-async function checkSlotAvailability(date, time, people, rc) {
+async function checkSlot(date, time, people, rc) {
   const url = rc.apps_script_url;
   if (!url) {
-    console.warn('⚠️ apps_script_url non configurato — slot considerato disponibile');
+    console.warn('⚠️ apps_script_url mancante — slot considerato disponibile');
     return { available: true };
   }
-
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -275,29 +98,25 @@ async function checkSlotAvailability(date, time, people, rc) {
       })
     });
     const json = await res.json();
-    return json.success
-      ? { available: true }
-      : { available: false, reason: json.reason || 'slot_full' };
+    return json.success ? { available: true } : { available: false, reason: json.reason || 'slot_full' };
   } catch(e) {
-    console.error('❌ check_availability error:', e);
+    console.error('❌ checkSlot error:', e);
     return { available: true }; // fail-open
   }
 }
 
-// Cerca slot alternativi vicini: +30, -30, +60, -60 min
-async function findAlternativeSlot(date, time, people, rc) {
-  const baseMins = timeToMinutes(time);
-  const isLunch  = baseMins < 15 * 60;
+async function findAlternative(date, time, people, rc) {
+  const base     = timeToMinutes(time);
+  const isLunch  = base < 15 * 60;
   const rangeStart = timeToMinutes(isLunch ? (rc.lunch_start||'12:00')  : (rc.dinner_start||'19:00'));
   const rangeEnd   = timeToMinutes(isLunch ? (rc.lunch_end  ||'14:30')  : (rc.dinner_end  ||'22:30'));
 
-  const offsets = [30, -30, 60, -60];
-  for (const offset of offsets) {
-    const candidate = baseMins + offset;
+  for (const offset of [30, -30, 60, -60]) {
+    const candidate = base + offset;
     if (candidate < rangeStart || candidate >= rangeEnd) continue;
-    const candidateTime = minutesToTime(candidate);
-    const result = await checkSlotAvailability(date, candidateTime, people, rc);
-    if (result.available) return candidateTime;
+    const t = minutesToTime(candidate);
+    const r = await checkSlot(date, t, people, rc);
+    if (r.available) return t;
   }
   return null;
 }
@@ -322,14 +141,7 @@ export class OpenAIRealtimeClient {
     this.lastAITime = 0;
     this.ECHO_MS    = 2500;
 
-    // Dati raccolti
-    this.data = { date:null, time:null, people:null };
-    this.done = false; // true quando check ④ ha confermato disponibilità
-
-    // Flag per evitare check multipli in parallelo
-    this._checkingDay  = false;
-    this._checkingTime = false;
-    this._checkingSlot = false;
+    this._checking = false;
   }
 
   async connect() {
@@ -357,9 +169,25 @@ export class OpenAIRealtimeClient {
         output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model:'whisper-1', language:'it' },
         turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200 },
-        tools: [],
+        tools: [
+          {
+            type: 'function',
+            name: 'collect_data',
+            description: 'Chiama questo tool SOLO quando hai ricevuto dal cliente tutti e 3 i dati: data, orario e numero di persone. NON chiamarlo se manca anche solo uno dei 3.',
+            parameters: {
+              type: 'object',
+              properties: {
+                date:   { type: 'string',  description: 'Data in formato YYYY-MM-DD' },
+                time:   { type: 'string',  description: 'Orario in formato HH:MM (24h)' },
+                people: { type: 'integer', description: 'Numero di persone' },
+              },
+              required: ['date', 'time', 'people']
+            }
+          }
+        ],
       }
     });
+
     this._send({ type:'conversation.item.create', item:{
       type:'message', role:'user',
       content:[{ type:'input_text', text:'[Inizia: saluta brevemente e chiedi per quale giorno vuole prenotare.]' }]
@@ -371,31 +199,41 @@ export class OpenAIRealtimeClient {
     switch (msg.type) {
       case 'session.created':  console.log(`📋 Sessione: ${msg.session.id}`); break;
       case 'session.updated':  console.log('✅ Sessione ok'); break;
+
       case 'response.audio.delta':
         if (msg.delta) this.onAudioDelta(msg.delta); break;
+
       case 'response.audio_transcript.done':
         if (msg.transcript) {
           this.recentAI.unshift(msg.transcript);
-          if (this.recentAI.length>10) this.recentAI.pop();
+          if (this.recentAI.length > 10) this.recentAI.pop();
           this.lastAITime = Date.now();
           console.log(`💬 [AI]: ${msg.transcript}`);
           this.onTranscript(msg.transcript, 'assistant');
         }
         break;
+
       case 'input_audio_buffer.speech_started': console.log('🎤 Parla...'); break;
       case 'input_audio_buffer.speech_stopped':  console.log('🎤 Fine');    break;
+
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
-          if (this._echo(t)) { console.log(`🔇 Echo`); return; }
+          if (this._echo(t)) { console.log(`🔇 Echo`);  return; }
           if (isNoise(t))    { console.log(`🔇 Noise`); return; }
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-          this._parse(t);
         }
         break;
+
+      case 'response.function_call_arguments.done':
+        this._handleToolCall(msg);
+        break;
+
       case 'response.done':
-        if (msg.response?.status==='failed') console.error('❌ Response failed'); break;
+        if (msg.response?.status === 'failed') console.error('❌ Response failed');
+        break;
+
       case 'error':
         if (msg.error?.code !== 'conversation_already_has_active_response') {
           console.error('❌ OpenAI:', msg.error); this.onError(msg.error);
@@ -404,129 +242,119 @@ export class OpenAIRealtimeClient {
     }
   }
 
-  // ─── PARSE & TRIGGER CHECKS ─────────────────────────────────────────────────
+  // ─── TOOL CALL ────────────────────────────────────────────────────────────────
 
-  _parse(text) {
-    if (this.done) return;
+  async _handleToolCall(msg) {
+    const { call_id, arguments: argsStr } = msg;
 
-    const prevDate   = this.data.date;
-    const prevTime   = this.data.time;
-    const prevPeople = this.data.people;
-
-    const date   = parseDate(text);
-    const time   = parseTime(text);
-    const people = parsePeople(text);
-
-    if (date   && date   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${date}`);     this.data.date=date; }
-    if (time   && time   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${time}`);     this.data.time=time; }
-    if (people && people !== this.data.people) { console.log(`👥 people: ${this.data.people} → ${people}`); this.data.people=people; }
-
-    console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people}`);
-
-    // ① Nuova data → controlla giorno chiuso
-    if (this.data.date && this.data.date !== prevDate) {
-      this._checkDayClosed();
+    let args;
+    try { args = JSON.parse(argsStr); }
+    catch(e) {
+      console.error('❌ JSON malformato dal tool');
+      this._toolResult(call_id, { ok: false, error: 'Argomenti non validi.' });
+      this._send({ type: 'response.create' });
       return;
     }
 
-    // ② + ③ Nuovo orario (e data già ok) → controlla fascia + range
-    if (this.data.date && this.data.time && this.data.time !== prevTime) {
-      this._checkTimeFeasibility();
+    const { date, time, people } = args;
+    console.log(`🔧 collect_data: date=${date} time=${time} people=${people}`);
+
+    // Validazione base
+    if (!validateDate(date)) {
+      console.warn(`⚠️ Data non valida: ${date}`);
+      this._toolResult(call_id, { ok: false, error: 'Data non valida o nel passato.' });
+      this._send({ type:'response.create', response:{ instructions:'La data ricevuta non è valida o è nel passato. Chiedi al cliente di ripetere la data.' }});
+      return;
+    }
+    if (!validateTime(time)) {
+      console.warn(`⚠️ Orario non valido: ${time}`);
+      this._toolResult(call_id, { ok: false, error: 'Orario non valido.' });
+      this._send({ type:'response.create', response:{ instructions:'L\'orario ricevuto non è valido. Chiedi al cliente di ripetere l\'orario.' }});
+      return;
+    }
+    if (!validatePeople(people)) {
+      console.warn(`⚠️ Persone non valido: ${people}`);
+      this._toolResult(call_id, { ok: false, error: 'Numero persone non valido.' });
+      this._send({ type:'response.create', response:{ instructions:'Il numero di persone non è valido. Chiedi al cliente di ripetere.' }});
       return;
     }
 
-    // ④ Tutti e 3 → controlla disponibilità slot
-    if (this.data.date && this.data.time && this.data.people) {
-      this._checkSlotAvailability();
+    if (this._checking) {
+      console.warn('⚠️ Check già in corso, ignoro');
+      return;
     }
-  }
+    this._checking = true;
 
-  // ─── CHECK ① ────────────────────────────────────────────────────────────────
-
-  _checkDayClosed() {
-    if (this._checkingDay) return;
-    this._checkingDay = true;
-
-    const msg = checkDayClosed(this.data.date, this.restaurantConfig);
-    this._checkingDay = false;
-
-    if (msg) {
-      console.log(`🚫 Giorno chiuso: ${this.data.date}`);
-      this.data.date = null;
-      this._sistema(msg);
+    // ① Giorno chiuso
+    const closedMsg = checkDayClosed(date, this.restaurantConfig);
+    if (closedMsg) {
+      console.log(`🚫 Giorno chiuso: ${date}`);
+      this._toolResult(call_id, { ok: false, reason: 'day_closed' });
+      this._sistema(call_id, closedMsg);
+      this._checking = false;
+      return;
     }
-    // Se ok, GPT continua naturalmente a chiedere l'orario
-  }
 
-  // ─── CHECK ② + ③ ────────────────────────────────────────────────────────────
-
-  _checkTimeFeasibility() {
-    if (this._checkingTime) return;
-    this._checkingTime = true;
-
-    const msg = checkTimeFeasibility(this.data.date, this.data.time, this.restaurantConfig);
-    this._checkingTime = false;
-
-    if (msg) {
-      console.log(`🚫 Orario non valido: ${this.data.time}`);
-      this.data.time = null;
-      this._sistema(msg);
+    // ②③ Fascia + range
+    const timeMsg = checkTimeFeasibility(date, time, this.restaurantConfig);
+    if (timeMsg) {
+      console.log(`🚫 Orario non valido: ${time}`);
+      this._toolResult(call_id, { ok: false, reason: 'invalid_time' });
+      this._sistema(call_id, timeMsg);
+      this._checking = false;
+      return;
     }
-    // Se ok, GPT continua naturalmente a chiedere le persone
-  }
 
-  // ─── CHECK ④ ────────────────────────────────────────────────────────────────
-
-  async _checkSlotAvailability() {
-    if (this._checkingSlot) return;
-    this._checkingSlot = true;
-
-    const { date, time, people } = this.data;
+    // ④ Apps Script
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
-
-    const result = await checkSlotAvailability(date, time, people, this.restaurantConfig);
-    this._checkingSlot = false;
+    const result = await checkSlot(date, time, people, this.restaurantConfig);
 
     if (result.available) {
       console.log(`✅ Slot disponibile`);
-      this.done = true;
-      this._sistema(`DISPONIBILE: ${date} alle ${time} per ${people} persone è libero. Ora chiedi il nome al cliente: "A che nome prenoto?"`);
+      this._toolResult(call_id, { ok: true });
+      this._sistema(call_id, `DISPONIBILE: ${date} alle ${time} per ${people} persone è libero. Chiedi il nome al cliente: "A che nome prenoto?"`);
     } else {
       console.log(`❌ Slot pieno — cerco alternative`);
-      const alt = await findAlternativeSlot(date, time, people, this.restaurantConfig);
+      const alt = await findAlternative(date, time, people, this.restaurantConfig);
       if (alt) {
-        console.log(`💡 Alternativa trovata: ${alt}`);
-        this.data.time = null;
-        this._sistema(`SLOT PIENO: le ${time} è al completo. C'è disponibilità alle ${alt}. Di' al cliente: "Le ${time} è al completo, ma c'è posto alle ${alt}. Va bene?"`);
+        console.log(`💡 Alternativa: ${alt}`);
+        this._toolResult(call_id, { ok: false, reason: 'slot_full', alternative: alt });
+        this._sistema(call_id, `SLOT PIENO: le ${time} è al completo. C'è disponibilità alle ${alt}. Di' al cliente: "Le ${time} è al completo, ma c'è posto alle ${alt}. Va bene?"`);
       } else {
-        console.log(`❌ Nessuna alternativa per ${date}`);
-        this.data.time = null;
-        this._sistema(`TUTTO PIENO: nessuno slot disponibile per il ${date}. Di' al cliente che siamo al completo per quel giorno e chiedi se vuole provare un altro giorno.`);
+        console.log(`❌ Nessuna alternativa`);
+        this._toolResult(call_id, { ok: false, reason: 'fully_booked' });
+        this._sistema(call_id, `TUTTO PIENO: nessuno slot disponibile per il ${date}. Di' al cliente che siamo al completo e chiedi se vuole un altro giorno.`);
       }
     }
+
+    this._checking = false;
   }
 
-  // ─── INIETTA MESSAGGIO SISTEMA ───────────────────────────────────────────────
+  _toolResult(call_id, result) {
+    this._send({
+      type: 'conversation.item.create',
+      item: { type:'function_call_output', call_id, output: JSON.stringify(result) }
+    });
+  }
 
-  _sistema(text) {
+  _sistema(call_id, text) {
     console.log(`💉 [SISTEMA]: ${text.substring(0,100)}`);
-    this._send({ type:'conversation.item.create', item:{
-      type:'message', role:'user',
-      content:[{ type:'input_text', text:`[SISTEMA: ${text}]` }]
-    }});
-    this._send({ type:'response.create' });
+    this._send({
+      type: 'response.create',
+      response: { instructions: text }
+    });
   }
 
   // ─── ECHO ────────────────────────────────────────────────────────────────────
 
   _echo(text) {
-    if (!text || text.length<=20) return false;
+    if (!text || text.length <= 20) return false;
     const uw = text.toLowerCase().replace(/[.,!?]/g,'').split(/\s+/).filter(w=>w.length>1);
-    if (uw.length<=3 || Date.now()-this.lastAITime>this.ECHO_MS) return false;
+    if (uw.length <= 3 || Date.now()-this.lastAITime > this.ECHO_MS) return false;
     for (const phrase of this.recentAI) {
       const aw = phrase.toLowerCase().replace(/[.,!?]/g,'').split(/\s+/).filter(w=>w.length>1);
       const hits = uw.filter(w=>aw.includes(w)).length;
-      if (hits/uw.length>0.75 && hits>=6) return true;
+      if (hits/uw.length > 0.75 && hits >= 6) return true;
     }
     return false;
   }
@@ -538,7 +366,7 @@ export class OpenAIRealtimeClient {
   }
 
   _send(msg) {
-    if (this.ws?.readyState===WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 
   disconnect() {
