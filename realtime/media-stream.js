@@ -165,7 +165,9 @@ MESSAGGI [SISTEMA: ...] — il server ti comunica il risultato dei check:
 - [SISTEMA: Siamo chiusi ...] → avvisa e chiedi altro giorno
 - [SISTEMA: L'orario ... è fuori ...] → comunica gli orari e chiedi di nuovo
 - NON leggere il testo [SISTEMA: ...] al cliente
-- NON menzionare che esiste un sistema tecnico`;
+- NON menzionare che esiste un sistema tecnico
+- NON confermare mai la prenotazione autonomamente — dopo il nome di' solo "Perfetto, un attimo..." e aspetta
+- NON dire "prenotato", "confermato", "registrato" o simili prima di ricevere un [SISTEMA: CONFERMATO]`;
 }
 
 export default { setupMediaStreamHandler };
