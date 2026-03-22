@@ -447,8 +447,9 @@ export class OpenAIRealtimeClient {
 
     // ① Nuova data → controlla giorno chiuso
     if (this.data.date && this.data.date !== prevDate) {
-      this._checkDayClosed();
-      return;
+      const wasClosed = this._checkDayClosed();
+      if (wasClosed) return;
+      // giorno aperto → continua a controllare orario se già presente
     }
 
     // ②③ Nuovo orario → controlla fascia + range
@@ -466,7 +467,7 @@ export class OpenAIRealtimeClient {
   // ─── CHECK ① ────────────────────────────────────────────────────────────────
 
   _checkDayClosed() {
-    if (this._checkingDay) return;
+    if (this._checkingDay) return false;
     this._checkingDay = true;
     const msg = checkDayClosed(this.data.date, this.restaurantConfig);
     this._checkingDay = false;
@@ -474,7 +475,9 @@ export class OpenAIRealtimeClient {
       console.log(`🚫 Giorno chiuso: ${this.data.date}`);
       this.data.date = null;
       this._sistema(msg);
+      return true;
     }
+    return false;
   }
 
   // ─── CHECK ②③ ────────────────────────────────────────────────────────────
