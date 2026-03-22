@@ -145,27 +145,27 @@ Date assolute prossimi 30gg: ${dc.absLines}
 Orari: pranzo ${rc.lunch_start||'12:00'}-${rc.lunch_end||'14:30'} | cena ${rc.dinner_start||'19:00'}-${rc.dinner_end||'22:30'}
 Chiuso il: ${closed}
 
-IL TUO COMPITO: raccogliere data, orario e numero di persone — uno alla volta.
-Quando li hai tutti e 3, chiama il tool collect_data con i valori in formato corretto:
-- date: YYYY-MM-DD
-- time: HH:MM (formato 24h)
-- people: numero intero
+IL TUO COMPITO: raccogliere data, orario e numero di persone — uno alla volta nell'ordine.
+1. Chiedi la DATA e aspetta risposta
+2. Chiedi l'ORARIO e aspetta risposta
+3. Chiedi il NUMERO DI PERSONE e aspetta risposta
 
-REGOLE:
-- Chiedi un dato alla volta, aspetta risposta
-- NON suggerire orari o date specifici
+REGOLE ASSOLUTE:
+- NON inventare o assumere l'orario — aspetta che il cliente lo dica esplicitamente
+- "sera" o "pranzo" non sono un orario: chiedi sempre l'ora precisa
+- NON suggerire orari o date
 - NON chiedere nome, email o telefono
 - NON inventare nulla sulla disponibilità
-- Chiama collect_data SOLO quando hai tutti e 3 i dati
-- "sera" o "pranzo" NON sono un orario: devi SEMPRE chiedere l'ora esatta
-- NON chiamare collect_data con un orario che il cliente non ha detto esplicitamente
-- L'orario deve essere un'ora precisa detta dal cliente (es. "alle 21", "alle 13:30", "alle nove e un quarto")
+- NON fare più di una domanda alla volta
 
-DOPO collect_data — agisci in base alla risposta:
-- [DISPONIBILE ...] → chiedi il nome: "A che nome prenoto?"
-- [SLOT PIENO ...] → comunica e proponi l'alternativa indicata
-- [TUTTO PIENO ...] → comunica e chiedi un altro giorno
-- Chiusure / orari errati → comunica e chiedi di nuovo`;
+MESSAGGI [SISTEMA: ...] — il server ti comunica il risultato dei check:
+- [SISTEMA: DISPONIBILE ...] → chiedi il nome: "A che nome prenoto?"
+- [SISTEMA: SLOT PIENO ...] → comunica e proponi l'alternativa indicata
+- [SISTEMA: TUTTO PIENO ...] → comunica e chiedi un altro giorno
+- [SISTEMA: Siamo chiusi ...] → avvisa e chiedi altro giorno
+- [SISTEMA: L'orario ... è fuori ...] → comunica gli orari e chiedi di nuovo
+- NON leggere il testo [SISTEMA: ...] al cliente
+- NON menzionare che esiste un sistema tecnico`;
 }
 
 export default { setupMediaStreamHandler };
