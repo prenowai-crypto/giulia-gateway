@@ -29,7 +29,6 @@ export function setupMediaStreamHandler(server, config) {
             session.callSid   = msg.start?.call_control_id || msg.start?.callSid;
             console.log(`📞 CallSid: ${session.callSid}`);
 
-            // From / To
             if (callDataStore && session.callSid) {
               const s = callDataStore.get(session.callSid);
               if (s) { session.from=s.from; session.to=s.to; }
@@ -50,9 +49,11 @@ export function setupMediaStreamHandler(server, config) {
             const dc = buildDateContext(rc.timezone || 'Europe/Rome');
 
             session.client = new OpenAIRealtimeClient({
-              apiKey:       config.openaiApiKey,
-              model:        config.model || 'gpt-4o-mini-realtime-preview',
-              systemPrompt: buildSystemPrompt(rc, dc),
+              apiKey:           config.openaiApiKey,
+              model:            config.model || 'gpt-4o-mini-realtime-preview',
+              systemPrompt:     buildSystemPrompt(rc, dc),
+              restaurantConfig: rc,
+              callerPhone:      session.from !== 'unknown' ? session.from : null,
               onAudioDelta: (b64) => {
                 if (ws.readyState===1) ws.send(JSON.stringify({
                   event:'media', stream_id:session.streamSid, media:{payload:b64}
@@ -103,11 +104,11 @@ function buildDateContext(tz = 'Europe/Rome') {
     abs[`${d.getDate()} ${MN[d.getMonth()]}`] = f(d);
   }
 
-  const tom  = new Date(loc); tom.setDate(tom.getDate()+1);
-  const dop  = new Date(loc); dop.setDate(dop.getDate()+2);
-  const dsu  = (6-loc.getDay()+7)%7;
-  const sat  = new Date(loc); sat.setDate(sat.getDate()+(dsu===0?7:dsu));
-  const sun  = new Date(sat); sun.setDate(sun.getDate()+1);
+  const tom = new Date(loc); tom.setDate(tom.getDate()+1);
+  const dop = new Date(loc); dop.setDate(dop.getDate()+2);
+  const dsu = (6-loc.getDay()+7)%7;
+  const sat = new Date(loc); sat.setDate(sat.getDate()+(dsu===0?7:dsu));
+  const sun = new Date(sat); sun.setDate(sun.getDate()+1);
 
   return {
     today:    `${lbl(loc)} ${loc.getFullYear()} (${f(loc)})`,
@@ -123,7 +124,7 @@ function buildDateContext(tz = 'Europe/Rome') {
 // ─── SYSTEM PROMPT ────────────────────────────────────────────────────────────
 
 function buildSystemPrompt(rc, dc) {
-  const DN = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+  const DN     = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
   const closed = (rc.weekly_closing_days||[]).map(d=>DN[d]).join(', ') || 'nessuna';
 
   return `Sei ${rc.receptionist_name||'Giulia'}, receptionist del ristorante "${rc.restaurant_name}". Sei al telefono. Rispondi in modo naturale e breve (max 2 frasi).
@@ -139,18 +140,26 @@ Date assolute: ${dc.absLines}
 Orari: pranzo ${rc.lunch_start||'12:00'}-${rc.lunch_end||'14:30'} | cena ${rc.dinner_start||'19:00'}-${rc.dinner_end||'22:30'}
 Chiuso il: ${closed}
 
-IL TUO UNICO COMPITO: raccogliere 3 dati, uno alla volta.
-1. Chiedi la DATA → aspetta risposta
-2. Chiedi l'ORARIO → aspetta risposta
-3. Chiedi il NUMERO DI PERSONE → aspetta risposta
+IL TUO COMPITO: raccogliere 3 dati nell'ordine, uno alla volta.
+1. DATA → aspetta risposta
+2. ORARIO → aspetta risposta
+3. NUMERO DI PERSONE → aspetta risposta
 
-REGOLE RIGIDE:
-- NON chiedere nome, email, telefono o altro
+REGOLE:
+- NON chiedere nome, email o telefono
 - NON suggerire orari o date
-- NON confermare prenotazioni
+- NON inventare nulla sulla disponibilità
 - NON fare più di una domanda alla volta
-- Se il giorno è chiuso (${closed}): dillo e chiedi un altro giorno
-- Quando hai i 3 dati, taci e basta`;
+- Aspetta sempre il messaggio [SISTEMA: ...] prima di procedere
+
+MESSAGGI [SISTEMA: ...] — agisci così:
+- [SISTEMA: DISPONIBILE ...] → chiedi il nome: "A che nome prenoto?"
+- [SISTEMA: SLOT PIENO ...] → comunica il problema e proponi l'alternativa indicata
+- [SISTEMA: TUTTO PIENO ...] → comunica che siamo al completo e chiedi altro giorno
+- [SISTEMA: Siamo chiusi ...] → comunica la chiusura e chiedi un altro giorno/orario
+- [SISTEMA: L'orario ... è fuori ...] → comunica gli orari corretti e chiedi un nuovo orario
+- NON leggere il testo [SISTEMA: ...] letteralmente al cliente
+- NON menzionare che esiste un sistema tecnico`;
 }
 
 export default { setupMediaStreamHandler };
