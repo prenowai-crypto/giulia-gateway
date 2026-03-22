@@ -96,7 +96,12 @@ function buildDateContext(tz = 'Europe/Rome') {
   const MN   = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
   const f    = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const lbl  = d => `${DN[d.getDay()]} ${d.getDate()} ${MN[d.getMonth()]}`;
-  const next = i => { const diff=((i-loc.getDay())+7)%7; const d=new Date(loc); d.setDate(d.getDate()+(diff===0?7:diff)); return d; };
+  const next = i => {
+    const diff = ((i - loc.getDay()) + 7) % 7;
+    const d = new Date(loc);
+    d.setDate(d.getDate() + (diff === 0 ? 7 : diff));
+    return d;
+  };
 
   const abs = {};
   for (let i=0; i<=30; i++) {
@@ -106,8 +111,8 @@ function buildDateContext(tz = 'Europe/Rome') {
 
   const tom = new Date(loc); tom.setDate(tom.getDate()+1);
   const dop = new Date(loc); dop.setDate(dop.getDate()+2);
-  const dsu = (6-loc.getDay()+7)%7;
-  const sat = new Date(loc); sat.setDate(sat.getDate()+(dsu===0?7:dsu));
+  const dsu = (6 - loc.getDay() + 7) % 7;
+  const sat = new Date(loc); sat.setDate(sat.getDate() + (dsu===0 ? 7 : dsu));
   const sun = new Date(sat); sun.setDate(sun.getDate()+1);
 
   return {
@@ -117,7 +122,7 @@ function buildDateContext(tz = 'Europe/Rome') {
     saturday: `${lbl(sat)} (${f(sat)})`,
     sunday:   `${lbl(sun)} (${f(sun)})`,
     weekDays: DN.map((name,i) => `${name} = ${lbl(next(i))} (${f(next(i))})`).join('\n'),
-    absLines: Object.entries(abs).map(([k,v])=>`${k}=${v}`).join(', '),
+    absLines: Object.entries(abs).map(([k,v]) => `${k}=${v}`).join(', '),
   };
 }
 
@@ -125,41 +130,39 @@ function buildDateContext(tz = 'Europe/Rome') {
 
 function buildSystemPrompt(rc, dc) {
   const DN     = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-  const closed = (rc.weekly_closing_days||[]).map(d=>DN[d]).join(', ') || 'nessuna';
+  const closed = (rc.weekly_closing_days||[]).map(d => DN[d]).join(', ') || 'nessuna';
 
-  return `Sei ${rc.receptionist_name||'Giulia'}, receptionist del ristorante "${rc.restaurant_name}". Sei al telefono. Rispondi in modo naturale e breve (max 2 frasi).
+  return `Sei ${rc.receptionist_name||'Giulia'}, receptionist del ristorante "${rc.restaurant_name}". Sei al telefono. Parla in modo naturale e conciso (max 2 frasi).
 
-DATA DI OGGI: ${dc.today}
+OGGI: ${dc.today}
 domani = ${dc.tomorrow}
 dopodomani = ${dc.dayafter}
 sabato prossimo = ${dc.saturday}
 domenica prossima = ${dc.sunday}
 ${dc.weekDays}
-Date assolute: ${dc.absLines}
+Date assolute prossimi 30gg: ${dc.absLines}
 
 Orari: pranzo ${rc.lunch_start||'12:00'}-${rc.lunch_end||'14:30'} | cena ${rc.dinner_start||'19:00'}-${rc.dinner_end||'22:30'}
 Chiuso il: ${closed}
 
-IL TUO COMPITO: raccogliere 3 dati nell'ordine, uno alla volta.
-1. DATA → aspetta risposta
-2. ORARIO → aspetta risposta
-3. NUMERO DI PERSONE → aspetta risposta
+IL TUO COMPITO: raccogliere data, orario e numero di persone — uno alla volta.
+Quando li hai tutti e 3, chiama il tool collect_data con i valori in formato corretto:
+- date: YYYY-MM-DD
+- time: HH:MM (formato 24h)
+- people: numero intero
 
 REGOLE:
+- Chiedi un dato alla volta, aspetta risposta
+- NON suggerire orari o date specifici
 - NON chiedere nome, email o telefono
-- NON suggerire orari o date
 - NON inventare nulla sulla disponibilità
-- NON fare più di una domanda alla volta
-- Aspetta sempre il messaggio [SISTEMA: ...] prima di procedere
+- Chiama collect_data SOLO quando hai tutti e 3 i dati
 
-MESSAGGI [SISTEMA: ...] — agisci così:
-- [SISTEMA: DISPONIBILE ...] → chiedi il nome: "A che nome prenoto?"
-- [SISTEMA: SLOT PIENO ...] → comunica il problema e proponi l'alternativa indicata
-- [SISTEMA: TUTTO PIENO ...] → comunica che siamo al completo e chiedi altro giorno
-- [SISTEMA: Siamo chiusi ...] → comunica la chiusura e chiedi un altro giorno/orario
-- [SISTEMA: L'orario ... è fuori ...] → comunica gli orari corretti e chiedi un nuovo orario
-- NON leggere il testo [SISTEMA: ...] letteralmente al cliente
-- NON menzionare che esiste un sistema tecnico`;
+DOPO collect_data — agisci in base alla risposta:
+- [DISPONIBILE ...] → chiedi il nome: "A che nome prenoto?"
+- [SLOT PIENO ...] → comunica e proponi l'alternativa indicata
+- [TUTTO PIENO ...] → comunica e chiedi un altro giorno
+- Chiusure / orari errati → comunica e chiedi di nuovo`;
 }
 
 export default { setupMediaStreamHandler };
