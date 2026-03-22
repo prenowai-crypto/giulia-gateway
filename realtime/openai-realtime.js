@@ -162,7 +162,7 @@ function parseTime(text) {
 
   // "HH e mezza/quarto/..." — include "un quarto"
   const mwk = Object.keys(MWMAP).filter(k=>!k.includes(' ')).join('|');
-  const rEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(un quarto|${mwk})\\b`, 'gi');
+  const rEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+(?:e\\s+|è\\s+)?(un quarto|${mwk})\\b`, 'gi');
   while ((m=rEM.exec(t))!==null) {
     let h=parseInt(m[1]);
     const min = MWMAP[m[2].toLowerCase()]||0;
