@@ -1,18 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW - OPENAI REALTIME CLIENT v9.0.0
-//
-// FILOSOFIA: GPT GUIDA, SERVER VALIDA
-//
-//   GPT conduce la conversazione naturalmente.
-//   Il server traccia in background data/orario/persone via parser.
-//   Quando tutti e 3 i campi sono pronti, il server chiama check_availability
-//   e inietta il risultato come messaggio [SISTEMA: ...].
-//   GPT non ha mai accesso a check_availability (evita hallucination).
-//   Per tutti gli altri tool, il server usa sessionState come fonte di verità
-//   e ignora i parametri inventati da GPT.
-//
-//   NIENTE response.cancel. NIENTE injection di istruzioni su speech_stopped.
-//   NIENTE nextPhrase. GPT è libero di parlare — i dati sono protetti server-side.
+// PRENOW - OPENAI REALTIME CLIENT v10.0.0 — MINIMAL
+// Obiettivo: raccogliere data, orario, persone. Nient'altro.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
@@ -20,10 +8,6 @@ import WebSocket from 'ws';
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITY
 // ─────────────────────────────────────────────────────────────────────────────
-
-function normalizeText(str) {
-  return (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
 
 function getNowRome() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));
@@ -34,17 +18,14 @@ function toISO(date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 }
 
-function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate()+n); return r; }
+function addDays(d, n) {
+  const r = new Date(d);
+  r.setDate(r.getDate() + n);
+  return r;
+}
 
-function formatDateIT(iso) {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso + 'T12:00:00');
-    const days   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-    const months = ['gennaio','febbraio','marzo','aprile','maggio','giugno',
-                    'luglio','agosto','settembre','ottobre','novembre','dicembre'];
-    return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
-  } catch { return iso; }
+function normalizeText(str) {
+  return (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +44,7 @@ function parseDate(text) {
     const day = parseInt(slash[1]), month = parseInt(slash[2]) - 1;
     if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
       let c = new Date(today.getFullYear(), month, day);
-      if (c < today) c = new Date(today.getFullYear()+1, month, day);
+      if (c < today) c = new Date(today.getFullYear() + 1, month, day);
       return toISO(c);
     }
   }
@@ -72,54 +53,53 @@ function parseDate(text) {
   const months = {
     'gennaio':0,'febbraio':1,'marzo':2,'aprile':3,'maggio':4,'giugno':5,
     'luglio':6,'agosto':7,'settembre':8,'ottobre':9,'novembre':10,'dicembre':11,
-    'january':0,'february':1,'march':2,'april':3,'may':4,'june':5,
-    'july':6,'august':7,'september':8,'october':9,'november':10,'december':11,
   };
   const allM = Object.keys(months).join('|');
-  const mEx = t.match(new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${allM})`, 'i'));
+  const mEx = t.match(new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${allM})`));
   if (mEx) {
     const day = parseInt(mEx[1]), mon = months[mEx[2]];
     if (mon !== undefined && day >= 1 && day <= 31) {
       let c = new Date(today.getFullYear(), mon, day);
-      if (c < today) c = new Date(today.getFullYear()+1, mon, day);
+      if (c < today) c = new Date(today.getFullYear() + 1, mon, day);
       return toISO(c);
     }
   }
 
-  // Relative
+  // Relativi
   if (/dopodomani|dopo\s*domani/.test(t)) return toISO(addDays(today, 2));
-  if (/\bdomani\b/.test(t)) return toISO(addDays(today, 1));
+  if (/\bdomani\b/.test(t))               return toISO(addDays(today, 1));
   if (/\boggi\b|\bstasera\b|\bquesta\s*sera\b/.test(t)) return toISO(today);
 
   const tra = t.match(/(?:tra|fra|in)\s*(\d+)\s*giorni/);
   if (tra) return toISO(addDays(today, parseInt(tra[1])));
 
-  // "sabato 15" — giorno settimana + numero
-  const wdNum = [
-    {p:['domenica'],i:0},{p:['lunedi'],i:1},{p:['martedi'],i:2},
-    {p:['mercoledi'],i:3},{p:['giovedi'],i:4},{p:['venerdi'],i:5},{p:['sabato'],i:6},
+  // Giorno settimana
+  const wdAll = [
+    { p: ['domenica','sunday'],     i: 0 },
+    { p: ['lunedi','monday'],       i: 1 },
+    { p: ['martedi','tuesday'],     i: 2 },
+    { p: ['mercoledi','wednesday'], i: 3 },
+    { p: ['giovedi','thursday'],    i: 4 },
+    { p: ['venerdi','friday'],      i: 5 },
+    { p: ['sabato','saturday'],     i: 6 },
   ];
-  for (const wd of wdNum) {
+
+  // "sabato 15"
+  for (const wd of wdAll) {
     for (const p of wd.p) {
       const m = t.match(new RegExp(`\\b${p}\\s+(\\d{1,2})\\b`));
       if (m) {
         const n = parseInt(m[1]);
         if (n >= 1 && n <= 31) {
           let c = new Date(today.getFullYear(), today.getMonth(), n);
-          if (c < today) c = new Date(today.getFullYear(), today.getMonth()+1, n);
+          if (c < today) c = new Date(today.getFullYear(), today.getMonth() + 1, n);
           return toISO(c);
         }
       }
     }
   }
 
-  // Giorno settimana (prendi ULTIMO menzionato)
-  const wdAll = [
-    {p:['domenica','sunday'],i:0},{p:['lunedi','monday'],i:1},
-    {p:['martedi','tuesday'],i:2},{p:['mercoledi','wednesday'],i:3},
-    {p:['giovedi','thursday'],i:4},{p:['venerdi','friday'],i:5},
-    {p:['sabato','saturday'],i:6},
-  ];
+  // Solo giorno settimana (ultimo menzionato)
   let lastIdx = -1, lastPos = -1;
   for (const wd of wdAll) {
     for (const p of wd.p) {
@@ -142,11 +122,11 @@ function parseDate(text) {
 function parseTime(text) {
   if (!text) return null;
   const t = text.toLowerCase().trim();
-  const isLunch = /\bpranzo\b|\blunch\b/.test(t);
-  const isEvening = /cena|dinner|stasera|sera/i.test(t);
+  const isLunch   = /\bpranzo\b|\blunch\b/.test(t);
+  const isEvening = /\bcena\b|\bdinner\b|\bstasera\b|\bsera\b/.test(t);
 
-  if (/mezzogiorno|noon/.test(t)) return '12:00';
-  if (/mezzanotte|midnight/.test(t)) return '00:00';
+  if (/mezzogiorno|noon/.test(t))         return '12:00';
+  if (/mezzanotte|midnight/.test(t))      return '00:00';
   if (/\bl['']una\b|all'una\b/i.test(t)) return '13:00';
 
   const rel = _parseRelativeTime(t);
@@ -166,38 +146,43 @@ function parseTime(text) {
   let allTimes = [];
   let m;
 
-  // Parole "alle sette e mezza"
+  // "alle sette e mezza"
   const allHW = Object.keys(HOUR_W).join('|');
   const reW = new RegExp(`(?:alle|ore|per le|at)\\s+(${allHW})(?:\\s+e\\s+(un quarto|mezza|mezzo|trenta|quindici|quarantacinque|quaranta|venti|dieci|cinque))?`, 'gi');
   while ((m = reW.exec(t)) !== null) {
-    let h = HOUR_W[m[1].toLowerCase()]; if (h === undefined) continue;
+    let h = HOUR_W[m[1].toLowerCase()];
+    if (h === undefined) continue;
     const minKey = m[2]?.toLowerCase();
     const min = minKey ? (MIN_W[minKey] || 0) : 0;
     if (h >= 1 && h <= 11 && !isLunch) h += 12;
     if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
-  // "alle HH:MM" o "alle HH.MM"
+  // "alle HH:MM" / "alle HH.MM"
   const re1 = /(?:alle|ore|per le|at)\s*(\d{1,2})[\.:](\d{2})/gi;
   while ((m = re1.exec(t)) !== null) {
     let h = parseInt(m[1]), min = parseInt(m[2]);
     if (h >= 1 && h <= 11 && !isLunch) h += 12;
-    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
-  // "alle HH" (solo intero)
+  // "alle HH" — escludi se seguito da parola-persona
   const re2 = /(?:alle|ore|per le|at)\s*(\d{1,2})\b/gi;
   while ((m = re2.exec(t)) !== null) {
+    const after = t.substring(m.index + m[0].length).trimStart();
+    if (/^person[ae]\b|^pax\b|^coperti\b|^ospiti\b/i.test(after)) continue;
     let h = parseInt(m[1]);
     if (h >= 1 && h <= 11 && !isLunch) h += 12;
     if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:00` });
   }
 
-  // "HH e mezza/quarto/..."
+  // "HH e mezza / quarto / ..."
   const reEM_keys = Object.keys(MIN_W).filter(k => !k.includes(' ')).join('|');
   const reEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+e\\s+(${reEM_keys})\\b`, 'gi');
   while ((m = reEM.exec(t)) !== null) {
-    let h = parseInt(m[1]); const min = MIN_W[m[2].toLowerCase()] || 0;
+    let h = parseInt(m[1]);
+    const min = MIN_W[m[2].toLowerCase()] || 0;
     if (h >= 1 && h <= 11 && !isLunch) h += 12;
     if (h >= 0 && h <= 23) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
@@ -207,7 +192,8 @@ function parseTime(text) {
   while ((m = re3.exec(t)) !== null) {
     let h = parseInt(m[1]), min = parseInt(m[2]);
     if ((isEvening || !isLunch) && h >= 1 && h <= 11) h += 12;
-    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59)
+      allTimes.push({ pos: m.index, time: `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}` });
   }
 
   if (allTimes.length === 0) return isLunch ? '13:00' : null;
@@ -220,7 +206,7 @@ function parseTime(text) {
       const negated = allTimes.find(x => x.pos > neg.index && x.pos < neg.index + 25);
       if (negated) {
         const remaining = allTimes.filter(x => x !== negated);
-        if (remaining.length > 0) return remaining[remaining.length-1].time;
+        if (remaining.length > 0) return remaining[remaining.length - 1].time;
       }
     }
   }
@@ -233,14 +219,16 @@ function _parseRelativeTime(text) {
   const now = getNowRome();
   const patterns = [
     { re: /tra\s+mezz['']?\s*ora|fra\s+mezz['']?\s*ora/i, mins: 30 },
-    { re: /tra\s+un['']?\s*ora|fra\s+un['']?\s*ora/i,    mins: 60 },
-    { re: /tra\s+(\d+)\s*minut|fra\s+(\d+)\s*minut/i,   extract: true },
-    { re: /tra\s+(\d+)\s*ore|fra\s+(\d+)\s*ore/i,       extract: true, hours: true },
+    { re: /tra\s+un['']?\s*ora|fra\s+un['']?\s*ora/i,     mins: 60 },
+    { re: /tra\s+(\d+)\s*minut|fra\s+(\d+)\s*minut/i,    extract: true },
+    { re: /tra\s+(\d+)\s*ore|fra\s+(\d+)\s*ore/i,        extract: true, hours: true },
   ];
   for (const p of patterns) {
     const match = text.match(p.re);
     if (match) {
-      let offset = p.extract ? (p.hours ? parseInt(match[1]||match[2])*60 : parseInt(match[1]||match[2])) : p.mins;
+      const offset = p.extract
+        ? (p.hours ? parseInt(match[1] || match[2]) * 60 : parseInt(match[1] || match[2]))
+        : p.mins;
       const target = new Date(now.getTime() + offset * 60000);
       const r = Math.ceil(target.getMinutes() / 15) * 15;
       target.setMinutes(r % 60);
@@ -259,10 +247,9 @@ function parsePeople(text) {
   if (!text) return null;
   const t = text.toLowerCase();
 
-  // Frasi di test/rumore — ignorale
   if (/ci sei|ci siete|mi senti|pronto|come stai/i.test(t)) return null;
 
-  // Correzione "anzi / no aspetta"
+  // "anzi" → ultimo numero
   if (/anzi|no aspetta|facciamo|meglio|diciamo/i.test(t)) {
     const nums = t.match(/\b(\d+)\b/g);
     if (nums && nums.length >= 2) {
@@ -271,7 +258,6 @@ function parsePeople(text) {
     }
   }
 
-  // Pattern espliciti — in ordine di specificità
   const patterns = [
     /(\d+)\s*in\s*totale/i,
     /siamo\s*(?:in\s*)?(\d+)/i,
@@ -284,7 +270,7 @@ function parsePeople(text) {
     if (m) { const n = parseInt(m[1]); if (n > 0 && n < 100) return n; }
   }
 
-  // Numeri in lettere — solo se NON è un contesto temporale
+  // Numeri in lettere — solo se non è contesto temporale
   const isTimeContext = /(?:alle|ore|per le|mezzogiorno|mezzanotte|pranzo|cena|mattina|sera|pomeriggio|\d\s*:\s*\d|\d\s*e\s*(?:mezza|mezzo|quarto))/i.test(t);
   if (!isTimeContext) {
     const words = { 'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10 };
@@ -297,123 +283,8 @@ function parsePeople(text) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PARSER NOME
+// RUMORE
 // ─────────────────────────────────────────────────────────────────────────────
-
-const NAME_EXCLUDE = new Set([
-  'si','no','ok','sì','yes','grazie','prego','esatto','confermo','giusto','certo',
-  'quello','quella','bene','perfetto','ciao','buongiorno','buonasera','pronto',
-  'io','me','noi','lui','lei','uno','una','mille','tanto','molto','ecco','allora',
-  'senza','mail','email','nessuno','nessuna','nome','mio','mia','suo','sua',
-  'il','la','lo','per','alle','dei','delle','sono','sei','siamo',
-  'vorrei','voglio','volevo','potrei','dovrei','ho','hai','ha',
-  "l'utente",'utente','cliente','unknown','sconosciuto',
-  'prenotazione','reservation','tavolo','table',
-  'lunedì','martedì','mercoledì','giovedì','venerdì','sabato','domenica',
-  'lunedi','martedi','mercoledi','giovedi','venerdi',
-  'mai','sempre','ancora','forse','però','oppure','quindi',
-]);
-
-function parseName(text) {
-  if (!text) return null;
-  const t = text.trim();
-  const STOP = /\s+(?:alle|per|il|la|lo|gli|i|le|di|da|in|con|su|tra|fra|e|ed|o|a|un|una|uno|senza|email|mail)\b/i;
-
-  // Pattern espliciti (priorità)
-  const explicit = [
-    /\ba\s+nome\s+(?:di\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
-    /\bil\s+(?:mio\s+)?nome\s+[èe]\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
-    /\bmi\s+chiamo\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
-    /\bsono\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)\b/i,
-    /\bnome\s+([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)/i,
-    /[,\.]\s*([A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]{2,}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ][a-zA-ZÀ-ÖØ-öø-ÿ]+)?)\s*$/i,
-  ];
-
-  for (const p of explicit) {
-    const m = t.match(p);
-    if (m && m[1]) {
-      let name = m[1].trim();
-      const stop = name.match(STOP);
-      if (stop) name = name.substring(0, stop.index).trim();
-      name = name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-      if (name.length >= 2 && !NAME_EXCLUDE.has(name.toLowerCase())) {
-        console.log(`👤 parseName (explicit): "${name}"`);
-        return name;
-      }
-    }
-  }
-
-  // Evita estrazione se inizia con verbo
-  const VERB_START = /^(vorrei|voglio|volevo|potrei|dovrei|ho|hai|ha|avevo|stavo|sto|cerco|posso|vorremmo|non|pronto|ciao|guardate)\b/i;
-  if (VERB_START.test(t)) return null;
-
-  // Rimuovi prefissi di conferma
-  const CONFIRM_PREFIX = /^(?:sì|si|yes|certo|esatto|giusto|ok|confermo|perfetto|allora|ecco)[,\s]+/i;
-  const stripped = t.replace(/[.,!?]+$/, '').replace(CONFIRM_PREFIX, '').trim();
-  const words = stripped.split(/\s+/);
-
-  if (words.length === 1) {
-    const w = words[0];
-    if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w) && !NAME_EXCLUDE.has(w.toLowerCase())) {
-      const name = w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-      console.log(`👤 parseName (single): "${name}"`);
-      return name;
-    }
-  }
-  if (words.length === 2) {
-    const [w1, w2] = words;
-    if (/^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w1) && /^[A-Za-zÀ-ÖØ-öø-ÿ]{2,}$/.test(w2)
-        && !NAME_EXCLUDE.has(w1.toLowerCase()) && !NAME_EXCLUDE.has(w2.toLowerCase())) {
-      const name = [w1, w2].map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-      console.log(`👤 parseName (double): "${name}"`);
-      return name;
-    }
-  }
-
-  return null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ALTRI PARSER
-// ─────────────────────────────────────────────────────────────────────────────
-
-function parseEmail(text) {
-  if (!text) return null;
-  const m = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return m ? m[0] : null;
-}
-
-function detectIntent(text) {
-  if (!text) return 'create';
-  let t = text.toLowerCase()
-    .replace(/\ba\s+nome\s+\w+/gi, ' ')
-    .replace(/\bnome\s+\w+/gi, ' ')
-    .trim();
-
-  // Override: "nuova prenotazione" → sempre create
-  if (/\b(altra|nuova)\s+prenotazione/i.test(text)) return 'create';
-
-  const CANCEL = ['cancellare','cancella','cancello','disdire','disdetta','annullare','annulla',
-    'cancellarla','cancellarlo','disdirla','annullarla','non vengo','non veniamo','cancel','delete'];
-  const MODIFY = ['modificare','modifica','spostare','sposta','cambiare','cambia',
-    'anticipare','posticipare','change','modify','move','reschedule'];
-
-  for (const kw of CANCEL) {
-    if (kw.includes(' ') ? t.includes(kw) : new RegExp(`\\b${kw}\\b`, 'i').test(t)) return 'cancel';
-  }
-  for (const kw of MODIFY) {
-    if (t.includes(kw)) return 'modify';
-  }
-  if (/ho prenotato|ho una prenotazione|la mia prenotazione/i.test(text)) return 'modify';
-  return 'create';
-}
-
-function isConfirming(text) {
-  const t = normalizeText(text || '');
-  if (/^(si\b|sii\b|yes\b|esatto|corretto|giusto|confermo|certo|ok\b|va bene|proprio|quella|perfetto)/.test(t)) return true;
-  if (/\b(conferm|esatt|corrett|giust|perfett)\w*\b/.test(t)) return true;
-  return false;
-}
 
 function isBackgroundNoise(text) {
   if (!text || text.trim().length < 3) return true;
@@ -429,13 +300,11 @@ export class OpenAIRealtimeClient {
     this.apiKey           = options.apiKey;
     this.model            = options.model || 'gpt-4o-mini-realtime-preview';
     this.systemPrompt     = options.systemPrompt || '';
-    this.tools            = options.tools || [];
-    this.callSid          = options.callSid;
     this.restaurantConfig = options.restaurantConfig;
     this.callerPhone      = options.callerPhone || null;
-    this.onAudioDelta     = options.onAudioDelta  || (() => {});
-    this.onTranscript     = options.onTranscript   || (() => {});
-    this.onError          = options.onError        || console.error;
+    this.onAudioDelta     = options.onAudioDelta || (() => {});
+    this.onTranscript     = options.onTranscript  || (() => {});
+    this.onError          = options.onError       || console.error;
 
     this.ws          = null;
     this.isConnected = false;
@@ -446,24 +315,10 @@ export class OpenAIRealtimeClient {
     this.lastAiFinishedTime = 0;
     this.ECHO_WINDOW_MS     = 2500;
 
-    // Stato conversazione
-    this.state = {
-      intent: null,
-      collectedData: {
-        date: null, time: null, people: null,
-        name: null, email: null, notes: null,
-      },
-      foundReservation:   null,
-      availabilityDone:   false,   // true dopo check ok
-      availabilityInProgress: false,
-      cancelConfirmed:    false,
-      emailDone:          false,
-    };
+    // I 3 dati
+    this.collected = { date: null, time: null, people: null };
+    this.allCollected = false;
   }
-
-  // ─────────────────────────────────────────────────────
-  // CONNESSIONE
-  // ─────────────────────────────────────────────────────
 
   async connect() {
     return new Promise((resolve, reject) => {
@@ -471,56 +326,43 @@ export class OpenAIRealtimeClient {
       this.ws = new WebSocket(url, {
         headers: { 'Authorization': `Bearer ${this.apiKey}`, 'OpenAI-Beta': 'realtime=v1' }
       });
-      this.ws.on('open',    ()    => { this.isConnected = true; this._initSession(); resolve(); });
-      this.ws.on('message', data  => { this._handleMessage(JSON.parse(data.toString())); });
-      this.ws.on('error',   err   => { this.onError(err); reject(err); });
-      this.ws.on('close',   code  => { console.log(`🔴 OpenAI disconnesso (${code})`); this.isConnected = false; });
+      this.ws.on('open',    ()   => { this.isConnected = true; this._initSession(); resolve(); });
+      this.ws.on('message', data => { this._handleMessage(JSON.parse(data.toString())); });
+      this.ws.on('error',   err  => { this.onError(err); reject(err); });
+      this.ws.on('close',   code => { console.log(`🔴 OpenAI disconnesso (${code})`); this.isConnected = false; });
     });
   }
 
-  // ─────────────────────────────────────────────────────
-  // INIT SESSIONE
-  // ─────────────────────────────────────────────────────
-
   _initSession() {
     console.log('🟢 Connesso a OpenAI Realtime API');
-
     this._send({
       type: 'session.update',
       session: {
-        modalities: ['text', 'audio'],
+        modalities:  ['text', 'audio'],
         instructions: this.systemPrompt,
-        voice: 'alloy',
+        voice:        'alloy',
         input_audio_format:  'g711_ulaw',
         output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model: 'whisper-1', language: 'it' },
         turn_detection: {
-          type: 'server_vad',
-          threshold: 0.4,
-          prefix_padding_ms: 300,
+          type:                'server_vad',
+          threshold:           0.4,
+          prefix_padding_ms:   300,
           silence_duration_ms: 1200,
         },
-        // check_availability NON esposto a GPT: gestito server-side
-        tools: this.tools
-          .filter(t => t.name !== 'check_availability')
-          .map(t => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters })),
+        tools: [],
       }
     });
 
-    // Messaggio iniziale → GPT saluta
     this._send({
       type: 'conversation.item.create',
       item: {
         type: 'message', role: 'user',
-        content: [{ type: 'input_text', text: '[Cliente in linea. Saluta cordialmente e chiedi come puoi aiutare.]' }]
+        content: [{ type: 'input_text', text: '[Cliente in linea. Saluta cordialmente e chiedi per quale giorno vuole prenotare.]' }]
       }
     });
     this._send({ type: 'response.create' });
   }
-
-  // ─────────────────────────────────────────────────────
-  // MESSAGE HANDLER
-  // ─────────────────────────────────────────────────────
 
   _handleMessage(msg) {
     switch (msg.type) {
@@ -553,34 +395,28 @@ export class OpenAIRealtimeClient {
         break;
 
       case 'input_audio_buffer.speech_stopped':
-        console.log('🎤 Utente finito — attendo trascrizione Whisper');
-        // NIENTE response.cancel — GPT gestisce naturalmente
+        console.log('🎤 Utente finito');
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
-          if (this._isEcho(t)) { console.log(`🔇 Echo ignorato: "${t.substring(0,40)}"`); return; }
-          if (isBackgroundNoise(t)) { console.log(`🔇 Rumore ignorato: "${t.substring(0,40)}"`); return; }
+          if (this._isEcho(t))      { console.log(`🔇 Echo: "${t.substring(0,40)}"`);   return; }
+          if (isBackgroundNoise(t)) { console.log(`🔇 Rumore: "${t.substring(0,40)}"`); return; }
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
           this._onTranscription(t);
         }
         break;
 
-      case 'response.function_call_arguments.done':
-        this._handleToolCall(msg);
-        break;
-
       case 'response.done':
-        if (msg.response?.status === 'failed') {
+        if (msg.response?.status === 'failed')
           console.error('❌ Response failed:', msg.response.status_details);
-        }
         break;
 
       case 'error':
         if (msg.error?.code !== 'conversation_already_has_active_response') {
-          console.error('❌ Errore OpenAI:', msg.error);
+          console.error('❌ OpenAI error:', msg.error);
           this.onError(msg.error);
         }
         break;
@@ -590,232 +426,46 @@ export class OpenAIRealtimeClient {
     }
   }
 
-  // ─────────────────────────────────────────────────────
-  // TRASCRIZIONE → parse + auto-check
-  // ─────────────────────────────────────────────────────
-
   _onTranscription(transcript) {
-    this._parseAndStore(transcript);
-    this._maybeAutoCheck();
-  }
-
-  // ─────────────────────────────────────────────────────
-  // PARSE & STORE
-  // ─────────────────────────────────────────────────────
-
-  _parseAndStore(transcript) {
-    const cd = this.state.collectedData;
-
-    // Intent — solo la prima volta
-    if (!this.state.intent) {
-      this.state.intent = detectIntent(transcript);
-      console.log(`🎯 intent: "${this.state.intent}"`);
-    }
+    if (this.allCollected) return;
 
     // Data
     const date = parseDate(transcript);
-    if (date && date !== cd.date) {
-      console.log(`📅 date: "${cd.date}" → "${date}"`);
-      cd.date = date;
-      this.state.availabilityDone = false;
+    if (date && date !== this.collected.date) {
+      console.log(`📅 date: "${this.collected.date}" → "${date}"`);
+      this.collected.date = date;
     }
 
     // Orario
     const time = parseTime(transcript);
-    if (time && time !== cd.time) {
-      console.log(`⏰ time: "${cd.time}" → "${time}"`);
-      cd.time = time;
-      this.state.availabilityDone = false;
+    if (time && time !== this.collected.time) {
+      console.log(`⏰ time: "${this.collected.time}" → "${time}"`);
+      this.collected.time = time;
     }
 
     // Persone
     const people = parsePeople(transcript);
-    if (people && people !== cd.people) {
-      console.log(`👥 people: ${cd.people} → ${people}`);
-      cd.people = people;
+    if (people && people !== this.collected.people) {
+      console.log(`👥 people: ${this.collected.people} → ${people}`);
+      this.collected.people = people;
     }
 
-    // Nome
-    const name = parseName(transcript);
-    if (name && name !== cd.name) {
-      console.log(`👤 name: "${cd.name}" → "${name}"`);
-      cd.name = name;
-    }
+    console.log(`📊 collected: date=${this.collected.date} time=${this.collected.time} people=${this.collected.people}`);
 
-    // Email
-    const email = parseEmail(transcript);
-    if (email && email !== cd.email) {
-      console.log(`📧 email: "${email}"`);
-      cd.email = email;
-      this.state.emailDone = true;
-    }
-    if (!this.state.emailDone && /\b(no|niente|nessuna|non voglio|senza email)\b/i.test(transcript) && cd.name) {
-      console.log(`📧 email rifiutata`);
-      this.state.emailDone = true;
-    }
-
-    // Conferma cancellazione
-    if (this.state.intent === 'cancel' && isConfirming(transcript)) {
-      if (!this.state.cancelConfirmed) {
-        console.log(`✅ cancelConfirmed`);
-        this.state.cancelConfirmed = true;
-      }
-    }
-
-    console.log(`📊 cd: date=${cd.date} time=${cd.time} people=${cd.people} name=${cd.name} email=${cd.email}`);
-  }
-
-  // ─────────────────────────────────────────────────────
-  // AUTO-CHECK DISPONIBILITÀ (server-side)
-  // Si attiva solo per CREATE, quando tutti e 3 i campi sono pronti
-  // ─────────────────────────────────────────────────────
-
-  _maybeAutoCheck() {
-    const cd = this.state.collectedData;
-    if (this.state.intent && this.state.intent !== 'create') return;
-    if (!cd.date || !cd.time || !cd.people) return;
-    if (this.state.availabilityDone || this.state.availabilityInProgress) return;
-
-    this.state.availabilityInProgress = true;
-    console.log(`🔍 Auto-check: ${cd.date} ${cd.time} per ${cd.people}`);
-
-    const tool = this.tools.find(t => t.name === 'check_availability');
-    if (!tool) {
-      this.state.availabilityInProgress = false;
-      return;
-    }
-
-    tool.handler(
-      { date: cd.date, time: cd.time, people: cd.people },
-      { callSid: this.callSid, restaurantConfig: this.restaurantConfig, sessionState: this.state, callerPhone: this.callerPhone }
-    ).then(result => {
-      this.state.availabilityInProgress = false;
-      console.log(`✅ check result:`, JSON.stringify(result));
-
-      const cd = this.state.collectedData;
-
-      if (result.available) {
-        this.state.availabilityDone = true;
-        this._injectSystem(
-          `DISPONIBILITÀ CONFERMATA: ${formatDateIT(cd.date)} alle ${cd.time} per ${cd.people} persone è disponibile. ` +
-          `Ora chiedi il nome al cliente: "A che nome prenoto?". Aspetta la risposta.`
-        );
-      } else if (result.reason === 'day_closed') {
-        cd.date = null;
-        this.state.availabilityDone = false;
-        this._injectSystem(result.message);
-      } else if (result.reason === 'slot_full') {
-        cd.time = null;
-        this.state.availabilityDone = false;
-        this._injectSystem(result.message);
-      } else if (result.reason === 'outside_hours') {
-        cd.time = null;
-        this.state.availabilityDone = false;
-        this._injectSystem(result.message);
-      } else if (result.reason === 'missing_time') {
-        // Raro — time era null al momento del check (race condition)
-        this.state.availabilityDone = false;
-        // Non iniettare nulla — GPT chiederà l'orario da solo
-      } else {
-        this.state.availabilityDone = false;
-        this._injectSystem(result.message || 'Slot non disponibile. Proponi un altro orario.');
-      }
-    }).catch(err => {
-      this.state.availabilityInProgress = false;
-      this.state.availabilityDone = false;
-      console.error('❌ check error:', err);
-    });
-  }
-
-  // ─────────────────────────────────────────────────────
-  // INJECT SYSTEM MESSAGE
-  // Inietta un messaggio [SISTEMA: ...] come turno utente
-  // in modo che GPT lo "veda" e risponda di conseguenza.
-  // ─────────────────────────────────────────────────────
-
-  _injectSystem(text) {
-    console.log(`💉 SISTEMA: ${text.substring(0, 100)}`);
-    this._send({
-      type: 'conversation.item.create',
-      item: {
-        type: 'message', role: 'user',
-        content: [{ type: 'input_text', text: `[SISTEMA: ${text}]` }]
-      }
-    });
-    this._send({ type: 'response.create' });
-  }
-
-  // ─────────────────────────────────────────────────────
-  // TOOL CALL HANDLER
-  // ─────────────────────────────────────────────────────
-
-  async _handleToolCall(msg) {
-    const { call_id, name, arguments: argsStr } = msg;
-    console.log(`🔧 Tool: ${name}`);
-
-    let args;
-    try { args = JSON.parse(argsStr); }
-    catch(e) {
-      console.warn(`⚠️ JSON malformato per ${name}`);
-      this._sendToolResult(call_id, { error: 'Argomenti malformati' });
-      this._send({ type: 'response.create' });
-      return;
-    }
-
-    // Guard: prepare_reservation senza nome — aspetta Whisper
-    if (name === 'prepare_reservation' && !this.state.collectedData.name) {
-      console.warn(`⏳ prepare: attendo Whisper per nome...`);
-      await new Promise(r => setTimeout(r, 500));
-      if (!this.state.collectedData.name) {
-        console.warn(`⛔ prepare bloccata: name ancora null`);
-        this._sendToolResult(call_id, { ready: false, missing: 'name' });
-        this._send({
-          type: 'response.create',
-          response: { instructions: 'Il nome non è stato ancora detto dal cliente. Chiedi SOLO: "A che nome prenoto?" e aspetta la risposta.' }
-        });
-        return;
-      }
-    }
-
-    try {
-      const tool = this.tools.find(t => t.name === name);
-      if (!tool) throw new Error(`Tool non trovato: ${name}`);
-
-      const result = await tool.handler(args, {
-        callSid: this.callSid,
-        restaurantConfig: this.restaurantConfig,
-        sessionState: this.state,
-        callerPhone: this.callerPhone,
+    // Tutti e 3 pronti
+    if (this.collected.date && this.collected.time && this.collected.people) {
+      this.allCollected = true;
+      console.log(`✅ COMPLETO:`, JSON.stringify(this.collected));
+      this._send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message', role: 'user',
+          content: [{ type: 'input_text', text: `[SISTEMA: dati raccolti — data=${this.collected.date}, orario=${this.collected.time}, persone=${this.collected.people}. Di' solo "Perfetto, ho tutti i dati!"]` }]
+        }
       });
-
-      console.log(`✅ [${name}]:`, JSON.stringify(result).substring(0, 200));
-
-      // Aggiorna stato dopo tool
-      if (name === 'find_reservation' && result.found && result.reservations?.length > 0) {
-        this.state.foundReservation = result.reservations[0];
-        console.log(`💾 foundReservation:`, this.state.foundReservation);
-      }
-
-      this._sendToolResult(call_id, result);
-      this._send({ type: 'response.create' });
-
-    } catch(err) {
-      console.error(`❌ Tool error [${name}]:`, err);
-      this._sendToolResult(call_id, { error: err.message });
       this._send({ type: 'response.create' });
     }
   }
-
-  _sendToolResult(call_id, result) {
-    this._send({
-      type: 'conversation.item.create',
-      item: { type: 'function_call_output', call_id, output: JSON.stringify(result) }
-    });
-  }
-
-  // ─────────────────────────────────────────────────────
-  // ECHO DETECTION
-  // ─────────────────────────────────────────────────────
 
   _isEcho(userText) {
     if (!userText) return true;
@@ -832,10 +482,6 @@ export class OpenAIRealtimeClient {
     }
     return false;
   }
-
-  // ─────────────────────────────────────────────────────
-  // AUDIO
-  // ─────────────────────────────────────────────────────
 
   sendAudio(audioBase64) {
     if (!this.isConnected) return;
