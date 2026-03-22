@@ -500,6 +500,9 @@ export class OpenAIRealtimeClient {
     const { date, time, people } = this.data;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
+    // Blocca GPT subito — prima che risponda inventando disponibilità
+    this._sistema(`Sto verificando la disponibilità. Di' SOLO: "Un attimo, verifico la disponibilità..." e taci.`);
+
     const result = await checkSlot(date, time, people, this.restaurantConfig);
 
     if (result.available) {
