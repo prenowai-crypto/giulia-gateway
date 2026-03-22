@@ -258,6 +258,7 @@ export class OpenAIRealtimeClient {
 
     const { date, time, people } = args;
     console.log(`🔧 collect_data: date=${date} time=${time} people=${people}`);
+    console.log(`⚠️  Verifica: il cliente ha detto esplicitamente l'orario "${time}"?`);
 
     // Validazione base
     if (!validateDate(date)) {
