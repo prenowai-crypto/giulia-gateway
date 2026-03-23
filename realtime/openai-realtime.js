@@ -266,7 +266,8 @@ function checkTimeFeasibility(date, time, rc) {
     }
     const start = timeToMinutes(rc.lunch_start||'12:00');
     const end   = timeToMinutes(rc.lunch_end  ||'14:30');
-    if (mins < start || mins >= end) {
+    console.log(`🕐 [check] time=${time} mins=${mins} lunchStart=${rc.lunch_start}(${start}) lunchEnd=${rc.lunch_end}(${end})`);
+    if (mins < start || mins > end) {
       return `L'orario ${time} è fuori dalla fascia pranzo (${rc.lunch_start||'12:00'}-${rc.lunch_end||'14:30'}). Comunica gli orari corretti e chiedi un nuovo orario.`;
     }
   } else {
@@ -275,7 +276,8 @@ function checkTimeFeasibility(date, time, rc) {
     }
     const start = timeToMinutes(rc.dinner_start||'19:00');
     const end   = timeToMinutes(rc.dinner_end  ||'22:30');
-    if (mins < start || mins >= end) {
+    console.log(`🕐 [check] time=${time} mins=${mins} dinnerStart=${rc.dinner_start}(${start}) dinnerEnd=${rc.dinner_end}(${end})`);
+    if (mins < start || mins > end) {
       return `L'orario ${time} è fuori dalla fascia cena (${rc.dinner_start||'19:00'}-${rc.dinner_end||'22:30'}). Comunica gli orari corretti e chiedi un nuovo orario.`;
     }
   }
