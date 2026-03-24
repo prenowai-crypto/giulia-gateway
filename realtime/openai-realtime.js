@@ -381,7 +381,7 @@ export class OpenAIRealtimeClient {
         input_audio_format:  'g711_ulaw',
         output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model:'whisper-1', language:'it' },
-        turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200 },
+        turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200, create_response:false },
         tools: [], // nessun tool — il server gestisce tutto
       }
     });
@@ -416,7 +416,7 @@ export class OpenAIRealtimeClient {
           if (isNoise(t))    { console.log(`🔇 Noise`); return; }
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-          this._onTranscription(t);
+          this._parse(t);
         }
         break;
       case 'response.done':
@@ -430,38 +430,13 @@ export class OpenAIRealtimeClient {
     }
   }
 
-  // ─── TRANSCRIPTION HANDLER ────────────────────────────────────────────────
-  // Parsa i dati E controlla GPT — niente risposte libere
-
-  _onTranscription(text) {
-    if (this.availabilityDone) return;
-
-    this._parse(text);
-
-    // Se check slot in corso → _checkSlot gestisce la response, non tocchiamo nulla
-    if (this._checkingSlot) return;
-
-    // Se uno dei check sincroni ha già iniettato un [SISTEMA] → non sovrascrivere
-    if (this._sistemaInjected) { this._sistemaInjected = false; return; }
-
-    // Istruzione esplicita a GPT in base a cosa manca ancora
-    if (!this.data.date) {
-      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "Per quale giorno vuole prenotare?" e aspetta la risposta.' }});
-    } else if (!this.data.time) {
-      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "A che ora?" e aspetta la risposta.' }});
-    } else if (!this.data.people) {
-      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "Per quante persone?" e aspetta la risposta.' }});
-    }
-    // Se ha tutti e 3 → _checkSlot gestisce
-  }
-
   // ─── PARSE & TRIGGER ──────────────────────────────────────────────────────
 
   _parse(text) {
     if (this.availabilityDone) return;
 
-    const prevDate   = this.data.date;
-    const prevTime   = this.data.time;
+    const prevDate = this.data.date;
+    const prevTime = this.data.time;
 
     const date   = parseDate(text);
     const time   = parseTime(text);
@@ -476,19 +451,26 @@ export class OpenAIRealtimeClient {
     // ① Nuova data → controlla giorno chiuso
     if (this.data.date && this.data.date !== prevDate) {
       const wasClosed = this._checkDayClosed();
-      if (wasClosed) return;
+      if (wasClosed) return; // _sistema() ha già inviato response
     }
 
     // ②③ Nuovo orario → controlla fascia + range
     if (this.data.date && this.data.time && this.data.time !== prevTime) {
-      this._checkTimeFeasibility();
+      const blocked = this._checkTimeFeasibility();
+      if (blocked) return; // _sistema() ha già inviato response
+      // orario ok — GPT chiede le persone
+      this._send({ type:'response.create' });
       return;
     }
 
-    // ④ Tutti e 3 → check slot
+    // ④ Tutti e 3 → check slot (gestisce la response internamente)
     if (this.data.date && this.data.time && this.data.people && !this._checkingSlot) {
       this._checkSlot();
+      return;
     }
+
+    // Dati incompleti — GPT chiede il prossimo dato
+    this._send({ type:'response.create' });
   }
 
   // ─── CHECK ① ────────────────────────────────────────────────────────────────
@@ -501,7 +483,6 @@ export class OpenAIRealtimeClient {
     if (msg) {
       console.log(`🚫 Giorno chiuso: ${this.data.date}`);
       this.data.date = null;
-      this._sistemaInjected = true;
       this._sistema(msg);
       return true;
     }
@@ -511,16 +492,17 @@ export class OpenAIRealtimeClient {
   // ─── CHECK ②③ ────────────────────────────────────────────────────────────
 
   _checkTimeFeasibility() {
-    if (this._checkingTime) return;
+    if (this._checkingTime) return false;
     this._checkingTime = true;
     const msg = checkTimeFeasibility(this.data.date, this.data.time, this.restaurantConfig);
     this._checkingTime = false;
     if (msg) {
       console.log(`🚫 Orario non valido: ${this.data.time}`);
       this.data.time = null;
-      this._sistemaInjected = true;
       this._sistema(msg);
+      return true;
     }
+    return false;
   }
 
   // ─── CHECK ④ ────────────────────────────────────────────────────────────────
@@ -532,11 +514,13 @@ export class OpenAIRealtimeClient {
     const { date, time, people } = this.data;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
-    // Dì subito "Un attimo" con istruzione esplicita
-    this._send({
-      type: 'response.create',
-      response: { instructions: 'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci. Non aggiungere nulla.' }
-    });
+    // Invia "Un attimo" PRIMA della chiamata async — nessuna race condition
+    // perché create_response:false impedisce a GPT di rispondere da solo
+    this._send({ type:'conversation.item.create', item:{
+      type:'message', role:'user',
+      content:[{ type:'input_text', text:`[SISTEMA: sto verificando disponibilità ${date} ${time} per ${people}]` }]
+    }});
+    this._send({ type:'response.create', response:{ instructions:'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci.' }});
 
     const result = await checkSlot(date, time, people, this.restaurantConfig);
 
@@ -569,7 +553,7 @@ export class OpenAIRealtimeClient {
       type:'message', role:'user',
       content:[{ type:'input_text', text:`[SISTEMA: ${text}]` }]
     }});
-    this._send({ type:'response.create', response: { instructions: text } });
+    this._send({ type:'response.create' });
   }
 
   // ─── ECHO ────────────────────────────────────────────────────────────────────
