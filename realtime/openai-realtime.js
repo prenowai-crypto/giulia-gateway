@@ -474,8 +474,16 @@ export class OpenAIRealtimeClient {
       return;
     }
 
-    // Dati incompleti — GPT chiede il prossimo dato
-    this._send({ type:'response.create' });
+    // Dati incompleti — GPT chiede il prossimo dato con istruzione esplicita
+    if (!this.data.date) {
+      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "Per quale giorno?" e aspetta.' }});
+    } else if (!this.data.time) {
+      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "A che ora?" e aspetta.' }});
+    } else if (!this.data.people) {
+      this._send({ type:'response.create', response:{ instructions:'Non hai capito il numero di persone. Chiedi SOLO: "Quante persone esattamente?" e aspetta.' }});
+    } else {
+      this._send({ type:'response.create' });
+    }
   }
 
   // ─── CHECK ① ────────────────────────────────────────────────────────────────
