@@ -354,6 +354,7 @@ export class OpenAIRealtimeClient {
     this._checkingDay         = false;
     this._checkingTime        = false;
     this._checkingSlot        = false;
+    this._sistemaInjected     = false;
   }
 
   async connect() {
@@ -379,11 +380,7 @@ export class OpenAIRealtimeClient {
         voice: 'alloy',
         input_audio_format:  'g711_ulaw',
         output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { 
-          model: 'whisper-1', 
-          language: 'it',
-          prompt: 'prenotazione tavolo ristorante, quante persone, a che ora, per quale giorno'
-        },
+        input_audio_transcription: { model:'whisper-1', language:'it' },
         turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200 },
         tools: [], // nessun tool — il server gestisce tutto
       }
@@ -419,7 +416,7 @@ export class OpenAIRealtimeClient {
           if (isNoise(t))    { console.log(`🔇 Noise`); return; }
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-          this._parse(t);
+          this._onTranscription(t);
         }
         break;
       case 'response.done':
@@ -431,6 +428,31 @@ export class OpenAIRealtimeClient {
         }
         break;
     }
+  }
+
+  // ─── TRANSCRIPTION HANDLER ────────────────────────────────────────────────
+  // Parsa i dati E controlla GPT — niente risposte libere
+
+  _onTranscription(text) {
+    if (this.availabilityDone) return;
+
+    this._parse(text);
+
+    // Se check slot in corso → _checkSlot gestisce la response, non tocchiamo nulla
+    if (this._checkingSlot) return;
+
+    // Se uno dei check sincroni ha già iniettato un [SISTEMA] → non sovrascrivere
+    if (this._sistemaInjected) { this._sistemaInjected = false; return; }
+
+    // Istruzione esplicita a GPT in base a cosa manca ancora
+    if (!this.data.date) {
+      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "Per quale giorno vuole prenotare?" e aspetta la risposta.' }});
+    } else if (!this.data.time) {
+      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "A che ora?" e aspetta la risposta.' }});
+    } else if (!this.data.people) {
+      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "Per quante persone?" e aspetta la risposta.' }});
+    }
+    // Se ha tutti e 3 → _checkSlot gestisce
   }
 
   // ─── PARSE & TRIGGER ──────────────────────────────────────────────────────
@@ -455,7 +477,6 @@ export class OpenAIRealtimeClient {
     if (this.data.date && this.data.date !== prevDate) {
       const wasClosed = this._checkDayClosed();
       if (wasClosed) return;
-      // giorno aperto → continua a controllare orario se già presente
     }
 
     // ②③ Nuovo orario → controlla fascia + range
@@ -480,6 +501,7 @@ export class OpenAIRealtimeClient {
     if (msg) {
       console.log(`🚫 Giorno chiuso: ${this.data.date}`);
       this.data.date = null;
+      this._sistemaInjected = true;
       this._sistema(msg);
       return true;
     }
@@ -496,6 +518,7 @@ export class OpenAIRealtimeClient {
     if (msg) {
       console.log(`🚫 Orario non valido: ${this.data.time}`);
       this.data.time = null;
+      this._sistemaInjected = true;
       this._sistema(msg);
     }
   }
@@ -509,8 +532,11 @@ export class OpenAIRealtimeClient {
     const { date, time, people } = this.data;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
-    // Blocca GPT subito — prima che risponda inventando disponibilità
-    this._sistema(`Sto verificando la disponibilità. Di' SOLO: "Un attimo, verifico la disponibilità..." e taci.`);
+    // Dì subito "Un attimo" con istruzione esplicita
+    this._send({
+      type: 'response.create',
+      response: { instructions: 'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci. Non aggiungere nulla.' }
+    });
 
     const result = await checkSlot(date, time, people, this.restaurantConfig);
 
@@ -543,7 +569,7 @@ export class OpenAIRealtimeClient {
       type:'message', role:'user',
       content:[{ type:'input_text', text:`[SISTEMA: ${text}]` }]
     }});
-    this._send({ type:'response.create' });
+    this._send({ type:'response.create', response: { instructions: text } });
   }
 
   // ─── ECHO ────────────────────────────────────────────────────────────────────
