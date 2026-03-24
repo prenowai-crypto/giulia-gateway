@@ -379,7 +379,11 @@ export class OpenAIRealtimeClient {
         voice: 'alloy',
         input_audio_format:  'g711_ulaw',
         output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model:'whisper-1', language:'it' },
+        input_audio_transcription: { 
+          model: 'whisper-1', 
+          language: 'it',
+          prompt: 'prenotazione ristorante, tavolo, cena, pranzo, orario, data, persone, uno due tre quattro cinque sei sette otto nove dieci, lunedì martedì mercoledì giovedì venerdì sabato domenica, gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre'
+        },
         turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200 },
         tools: [], // nessun tool — il server gestisce tutto
       }
