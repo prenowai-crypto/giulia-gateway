@@ -519,13 +519,12 @@ export class OpenAIRealtimeClient {
     const { date, time, people } = this.data;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
-    // Invia "Un attimo" PRIMA della chiamata async — nessuna race condition
-    // perché create_response:false impedisce a GPT di rispondere da solo
-    this._send({ type:'conversation.item.create', item:{
-      type:'message', role:'user',
-      content:[{ type:'input_text', text:`[SISTEMA: sto verificando disponibilità ${date} ${time} per ${people}]` }]
-    }});
-    this._send({ type:'response.create', response:{ instructions:'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci.' }});
+    // Con create_response:false GPT non risponde mai da solo.
+    // Questo è l'UNICO response.create — nessun conflitto possibile.
+    this._send({
+      type: 'response.create',
+      response: { instructions: 'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci. Non aggiungere nulla.' }
+    });
 
     const result = await checkSlot(date, time, people, this.restaurantConfig);
 
