@@ -382,7 +382,7 @@ export class OpenAIRealtimeClient {
         input_audio_transcription: { 
           model: 'whisper-1', 
           language: 'it',
-          prompt: 'prenotazione ristorante, tavolo, cena, pranzo, orario, data, persone, uno due tre quattro cinque sei sette otto nove dieci, lunedì martedì mercoledì giovedì venerdì sabato domenica, gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre'
+          prompt: 'prenotazione tavolo ristorante, quante persone, a che ora, per quale giorno'
         },
         turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200 },
         tools: [], // nessun tool — il server gestisce tutto
