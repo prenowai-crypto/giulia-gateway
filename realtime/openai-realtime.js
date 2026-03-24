@@ -457,8 +457,13 @@ export class OpenAIRealtimeClient {
     // ②③ Nuovo orario → controlla fascia + range
     if (this.data.date && this.data.time && this.data.time !== prevTime) {
       const blocked = this._checkTimeFeasibility();
-      if (blocked) return; // _sistema() ha già inviato response
-      // orario ok — GPT chiede le persone
+      if (blocked) return;
+      // Se abbiamo già tutti e 3, vai diretto al check slot — non rispondere liberamente
+      if (this.data.people) {
+        this._checkSlot();
+        return;
+      }
+      // Altrimenti GPT chiede le persone
       this._send({ type:'response.create' });
       return;
     }
