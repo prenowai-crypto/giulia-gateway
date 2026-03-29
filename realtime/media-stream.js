@@ -140,7 +140,8 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
 
         case 'start': {
           callId = msg.start?.call_sid || msg.start?.callSid || `call-${Date.now()}`;
-          const toNumber = msg.start?.to || '';
+          const toNumber   = msg.start?.to        || '';
+          const streamSid  = msg.start?.stream_sid || callId;
 
           console.log(`📞 CallSid: ${callId}`);
 
@@ -149,12 +150,11 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
 
           // Crea client OpenAI Realtime
           openaiClient = new OpenAIRealtimeClient({
-            apiKey:          process.env.OPENAI_API_KEY,
+            apiKey:           process.env.OPENAI_API_KEY,
             restaurantConfig: rc,
-            systemPrompt:    buildSystemPrompt(rc),
-
+            systemPrompt:     buildSystemPrompt(rc),
             onTranscript(text, role) {
-              console.log(`💬 [${role === 'assistant' ? 'assistant' : 'user'}]: ${text}`);
+              // già loggato internamente
             },
             onError(err) {
               console.error('❌ OpenAI error:', err);
@@ -164,35 +164,25 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
             },
           });
 
-          // Intercetta audio in uscita da OpenAI → manda a Telnyx
-          const origSend = openaiClient._send.bind(openaiClient);
-          openaiClient._send = (obj) => {
-            origSend(obj);
-            // Cattura audio output events
-          };
+          // Connetti a OpenAI — connect() registra già il listener ws.on('message')
+          await openaiClient.connect();
 
-          // Patch: intercetta i messaggi OpenAI per l'audio
-          const origOnMessage = openaiClient._onMessage.bind(openaiClient);
-          openaiClient._onMessage = (raw2) => {
-            origOnMessage(raw2);
+          // Intercetta messaggi OpenAI per audio → Telnyx
+          // Lo facciamo DOPO connect() aggiungendo UN SOLO listener extra
+          openaiClient.ws.on('message', (raw2) => {
             try {
               const m = JSON.parse(raw2);
               if (m.type === 'response.audio.delta' && m.delta && isConnected) {
-                telnyxWs.send(JSON.stringify({
-                  event: 'media',
-                  stream_sid: msg.start?.stream_sid || callId,
-                  media: { payload: m.delta },
-                }));
+                if (telnyxWs.readyState === 1) {
+                  telnyxWs.send(JSON.stringify({
+                    event: 'media',
+                    stream_sid: streamSid,
+                    media: { payload: m.delta },
+                  }));
+                }
               }
             } catch {}
-          };
-
-          // Registra il listener PRIMA di connect
-          openaiClient.ws = null;
-          await openaiClient.connect();
-
-          // Riconnetti il listener audio
-          openaiClient.ws.on('message', openaiClient._onMessage);
+          });
 
           isConnected = true;
           break;
