@@ -355,6 +355,8 @@ export class OpenAIRealtimeClient {
     this._checkingTime        = false;
     this._checkingSlot        = false;
     this._sistemaInjected     = false;
+    this._extracting          = null;  // campo in estrazione GPT: 'date'|'time'|'people'
+    this._lastRawText         = '';    // ultima trascrizione utente
   }
 
   async connect() {
@@ -405,6 +407,27 @@ export class OpenAIRealtimeClient {
           this.lastAITime = Date.now();
           console.log(`💬 [AI]: ${msg.transcript}`);
           this.onTranscript(msg.transcript, 'assistant');
+
+          // ── GPT EXTRACTION: GPT ha interpretato il testo ambiguo ──────────
+          if (this._extracting && msg.transcript) {
+            const t = msg.transcript;
+            let extracted = null;
+            if (this._extracting === 'people') extracted = parsePeople(t);
+            if (this._extracting === 'date')   extracted = parseDate(t);
+            if (this._extracting === 'time')   extracted = parseTime(t);
+
+            if (extracted) {
+              console.log(`🧠 [GPT-extract] ${this._extracting}: "${t}" → ${extracted}`);
+              this.data[this._extracting] = extracted;
+              this._extracting = null;
+              // Ri-triggera il flusso con i dati aggiornati
+              this._parse('');
+            } else {
+              // GPT non ha capito nemmeno lui — resetta e lascia che l'utente ripeta
+              console.log(`🧠 [GPT-extract] fallito su: "${t}"`);
+              this._extracting = null;
+            }
+          }
         }
         break;
       case 'input_audio_buffer.speech_started': console.log('🎤 Parla...'); break;
@@ -434,6 +457,10 @@ export class OpenAIRealtimeClient {
 
   _parse(text) {
     if (this.availabilityDone) return;
+    if (this._extracting) return; // GPT sta già estraendo, aspetta
+
+    // Salva testo originale per eventuale fallback GPT
+    if (text) this._lastRawText = text;
 
     const prevDate = this.data.date;
     const prevTime = this.data.time;
@@ -451,38 +478,62 @@ export class OpenAIRealtimeClient {
     // ① Nuova data → controlla giorno chiuso
     if (this.data.date && this.data.date !== prevDate) {
       const wasClosed = this._checkDayClosed();
-      if (wasClosed) return; // _sistema() ha già inviato response
+      if (wasClosed) return;
     }
 
     // ②③ Nuovo orario → controlla fascia + range
     if (this.data.date && this.data.time && this.data.time !== prevTime) {
       const blocked = this._checkTimeFeasibility();
       if (blocked) return;
-      // Se abbiamo già tutti e 3, vai diretto al check slot — non rispondere liberamente
       if (this.data.people) {
         this._checkSlot();
         return;
       }
-      // Altrimenti GPT chiede le persone
       this._send({ type:'response.create' });
       return;
     }
 
-    // ④ Tutti e 3 → check slot (gestisce la response internamente)
+    // ④ Tutti e 3 → check slot
     if (this.data.date && this.data.time && this.data.people && !this._checkingSlot) {
       this._checkSlot();
       return;
     }
 
-    // Dati incompleti — GPT chiede il prossimo dato con istruzione esplicita
+    // Dati incompleti — usa GPT come interprete semantico se c'è testo ambiguo
     if (!this.data.date) {
-      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "Per quale giorno?" e aspetta.' }});
+      this._gptExtractOrAsk('date',
+        `Il cliente ha detto: "${this._lastRawText}". Capisci quale giorno intende e rispondi SOLO con il giorno (es: "sabato", "martedì"). Nient'altro.`,
+        'Chiedi SOLO: "Per quale giorno?" e aspetta.'
+      );
     } else if (!this.data.time) {
-      this._send({ type:'response.create', response:{ instructions:'Chiedi SOLO: "A che ora?" e aspetta.' }});
+      this._gptExtractOrAsk('time',
+        `Il cliente ha detto: "${this._lastRawText}". Capisci che orario intende e rispondi SOLO con l'orario (es: "alle 21", "alle 9 e un quarto"). Nient'altro.`,
+        'Chiedi SOLO: "A che ora?" e aspetta.'
+      );
     } else if (!this.data.people) {
-      this._send({ type:'response.create', response:{ instructions:'Non hai capito il numero di persone. Chiedi SOLO: "Quante persone esattamente?" e aspetta.' }});
+      this._gptExtractOrAsk('people',
+        `Il cliente ha detto: "${this._lastRawText}". Capisci quante persone intende e rispondi SOLO con il numero (es: "sei", "4", "due"). Nient'altro.`,
+        'Chiedi SOLO: "Quante persone esattamente?" e aspetta.'
+      );
     } else {
       this._send({ type:'response.create' });
+    }
+  }
+
+  // ─── GPT EXTRACTION OR ASK ────────────────────────────────────────────────
+  // Se c'è testo ambiguo → GPT interpreta semanticamente (zero latency aggiuntiva)
+  // Se non c'è testo utile → chiede direttamente all'utente
+
+  _gptExtractOrAsk(field, extractInstruction, askInstruction) {
+    const raw = this._lastRawText;
+    const worthTrying = raw && raw.length > 1;
+
+    if (worthTrying) {
+      console.log(`🧠 [GPT-extract] tentativo "${field}" da: "${raw}"`);
+      this._extracting = field;
+      this._send({ type:'response.create', response:{ instructions: extractInstruction }});
+    } else {
+      this._send({ type:'response.create', response:{ instructions: askInstruction }});
     }
   }
 
