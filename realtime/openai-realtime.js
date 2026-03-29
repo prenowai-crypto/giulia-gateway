@@ -1,473 +1,623 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRENOW REALTIME v3.0 - Logic Engine ibrido
+// 
+// Architettura:
+//   Telnyx audio → Whisper STT → LogicEngine → GPT istruito → audio risposta
+//
+// GPT NON decide nulla — decide il LogicEngine deterministico.
+// GPT è solo la voce: riceve istruzioni precise e le esegue.
+//
+// Ported from index_v3_9_31.js:
+//   - DateManager (tutti i casi edge date italiane)
+//   - TimeManager (numeri in lettere, "anzi", contesto sera)
+//   - PeopleManager (correzioni, pattern robusti)
+//   - StateManager (fasi precise per ogni chiamata)
+//   - IntentDetector (CREATE/MODIFY/CANCEL deterministico)
+//   - ValidationPipeline (check chiusure, orari, capacità)
+//   - RecapManager (MODIFY/CANCEL flows)
+// ═══════════════════════════════════════════════════════════════════════════════
+
 import WebSocket from 'ws';
 
-// ─── UTILITY ──────────────────────────────────────────────────────────────────
+// ─── UTILITY ─────────────────────────────────────────────────────────────────
 
-const DAY_IT = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-
-function getNowRome() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));
+function normalizeText(str) {
+  return (str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
-function toISO(d) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
+// ─── DATE MANAGER ────────────────────────────────────────────────────────────
 
-function addDays(d, n) {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r;
-}
+export const DateManager = {
+  DAYS_IT: ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'],
+  MONTHS_IT: ['gennaio','febbraio','marzo','aprile','maggio','giugno',
+               'luglio','agosto','settembre','ottobre','novembre','dicembre'],
 
-function norm(s) {
-  return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
+  getNow() {
+    const s = new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' });
+    return new Date(s);
+  },
 
-function timeToMinutes(t) {
-  const [h, m] = t.split(':').map(Number);
-  return h * 60 + m;
-}
+  toISO(date) {
+    if (!date || isNaN(date.getTime())) return null;
+    const y = date.getFullYear();
+    const m = String(date.getMonth()+1).padStart(2,'0');
+    const d = String(date.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  },
 
-function minutesToTime(m) {
-  return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
-}
+  addDays(date, days) {
+    const d = new Date(date.getTime());
+    d.setDate(d.getDate() + days);
+    return d;
+  },
 
-function isNoise(text) {
-  if (!text || text.trim().length < 3) return true;
-  return /sottotitoli|amara\.org|copyright/i.test(text);
-}
+  getDayOfWeek(dateISO) {
+    if (!dateISO) return null;
+    const [y,m,d] = dateISO.split('-').map(Number);
+    return new Date(y, m-1, d).getDay();
+  },
 
-// ─── PARSER DATA ──────────────────────────────────────────────────────────────
+  getDayName(dateISO) {
+    const dow = this.getDayOfWeek(dateISO);
+    return dow !== null ? this.DAYS_IT[dow] : null;
+  },
 
-function parseDate(text) {
-  if (!text) return null;
-  const t = norm(text);
-  const now = getNowRome();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  formatForDisplay(dateISO) {
+    if (!dateISO) return '';
+    try {
+      const [y,m,d] = dateISO.split('-').map(Number);
+      const date = new Date(y, m-1, d);
+      return date.toLocaleDateString('it-IT', { weekday:'long', day:'numeric', month:'long' });
+    } catch(e) { return dateISO; }
+  },
 
-  // DD/MM
-  const s = t.match(/\b(\d{1,2})\/(\d{1,2})\b/);
-  if (s) {
-    const d = parseInt(s[1]), mo = parseInt(s[2])-1;
-    if (mo>=0 && mo<=11 && d>=1 && d<=31) {
-      let c = new Date(today.getFullYear(), mo, d);
-      if (c < today) c = new Date(today.getFullYear()+1, mo, d);
-      return toISO(c);
-    }
-  }
+  getNextWeekday(fromDate, targetWeekday) {
+    const result = new Date(fromDate.getTime());
+    const diff = ((targetWeekday - result.getDay()) + 7) % 7;
+    const daysToAdd = diff === 0 ? 7 : diff;
+    result.setDate(result.getDate() + daysToAdd);
+    return result;
+  },
 
-  // "10 marzo"
-  const MO = { gennaio:0,febbraio:1,marzo:2,aprile:3,maggio:4,giugno:5,luglio:6,agosto:7,settembre:8,ottobre:9,novembre:10,dicembre:11 };
-  const me = t.match(new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${Object.keys(MO).join('|')})`));
-  if (me) {
-    const d = parseInt(me[1]), mo = MO[me[2]];
-    if (d>=1 && d<=31) {
-      let c = new Date(today.getFullYear(), mo, d);
-      if (c < today) c = new Date(today.getFullYear()+1, mo, d);
-      return toISO(c);
-    }
-  }
+  parseFromText(text) {
+    if (!text) return null;
+    const t = normalizeText(text);
+    const now = this.getNow();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  // Relativi
-  if (/dopodomani|dopo\s*domani/.test(t)) return toISO(addDays(today,2));
-  if (/\bdomani\b/.test(t))               return toISO(addDays(today,1));
-  if (/\boggi\b|\bstasera\b|\bquesta\s*sera\b/.test(t)) return toISO(today);
+    // Relative
+    if (/dopodomani|dopo domani/.test(t)) return this.toISO(this.addDays(today, 2));
+    if (/\bdomani\b/.test(t)) return this.toISO(this.addDays(today, 1));
+    if (/\boggi\b|\bstasera\b|\bquesta sera\b/.test(t)) return this.toISO(today);
 
-  const tra = t.match(/(?:tra|fra)\s*(\d+)\s*giorni/);
-  if (tra) return toISO(addDays(today, parseInt(tra[1])));
+    const traMatch = t.match(/(?:tra|fra|in)\s*(\d+)\s*giorni/);
+    if (traMatch) return this.toISO(this.addDays(today, parseInt(traMatch[1])));
 
-  // Giorni settimana
-  const WD = [
-    {p:['domenica'],i:0},{p:['lunedi'],i:1},{p:['martedi'],i:2},
-    {p:['mercoledi'],i:3},{p:['giovedi'],i:4},{p:['venerdi'],i:5},{p:['sabato'],i:6}
-  ];
-
-  // "sabato 15"
-  for (const wd of WD) for (const p of wd.p) {
-    const m = t.match(new RegExp(`\\b${p}\\s+(\\d{1,2})\\b`));
-    if (m) {
-      const n = parseInt(m[1]);
-      if (n>=1 && n<=31) {
-        let c = new Date(today.getFullYear(), today.getMonth(), n);
-        if (c < today) c = new Date(today.getFullYear(), today.getMonth()+1, n);
-        return toISO(c);
+    // Explicit date (DD/MM or "N mese")
+    const slashMatch = t.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+    if (slashMatch) {
+      const day = parseInt(slashMatch[1]);
+      const month = parseInt(slashMatch[2]) - 1;
+      if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+        let year = today.getFullYear();
+        let candidate = new Date(year, month, day);
+        if (candidate < today) candidate = new Date(year+1, month, day);
+        return this.toISO(candidate);
       }
     }
-  }
 
-  // Solo giorno settimana (ultimo menzionato)
-  let li=-1, lp=-1;
-  for (const wd of WD) for (const p of wd.p) {
-    const pos = t.lastIndexOf(p);
-    if (pos > lp) { lp=pos; li=wd.i; }
-  }
-  if (li !== -1) {
-    const diff = ((li - today.getDay())+7)%7;
-    return toISO(addDays(today, diff===0 ? 7 : diff));
-  }
-
-  return null;
-}
-
-// ─── PARSER ORARIO ────────────────────────────────────────────────────────────
-
-function parseTime(text) {
-  if (!text) return null;
-  const t = text.toLowerCase().trim();
-  const isLunch = /\bpranzo\b|\blunch\b/.test(t);
-
-  if (/mezzogiorno/.test(t)) return '12:00';
-  if (/mezzanotte/.test(t))  return '00:00';
-  if (/\bl['']una\b|all'una\b/i.test(t)) return '13:00';
-
-  const HWMAP = {
-    'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,
-    'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,'tredici':13,
-    'quattordici':14,'quindici':15,'sedici':16,'diciassette':17,'diciotto':18,
-    'diciannove':19,'venti':20,'ventuno':21,'ventidue':22,'ventitre':23
-  };
-  const MWMAP = {
-    'mezza':30,'mezzo':30,'trenta':30,'quindici':15,'quarantacinque':45,
-    'quaranta':40,'venti':20,'dieci':10,'cinque':5,'un quarto':15
-  };
-
-  const times = [];
-  let m;
-
-  // "alle sette e mezza" / "alle sette e un quarto"
-  const allHW = Object.keys(HWMAP).join('|');
-  const rW = new RegExp(`(?:alle|ore|per le)\\s+(${allHW})(?:\\s+e\\s+(un quarto|mezza|mezzo|trenta|quindici|quarantacinque|quaranta|venti|dieci|cinque))?`, 'gi');
-  while ((m=rW.exec(t))!==null) {
-    let h = HWMAP[m[1].toLowerCase()]; if (!h) continue;
-    const minKey = m[2]?.toLowerCase();
-    const min = minKey ? (MWMAP[minKey]||0) : 0;
-    if (h>=1 && h<=11 && !isLunch) h+=12;
-    times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  // "alle HH:MM" / "alle HH.MM"
-  const r1 = /(?:alle|ore|per le)\s*(\d{1,2})[\.:](\d{2})/gi;
-  while ((m=r1.exec(t))!==null) {
-    let h=parseInt(m[1]), min=parseInt(m[2]);
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23&&min>=0&&min<=59) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  // "alle HH" — NON cattura se seguito da parola-persona
-  const r2 = /(?:alle|ore|per le)\s*(\d{1,2})\b/gi;
-  while ((m=r2.exec(t))!==null) {
-    const after = t.substring(m.index+m[0].length).trimStart();
-    if (/^person[ae]\b|^pax\b|^coperti\b/i.test(after)) continue;
-    let h=parseInt(m[1]);
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:00`});
-  }
-
-  // "HH e mezza/quarto/..." — include "un quarto"
-  const mwk = Object.keys(MWMAP).filter(k=>!k.includes(' ')).join('|');
-  const rEM = new RegExp(`(?:alle|ore)?\\s*(\\d{1,2})\\s+(?:e\\s+|è\\s+)?(un quarto|${mwk})\\b`, 'gi');
-  while ((m=rEM.exec(t))!==null) {
-    let h=parseInt(m[1]);
-    const min = MWMAP[m[2].toLowerCase()]||0;
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  // "HH:MM" standalone
-  const r3 = /\b(\d{1,2})[\.:](\d{2})\b/g;
-  while ((m=r3.exec(t))!==null) {
-    let h=parseInt(m[1]), min=parseInt(m[2]);
-    if (h>=1&&h<=11&&!isLunch) h+=12;
-    if (h>=0&&h<=23&&min>=0&&min<=59) times.push({pos:m.index, t:`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`});
-  }
-
-  if (times.length===0) return isLunch ? '13:00' : null;
-
-  // Fix negazione: "non le 21 ma le 21:30"
-  if (times.length >= 2) {
-    const negRe = /\b(non|no)\b/gi;
-    let neg;
-    while ((neg=negRe.exec(t))!==null) {
-      const negated = times.find(x => x.pos > neg.index && x.pos < neg.index+25);
-      if (negated) {
-        const remaining = times.filter(x => x !== negated);
-        if (remaining.length > 0) return remaining[remaining.length-1].t;
+    const monthsMap = {
+      'gennaio':0,'febbraio':1,'marzo':2,'aprile':3,'maggio':4,'giugno':5,
+      'luglio':6,'agosto':7,'settembre':8,'ottobre':9,'novembre':10,'dicembre':11
+    };
+    const allMonths = Object.keys(monthsMap).join('|');
+    const monthRegex = new RegExp(`(\\d{1,2})\\s*(?:di\\s+)?(${allMonths})`, 'i');
+    const monthMatch = t.match(monthRegex);
+    if (monthMatch) {
+      const day = parseInt(monthMatch[1]);
+      const month = monthsMap[monthMatch[2].toLowerCase()];
+      if (month !== undefined && day >= 1 && day <= 31) {
+        let year = today.getFullYear();
+        let candidate = new Date(year, month, day);
+        if (candidate < today) candidate = new Date(year+1, month, day);
+        return this.toISO(candidate);
       }
     }
-  }
 
-  times.sort((a,b) => a.pos-b.pos);
-  return times[times.length-1].t;
-}
+    // Weekday with day number ("martedì 10")
+    const weekdayWithNum = this._parseWeekdayWithDayNumber(t, today);
+    if (weekdayWithNum) return weekdayWithNum;
 
-// ─── PARSER PERSONE ───────────────────────────────────────────────────────────
+    // Weekday name
+    const weekdays = [
+      { patterns:['domenica'], index:0 },
+      { patterns:['lunedi','lunedì'], index:1 },
+      { patterns:['martedi','martedì'], index:2 },
+      { patterns:['mercoledi','mercoledì'], index:3 },
+      { patterns:['giovedi','giovedì'], index:4 },
+      { patterns:['venerdi','venerdì'], index:5 },
+      { patterns:['sabato'], index:6 },
+    ];
 
-function parsePeople(text) {
-  if (!text) return null;
-  const t = text.toLowerCase();
-
-  if (/ci sei|ci siete|mi senti|pronto|come stai/i.test(t)) return null;
-
-  // "anzi" → ultimo numero
-  if (/anzi|no aspetta|facciamo|meglio|diciamo/i.test(t)) {
-    const nums = t.match(/\b(\d+)\b/g);
-    if (nums?.length >= 2) { const n=parseInt(nums[nums.length-1]); if (n>0&&n<100) return n; }
-  }
-
-  // Numero + parola-persona (priorità massima, anche con orario nella frase)
-  const m1 = t.match(/(\d+)\s*(?:person[ae]|pax|coperti)/i);
-  if (m1) { const n=parseInt(m1[1]); if (n>0&&n<100) return n; }
-
-  // Parola-numero + parola-persona (priorità massima)
-  const WN = { 'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,'sette':7,'otto':8,'nove':9,'dieci':10 };
-  for (const [w,n] of Object.entries(WN)) {
-    if (new RegExp(`\\b${w}\\s+(?:person[ae]|pax|coperti)\\b`).test(t)) return n;
-  }
-
-  // Pattern numerici
-  const patterns = [
-    /(\d+)\s*in\s*totale/i,
-    /siamo\s*(?:in\s*)?(\d+)/i,
-    /(?:per|saremo)\s*(\d+)(?:\s+(?:person[ae]|pax|coperti))?/i,
-    /(?:tavolo|table)\s*(?:per|for)\s*(\d+)/i,
-  ];
-  for (const p of patterns) {
-    const m=t.match(p); if (m) { const n=parseInt(m[1]); if (n>0&&n<100) return n; }
-  }
-
-  // Parola-numero standalone — solo se non è contesto temporale
-  const isTime = /(?:alle|ore|per le|mezzogiorno|mezzanotte|\d\s*:\s*\d|\d\s*e\s*(?:mezza|mezzo|quarto))/i.test(t);
-  if (!isTime) {
-    for (const [w,n] of Object.entries(WN)) {
-      if (new RegExp(`\\b${w}\\b`).test(t)) return n;
+    let lastFoundIndex = -1, lastFoundPosition = -1;
+    for (const wd of weekdays) {
+      for (const pattern of wd.patterns) {
+        const pos = t.lastIndexOf(pattern);
+        if (pos !== -1 && pos > lastFoundPosition) {
+          lastFoundPosition = pos;
+          lastFoundIndex = wd.index;
+        }
+      }
     }
-  }
 
-  return null;
-}
-
-// ─── CHECK ① giorno chiuso ────────────────────────────────────────────────────
-
-function checkDayClosed(date, rc) {
-  const dow = new Date(date + 'T12:00:00').getDay();
-  if ((rc.weekly_closing_days||[]).includes(dow)) {
-    return `Siamo chiusi il ${DAY_IT[dow]}. Comunicalo al cliente e chiedi un altro giorno.`;
-  }
-  return null;
-}
-
-// ─── CHECK ②③ fascia + range ─────────────────────────────────────────────────
-
-function checkTimeFeasibility(date, time, rc) {
-  const dow  = new Date(date + 'T12:00:00').getDay();
-  const mins = timeToMinutes(time);
-  const isLunch = mins < 15 * 60;
-
-  if (isLunch) {
-    if ((rc.lunch_closed_days||[]).includes(dow)) {
-      return `Siamo chiusi a pranzo il ${DAY_IT[dow]}. Comunicalo e chiedi se vuole venire a cena o in un altro giorno.`;
+    if (lastFoundIndex !== -1) {
+      return this.toISO(this.getNextWeekday(today, lastFoundIndex));
     }
-    const start = timeToMinutes(rc.lunch_start||'12:00');
-    const end   = timeToMinutes(rc.lunch_end  ||'14:30');
-    console.log(`🕐 [check] time=${time} mins=${mins} lunchStart=${rc.lunch_start}(${start}) lunchEnd=${rc.lunch_end}(${end})`);
-    if (mins < start || mins > end) {
-      return `L'orario ${time} è fuori dalla fascia pranzo (${rc.lunch_start||'12:00'}-${rc.lunch_end||'14:30'}). Comunica gli orari corretti e chiedi un nuovo orario.`;
+
+    return null;
+  },
+
+  _parseWeekdayWithDayNumber(text, today) {
+    const patterns = [
+      { pattern:/\b(?:domenica)\s+(\d{1,2})\b/i, index:0 },
+      { pattern:/\b(?:lunedi|lunedì)\s+(\d{1,2})\b/i, index:1 },
+      { pattern:/\b(?:martedi|martedì)\s+(\d{1,2})\b/i, index:2 },
+      { pattern:/\b(?:mercoledi|mercoledì)\s+(\d{1,2})\b/i, index:3 },
+      { pattern:/\b(?:giovedi|giovedì)\s+(\d{1,2})\b/i, index:4 },
+      { pattern:/\b(?:venerdi|venerdì)\s+(\d{1,2})\b/i, index:5 },
+      { pattern:/\b(?:sabato)\s+(\d{1,2})\b/i, index:6 },
+    ];
+    for (const wp of patterns) {
+      const match = text.match(wp.pattern);
+      if (match) {
+        const dayNum = parseInt(match[1]);
+        if (dayNum >= 1 && dayNum <= 31) {
+          let candidate = new Date(today.getFullYear(), today.getMonth(), dayNum);
+          if (candidate < today) candidate = new Date(today.getFullYear(), today.getMonth()+1, dayNum);
+          return this.toISO(candidate);
+        }
+      }
     }
-  } else {
-    if ((rc.dinner_closed_days||[]).includes(dow)) {
-      return `Siamo chiusi a cena il ${DAY_IT[dow]}. Comunicalo e chiedi se vuole venire a pranzo o in un altro giorno.`;
+    return null;
+  },
+};
+
+// ─── TIME MANAGER ─────────────────────────────────────────────────────────────
+
+export const TimeManager = {
+  parseFromText(text) {
+    if (!text) return null;
+    const t = text.toLowerCase().trim();
+
+    if (/mezzogiorno/.test(t)) return '12:00:00';
+    if (/mezzanotte/.test(t)) return '00:00:00';
+
+    const numberMap = {
+      'zero':0,'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
+      'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,
+      'tredici':13,'quattordici':14,'quindici':15,'sedici':16,'diciassette':17,
+      'diciotto':18,'diciannove':19,'venti':20,'ventuno':21,'ventidue':22,
+      'ventitre':23,'ventitré':23
+    };
+    const minuteMap = {
+      'mezza':30,'mezzo':30,'un quarto':15,'trenta':30,'quindici':15,
+      'quaranta':40,'quarantacinque':45,'venti':20,'dieci':10,'cinque':5
+    };
+
+    const allTimes = [];
+    let match;
+
+    // "alle venti e trenta" / "alle otto e mezza"
+    const allHourWords = Object.keys(numberMap).join('|');
+    const patternWords = new RegExp(
+      `(?:alle|ore|per le)\\s+(${allHourWords})(?:\\s+e\\s+(mezza|mezzo|un quarto|trenta|quindici|quaranta|quarantacinque|venti|dieci|cinque))?`,
+      'gi'
+    );
+    while ((match = patternWords.exec(t)) !== null) {
+      const hourWord = match[1].toLowerCase();
+      const minuteWord = match[2] ? match[2].toLowerCase() : null;
+      let hour = numberMap[hourWord];
+      if (hour === undefined) continue;
+      let minutes = minuteWord && minuteMap[minuteWord] !== undefined ? minuteMap[minuteWord] : 0;
+      if (hour >= 1 && hour <= 11 && !/mattina|pranzo/.test(t)) hour += 12;
+      if (hour >= 0 && hour <= 23) {
+        allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00` });
+      }
     }
-    const start = timeToMinutes(rc.dinner_start||'19:00');
-    const end   = timeToMinutes(rc.dinner_end  ||'22:30');
-    console.log(`🕐 [check] time=${time} mins=${mins} dinnerStart=${rc.dinner_start}(${start}) dinnerEnd=${rc.dinner_end}(${end})`);
-    if (mins < start || mins > end) {
-      return `L'orario ${time} è fuori dalla fascia cena (${rc.dinner_start||'19:00'}-${rc.dinner_end||'22:30'}). Comunica gli orari corretti e chiedi un nuovo orario.`;
+
+    // "alle 21" / "alle 21.30" / "alle 21:30"
+    const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
+    while ((match = pattern1.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minutes = match[2] ? parseInt(match[2]) : 0;
+      if (hour >= 1 && hour <= 11 && !/mattina|pranzo/.test(t)) hour += 12;
+      if (hour >= 0 && hour <= 23)
+        allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00` });
     }
-  }
-  return null;
+
+    // "e un quarto" / "e mezza" after an hour
+    const pattern2 = /\b(\d{1,2})\s+e\s+(un quarto|mezza|mezzo|trenta)/gi;
+    while ((match = pattern2.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minuteWord = match[2].toLowerCase();
+      const minutes = minuteMap[minuteWord] || 0;
+      if (hour >= 1 && hour <= 11 && !/mattina|pranzo/.test(t)) hour += 12;
+      if (hour >= 0 && hour <= 23)
+        allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00` });
+    }
+
+    // Plain HH:MM
+    const pattern3 = /\b(\d{1,2})[.:](\d{2})\b/g;
+    while ((match = pattern3.exec(t)) !== null) {
+      let hour = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      if (/sera|cena|stasera/.test(t) && hour >= 1 && hour <= 11) hour += 12;
+      if (hour >= 0 && hour <= 23 && minutes >= 0 && minutes <= 59)
+        allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00` });
+    }
+
+    if (allTimes.length === 0) return null;
+
+    // Prefer last time mentioned (handles "anzi alle 21.30")
+    allTimes.sort((a,b) => a.position - b.position);
+    const last = allTimes[allTimes.length - 1];
+    return last.time;
+  },
+
+  inferDefault(text) {
+    if (!text) return null;
+    const t = normalizeText(text);
+    if (/pranzo|lunch/.test(t)) return '13:00:00';
+    if (/sera|serale|cena|dinner/.test(t)) return '20:00:00';
+    return null;
+  },
+
+  formatForDisplay(timeStr) {
+    if (!timeStr) return '';
+    return timeStr.substring(0, 5);
+  },
+};
+
+// ─── PEOPLE MANAGER ──────────────────────────────────────────────────────────
+
+export const PeopleManager = {
+  parseFromText(text) {
+    if (!text) return null;
+    const t = text.toLowerCase().trim();
+
+    // Correction pattern: use LAST number
+    if (/anzi|no aspetta|aspetta|facciamo|meglio|diciamo/.test(t)) {
+      const allNums = t.match(/\b(\d+)\b/g);
+      if (allNums && allNums.length >= 2) {
+        const last = parseInt(allNums[allNums.length - 1]);
+        if (last > 0 && last < 100) return last;
+      }
+    }
+
+    const patterns = [
+      /(\d+)\s*in\s*totale/i,
+      /siamo\s*(?:in\s*)?(\d+)/i,
+      /(?:per|siamo|saremo|in)\s*(\d+)\s*(?:person[ae]|pax)?/i,
+      /(\d+)\s*(?:person[ae]|pax|coperti)/i,
+      /tavolo\s*(?:per|for)\s*(\d+)/i,
+    ];
+
+    for (const p of patterns) {
+      const match = t.match(p);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num > 0 && num < 100) return num;
+      }
+    }
+
+    const wordNumbers = {
+      'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
+      'sette':7,'otto':8,'nove':9,'dieci':10,
+    };
+    for (const [word, num] of Object.entries(wordNumbers)) {
+      const regex = new RegExp(`\\b${word}\\b`, 'i');
+      if (regex.test(t)) return num;
+    }
+
+    return null;
+  },
+};
+
+// ─── INTENT DETECTOR ─────────────────────────────────────────────────────────
+
+export const IntentDetector = {
+  CANCEL_KEYWORDS: [
+    'cancellare','cancella','cancello','cancellarla','cancellarmi',
+    'disdire','disdetta','disdico','disdirla',
+    'annullare','annulla','annullo','annullarla',
+    'eliminare','elimina','eliminarla',
+    'non vengo','non veniamo',
+  ],
+  MODIFY_KEYWORDS: [
+    'modificare','modifica','modifico',
+    'spostare','sposta','sposto',
+    'cambiare','cambia','cambio',
+    'anticipare','posticipare',
+  ],
+
+  _preprocess(text) {
+    let t = (text||'').toLowerCase();
+    t = t.replace(/\ba\s+nome\s+\w+/gi, ' ');
+    t = t.replace(/\bnome\s+\w+/gi, ' ');
+    return t.replace(/\s+/g,' ').trim();
+  },
+
+  detect(text) {
+    if (!text) return 'create';
+    const t = this._preprocess(text);
+
+    // Override: "altra/nuova prenotazione" → always CREATE
+    if (/\b(altra|nuova|second\w*)\s+(prenotazion)/i.test(text)) return 'create';
+
+    for (const kw of this.CANCEL_KEYWORDS) {
+      const regex = new RegExp(`\\b${kw}\\b`, 'i');
+      if (regex.test(t)) return 'cancel';
+    }
+    for (const kw of this.MODIFY_KEYWORDS) {
+      if (t.includes(kw)) return 'modify';
+    }
+    if (/ho prenotato|ho una prenotazione|la mia prenotazione/.test(text.toLowerCase())) return 'modify';
+
+    return 'create';
+  },
+};
+
+// ─── CONFIRM / DENY HELPERS ──────────────────────────────────────────────────
+
+export function isConfirming(text) {
+  const t = normalizeText(text || '');
+  return /^(si\b|sii\b|esatto|corretto|giusto|confermo|certo|ok\b|va bene|perfetto|proprio)/.test(t) ||
+         /\b(conferm|esatt|corrett|giust|perfett)\b/.test(t);
 }
 
-// ─── CHECK ④ Apps Script ─────────────────────────────────────────────────────
-
-async function checkSlot(date, time, people, rc) {
-  const url = rc.apps_script_url;
-  if (!url) {
-    console.warn('⚠️ apps_script_url mancante — slot considerato disponibile');
-    return { available: true };
-  }
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'check_availability',
-        data: date, ora: time, persone: people,
-        calendarId: rc.calendar_id
-      })
-    });
-    const json = await res.json();
-    return json.success ? { available: true } : { available: false, reason: json.reason||'slot_full' };
-  } catch(e) {
-    console.error('❌ checkSlot error:', e);
-    return { available: true }; // fail-open
-  }
+export function isDenying(text) {
+  const t = normalizeText(text || '');
+  return /^(no[^n]|non |sbagliato|errato)/.test(t) ||
+         /\b(non cancell|lascia stare|lascia perdere|teniamo|mantieni)\b/i.test(text||'');
 }
 
-async function findAlternative(date, time, people, rc) {
-  const base     = timeToMinutes(time);
-  const isLunch  = base < 15 * 60;
-  const rangeStart = timeToMinutes(isLunch ? (rc.lunch_start||'12:00')  : (rc.dinner_start||'19:00'));
-  const rangeEnd   = timeToMinutes(isLunch ? (rc.lunch_end  ||'14:30')  : (rc.dinner_end  ||'22:30'));
+// ─── VALIDATION PIPELINE ─────────────────────────────────────────────────────
 
-  for (const offset of [30, -30, 60, -60]) {
-    const candidate = base + offset;
-    if (candidate < rangeStart || candidate >= rangeEnd) continue;
-    const ct = minutesToTime(candidate);
-    const r = await checkSlot(date, ct, people, rc);
-    if (r.available) return ct;
-  }
-  return null;
-}
+export const ValidationPipeline = {
+  isValidTime(time, rc) {
+    if (!time) return false;
+    const [h, m] = time.split(':').map(Number);
+    const mins = h * 60 + (m||0);
 
-// ─── CLIENT ───────────────────────────────────────────────────────────────────
+    const lunchStart = this._toMins(rc?.lunch_start || '12:00');
+    const lunchEnd   = this._toMins(rc?.lunch_end   || '14:30');
+    const dinnerStart = this._toMins(rc?.dinner_start || '19:00');
+    const dinnerEnd   = this._toMins(rc?.dinner_end   || '22:30');
+
+    return (mins >= lunchStart && mins <= lunchEnd) ||
+           (mins >= dinnerStart && mins <= dinnerEnd);
+  },
+
+  isLunchClosed(dateISO, rc) {
+    if (!dateISO || !rc?.lunch_closed_days) return false;
+    const dow = DateManager.getDayOfWeek(dateISO);
+    const days = String(rc.lunch_closed_days).split(',').map(Number);
+    return days.includes(dow);
+  },
+
+  isDinnerClosed(dateISO, rc) {
+    if (!dateISO || !rc?.dinner_closed_days) return false;
+    const dow = DateManager.getDayOfWeek(dateISO);
+    const days = String(rc.dinner_closed_days).split(',').map(Number);
+    return days.includes(dow);
+  },
+
+  getDayClosedMessage(dateISO, rc) {
+    if (!dateISO) return null;
+    const dow = DateManager.getDayOfWeek(dateISO);
+    const closedDays = rc?.closed_days
+      ? String(rc.closed_days).split(',').map(Number)
+      : [1];
+    if (closedDays.includes(dow)) {
+      const dayName = DateManager.getDayName(dateISO);
+      return `Il ristorante è chiuso il ${dayName}. Per quale altro giorno vuole prenotare?`;
+    }
+    return null;
+  },
+
+  getTimeInvalidMessage(time, dateISO, rc) {
+    const ls = rc?.lunch_start || '12:00';
+    const le = rc?.lunch_end   || '14:30';
+    const ds = rc?.dinner_start || '19:00';
+    const de = rc?.dinner_end   || '22:30';
+
+    if (dateISO) {
+      const dow = DateManager.getDayOfWeek(dateISO);
+      const [h] = (time||'').split(':').map(Number);
+      const isPranzish = h >= 10 && h <= 16;
+
+      if (isPranzish && this.isLunchClosed(dateISO, rc)) {
+        const dayName = DateManager.getDayName(dateISO);
+        return `Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`;
+      }
+      if (!isPranzish && this.isDinnerClosed(dateISO, rc)) {
+        const dayName = DateManager.getDayName(dateISO);
+        return `Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`;
+      }
+    }
+
+    return `Quell'orario è fuori dai nostri orari. Pranzo ${ls}-${le}, cena ${ds}-${de}. Che orario preferisce?`;
+  },
+
+  _toMins(timeStr) {
+    const [h,m] = (timeStr||'0:0').split(':').map(Number);
+    return h * 60 + (m||0);
+  },
+};
+
+// ─── OPENAI REALTIME CLIENT ───────────────────────────────────────────────────
 
 export class OpenAIRealtimeClient {
-  constructor(opts) {
-    this.apiKey           = opts.apiKey;
-    this.model            = opts.model || 'gpt-4o-mini-realtime-preview';
-    this.systemPrompt     = opts.systemPrompt || '';
+  constructor(opts = {}) {
+    this.apiKey          = opts.apiKey;
+    this.model           = opts.model || 'gpt-4o-mini-realtime-preview';
+    this.systemPrompt    = opts.systemPrompt || '';
     this.restaurantConfig = opts.restaurantConfig || {};
-    this.callerPhone      = opts.callerPhone || null;
-    this.onAudioDelta     = opts.onAudioDelta || (()=>{});
-    this.onTranscript     = opts.onTranscript  || (()=>{});
-    this.onError          = opts.onError       || console.error;
 
-    this.ws          = null;
-    this.isConnected = false;
+    // Callbacks
+    this.onTranscript = opts.onTranscript || (() => {});
+    this.onError      = opts.onError      || console.error;
+    this.onClose      = opts.onClose      || (() => {});
 
-    this.recentAI   = [];
-    this.lastAITime = 0;
-    this.ECHO_MS    = 2500;
+    this.ws = null;
 
-    // Dati raccolti dal parser
-    this.data = { date:null, time:null, people:null };
+    // ── State (dalla logica del vecchio index) ──────────────────────────────
+    this.data = { date: null, time: null, people: null, name: null };
+    this.phase         = 'collecting';   // collecting | checking | naming | done
+    this.intent        = null;           // create | modify | cancel
+    this.existingRes   = null;           // prenotazione trovata per modify/cancel
+    this.availDone     = false;
+    this.checkingSlot  = false;
 
-    // Flag
-    this.availabilityDone     = false; // true dopo check ④ ok
-    this._checkingDay         = false;
-    this._checkingTime        = false;
-    this._checkingSlot        = false;
-    this._sistemaInjected     = false;
-    this._extracting          = null;  // campo in estrazione GPT: 'date'|'time'|'people'
-    this._lastRawText         = '';    // ultima trascrizione utente
+    // Anti-loop flags
+    this._checkingDay  = false;
+    this._checkingTime = false;
   }
+
+  // ── Connect ──────────────────────────────────────────────────────────────
 
   async connect() {
     return new Promise((resolve, reject) => {
       const url = `wss://api.openai.com/v1/realtime?model=${this.model}`;
       this.ws = new WebSocket(url, {
-        headers: { 'Authorization':`Bearer ${this.apiKey}`, 'OpenAI-Beta':'realtime=v1' }
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'OpenAI-Beta': 'realtime=v1',
+        },
       });
-      this.ws.on('open',    ()   => { this.isConnected=true; this._init(); resolve(); });
-      this.ws.on('message', raw  => this._handle(JSON.parse(raw.toString())));
-      this.ws.on('error',   err  => { this.onError(err); reject(err); });
-      this.ws.on('close',   code => { console.log(`🔴 Disconnesso (${code})`); this.isConnected=false; });
+
+      this.ws.on('open', () => {
+        this._configureSession();
+        resolve();
+      });
+      this.ws.on('message', (raw) => this._onMessage(raw));
+      this.ws.on('error', reject);
+      this.ws.on('close', (code) => {
+        console.log(`🔴 Disconnesso (${code})`);
+        this.onClose(code);
+      });
     });
   }
 
-  _init() {
-    console.log('🟢 Connesso OpenAI');
+  _configureSession() {
     this._send({
       type: 'session.update',
       session: {
-        modalities: ['text','audio'],
-        instructions: this.systemPrompt,
+        modalities: ['audio', 'text'],
         voice: 'alloy',
-        input_audio_format:  'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model:'whisper-1', language:'it' },
-        turn_detection: { type:'server_vad', threshold:0.4, prefix_padding_ms:300, silence_duration_ms:1200, create_response:false },
-        tools: [], // nessun tool — il server gestisce tutto
-      }
+        instructions: this.systemPrompt,
+        input_audio_format: 'pcmu',
+        output_audio_format: 'pcmu',
+        input_audio_transcription: { model: 'whisper-1', language: 'it' },
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.4,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 1200,
+          create_response: false,   // NOI controlliamo ogni risposta
+        },
+      },
     });
-    this._send({ type:'conversation.item.create', item:{
-      type:'message', role:'user',
-      content:[{ type:'input_text', text:'[Inizia: saluta brevemente e chiedi per quale giorno vuole prenotare.]' }]
-    }});
-    this._send({ type:'response.create' });
+    console.log('✅ Sessione configurata');
   }
 
-  _handle(msg) {
+  // ── Message Handler ───────────────────────────────────────────────────────
+
+  _onMessage(raw) {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+
     switch (msg.type) {
-      case 'session.created':  console.log(`📋 Sessione: ${msg.session.id}`); break;
-      case 'session.updated':  console.log('✅ Sessione ok'); break;
-      case 'response.audio.delta':
-        if (msg.delta) this.onAudioDelta(msg.delta); break;
+      case 'session.created':
+        console.log(`📋 Sessione: ${msg.session?.id}`);
+        break;
+      case 'session.updated':
+        console.log('✅ Sessione ok');
+        this._onSessionReady();
+        break;
       case 'response.audio_transcript.done':
         if (msg.transcript) {
-          this.recentAI.unshift(msg.transcript);
-          if (this.recentAI.length > 10) this.recentAI.pop();
-          this.lastAITime = Date.now();
           console.log(`💬 [AI]: ${msg.transcript}`);
           this.onTranscript(msg.transcript, 'assistant');
-
-          // ── GPT EXTRACTION: GPT ha interpretato il testo ambiguo ──────────
-          if (this._extracting && msg.transcript) {
-            const t = msg.transcript;
-            let extracted = null;
-            if (this._extracting === 'people') extracted = parsePeople(t);
-            if (this._extracting === 'date')   extracted = parseDate(t);
-            if (this._extracting === 'time')   extracted = parseTime(t);
-
-            if (extracted) {
-              console.log(`🧠 [GPT-extract] ${this._extracting}: "${t}" → ${extracted}`);
-              this.data[this._extracting] = extracted;
-              this._extracting = null;
-              // Ri-triggera il flusso con i dati aggiornati
-              this._parse('');
-            } else {
-              // GPT non ha capito nemmeno lui — resetta e lascia che l'utente ripeta
-              console.log(`🧠 [GPT-extract] fallito su: "${t}"`);
-              this._extracting = null;
-            }
-          }
         }
         break;
-      case 'input_audio_buffer.speech_started': console.log('🎤 Parla...'); break;
-      case 'input_audio_buffer.speech_stopped':  console.log('🎤 Fine');    break;
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
-          if (this._echo(t)) { console.log(`🔇 Echo`);  return; }
-          if (isNoise(t))    { console.log(`🔇 Noise`); return; }
+          if (!t || t.length < 2) return;
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-          this._parse(t);
+          this._onUserText(t);
         }
+        break;
+      case 'input_audio_buffer.speech_started':
+        console.log('🎤 Parla...');
+        break;
+      case 'input_audio_buffer.speech_stopped':
+        console.log('🎤 Fine');
         break;
       case 'response.done':
         if (msg.response?.status === 'failed') console.error('❌ Response failed');
         break;
       case 'error':
         if (msg.error?.code !== 'conversation_already_has_active_response') {
-          console.error('❌ OpenAI:', msg.error); this.onError(msg.error);
+          console.error('❌ OpenAI:', msg.error);
+          this.onError(msg.error);
         }
         break;
     }
   }
 
-  // ─── PARSE & TRIGGER ──────────────────────────────────────────────────────
+  // ── Session Ready → Greeting ──────────────────────────────────────────────
 
-  _parse(text) {
-    if (this.availabilityDone) return;
-    if (this._extracting) return; // GPT sta già estraendo, aspetta
+  _onSessionReady() {
+    const rc = this.restaurantConfig;
+    const nome = rc?.restaurant_name || 'ristorante';
+    this._say(`Buongiorno! Benvenuto a ${nome}. Per quale giorno desidera prenotare?`);
+  }
 
-    // Salva testo originale per eventuale fallback GPT
-    if (text) this._lastRawText = text;
+  // ── Core Logic Engine ─────────────────────────────────────────────────────
+
+  async _onUserText(text) {
+    if (this.availDone) return;
+    if (this.checkingSlot) return;
+
+    // Detect intent on first message
+    if (!this.intent) {
+      this.intent = IntentDetector.detect(text);
+      console.log(`🎯 Intent: ${this.intent}`);
+    }
+
+    // ── COLLECT PHASE ─────────────────────────────────────────────────────
+    if (this.phase === 'collecting') {
+      await this._processCollecting(text);
+    }
+    // ── NAMING PHASE (dopo check slot ok) ─────────────────────────────────
+    else if (this.phase === 'naming') {
+      this._processNaming(text);
+    }
+  }
+
+  async _processCollecting(text) {
+    const rc = this.restaurantConfig;
 
     const prevDate = this.data.date;
     const prevTime = this.data.time;
 
-    const date   = parseDate(text);
-    const time   = parseTime(text);
-    const people = parsePeople(text);
+    // Parse
+    const date   = DateManager.parseFromText(text);
+    const time   = TimeManager.parseFromText(text);
+    const people = PeopleManager.parseFromText(text);
 
     if (date   && date   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${date}`);     this.data.date=date; }
     if (time   && time   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${time}`);     this.data.time=time; }
@@ -475,178 +625,233 @@ export class OpenAIRealtimeClient {
 
     console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people}`);
 
-    // ① Nuova data → controlla giorno chiuso
+    // ① Check giorno chiuso
     if (this.data.date && this.data.date !== prevDate) {
-      const wasClosed = this._checkDayClosed();
-      if (wasClosed) return;
-    }
-
-    // ②③ Nuovo orario → controlla fascia + range
-    if (this.data.date && this.data.time && this.data.time !== prevTime) {
-      const blocked = this._checkTimeFeasibility();
-      if (blocked) return;
-      if (this.data.people) {
-        this._checkSlot();
+      const msg = ValidationPipeline.getDayClosedMessage(this.data.date, rc);
+      if (msg) {
+        console.log(`🚫 Giorno chiuso: ${this.data.date}`);
+        this.data.date = null;
+        this._say(msg);
         return;
       }
-      this._send({ type:'response.create' });
+    }
+
+    // ②③ Check fascia oraria
+    if (this.data.date && this.data.time && this.data.time !== prevTime) {
+      if (!ValidationPipeline.isValidTime(this.data.time, rc)) {
+        const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
+        console.log(`🚫 Orario non valido: ${this.data.time}`);
+        this.data.time = null;
+        this._say(msg);
+        return;
+      }
+      // Orario ok — se abbiamo anche le persone vai al check slot
+      if (this.data.people) {
+        await this._checkSlot();
+        return;
+      }
+      this._ask('people');
       return;
     }
 
     // ④ Tutti e 3 → check slot
-    if (this.data.date && this.data.time && this.data.people && !this._checkingSlot) {
-      this._checkSlot();
+    if (this.data.date && this.data.time && this.data.people && !this.checkingSlot) {
+      await this._checkSlot();
       return;
     }
 
-    // Dati incompleti — usa GPT come interprete semantico se c'è testo ambiguo
+    // Chiedi dato mancante
     if (!this.data.date) {
-      this._gptExtractOrAsk('date',
-        `Il cliente ha detto: "${this._lastRawText}". Capisci quale giorno intende e rispondi SOLO con il giorno (es: "sabato", "martedì"). Nient'altro.`,
-        'Chiedi SOLO: "Per quale giorno?" e aspetta.'
-      );
+      this._ask('date');
     } else if (!this.data.time) {
-      this._gptExtractOrAsk('time',
-        `Il cliente ha detto: "${this._lastRawText}". Capisci che orario intende e rispondi SOLO con l'orario (es: "alle 21", "alle 9 e un quarto"). Nient'altro.`,
-        'Chiedi SOLO: "A che ora?" e aspetta.'
-      );
+      this._ask('time');
     } else if (!this.data.people) {
-      this._gptExtractOrAsk('people',
-        `Il cliente ha detto: "${this._lastRawText}". Capisci quante persone intende e rispondi SOLO con il numero (es: "sei", "4", "due"). Nient'altro.`,
-        'Chiedi SOLO: "Quante persone esattamente?" e aspetta.'
-      );
+      this._ask('people');
+    }
+  }
+
+  _processNaming(text) {
+    // Estrai nome
+    const name = this._extractName(text);
+    if (name) {
+      this.data.name = name;
+      console.log(`👤 Nome: ${name}`);
+      this._confirmReservation();
     } else {
-      this._send({ type:'response.create' });
+      this._say('A che nome faccio la prenotazione?');
     }
   }
 
-  // ─── GPT EXTRACTION OR ASK ────────────────────────────────────────────────
-  // Se c'è testo ambiguo → GPT interpreta semanticamente (zero latency aggiuntiva)
-  // Se non c'è testo utile → chiede direttamente all'utente
+  // ── Ask Next Field ────────────────────────────────────────────────────────
 
-  _gptExtractOrAsk(field, extractInstruction, askInstruction) {
-    const raw = this._lastRawText;
-    const worthTrying = raw && raw.length > 1;
-
-    if (worthTrying) {
-      console.log(`🧠 [GPT-extract] tentativo "${field}" da: "${raw}"`);
-      this._extracting = field;
-      this._send({ type:'response.create', response:{ instructions: extractInstruction }});
-    } else {
-      this._send({ type:'response.create', response:{ instructions: askInstruction }});
-    }
+  _ask(field) {
+    const msgs = {
+      date:   'Per quale giorno vuole prenotare?',
+      time:   'A che ora desidera il tavolo?',
+      people: 'Per quante persone?',
+      name:   'A che nome faccio la prenotazione?',
+    };
+    this._say(msgs[field] || 'Può ripetere?');
   }
 
-  // ─── CHECK ① ────────────────────────────────────────────────────────────────
-
-  _checkDayClosed() {
-    if (this._checkingDay) return false;
-    this._checkingDay = true;
-    const msg = checkDayClosed(this.data.date, this.restaurantConfig);
-    this._checkingDay = false;
-    if (msg) {
-      console.log(`🚫 Giorno chiuso: ${this.data.date}`);
-      this.data.date = null;
-      this._sistema(msg);
-      return true;
-    }
-    return false;
-  }
-
-  // ─── CHECK ②③ ────────────────────────────────────────────────────────────
-
-  _checkTimeFeasibility() {
-    if (this._checkingTime) return false;
-    this._checkingTime = true;
-    const msg = checkTimeFeasibility(this.data.date, this.data.time, this.restaurantConfig);
-    this._checkingTime = false;
-    if (msg) {
-      console.log(`🚫 Orario non valido: ${this.data.time}`);
-      this.data.time = null;
-      this._sistema(msg);
-      return true;
-    }
-    return false;
-  }
-
-  // ─── CHECK ④ ────────────────────────────────────────────────────────────────
+  // ── Check Slot ────────────────────────────────────────────────────────────
 
   async _checkSlot() {
-    if (this._checkingSlot) return;
-    this._checkingSlot = true;
+    if (this.checkingSlot) return;
+    this.checkingSlot = true;
 
     const { date, time, people } = this.data;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
-    // Con create_response:false GPT non risponde mai da solo.
-    // Questo è l'UNICO response.create — nessun conflitto possibile.
+    // Dì "Un attimo" con istruzione precisa
     this._send({
       type: 'response.create',
-      response: { instructions: 'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci. Non aggiungere nulla.' }
+      response: { instructions: 'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci.' },
     });
 
-    const result = await checkSlot(date, time, people, this.restaurantConfig);
+    try {
+      const result = await this._callAppsScript({
+        action: 'check_availability',
+        data: date,
+        ora: time,
+        persone: people,
+      });
 
-    if (result.available) {
-      console.log(`✅ Slot disponibile`);
-      this.availabilityDone = true;
-      this._sistema(`DISPONIBILE: ${date} alle ${time} per ${people} persone è libero. Chiedi il nome al cliente: "A che nome prenoto?"`);
-    } else {
-      console.log(`❌ Slot pieno — cerco alternative`);
-      const alt = await findAlternative(date, time, people, this.restaurantConfig);
-      if (alt) {
-        console.log(`💡 Alternativa: ${alt}`);
+      if (result?.success || result?.reason === 'slot_available') {
+        console.log('✅ Slot disponibile');
+        this.phase = 'naming';
+        this.checkingSlot = false;
+        this.availDone = true;
+        this._say('Perfetto! A che nome faccio la prenotazione?');
+      } else if (result?.reason === 'slot_full') {
+        console.log('❌ Slot pieno');
         this.data.time = null;
-        this._sistema(`SLOT PIENO: le ${time} è al completo. C'è disponibilità alle ${alt}. Di' al cliente: "Le ${time} è al completo, ma c'è posto alle ${alt}. Va bene?"`);
+        this.checkingSlot = false;
+        const ds = this.restaurantConfig?.dinner_start || '19:00';
+        const de = this.restaurantConfig?.dinner_end   || '22:30';
+        this._say(`Mi dispiace, quell'orario è al completo. Abbiamo disponibilità in altre fasce tra le ${ds} e le ${de}. Quale preferisce?`);
+      } else if (result?.reason === 'day_closed') {
+        console.log('🚫 Giorno chiuso (da Apps Script)');
+        this.data.date = null;
+        this.checkingSlot = false;
+        this._say('Mi dispiace, quel giorno siamo chiusi. Per quale altro giorno vuole prenotare?');
       } else {
-        console.log(`❌ Nessuna alternativa`);
-        this.data.time = null;
-        this._sistema(`TUTTO PIENO: nessuno slot disponibile per il ${date}. Comunica al cliente che siamo al completo e chiedi se vuole un altro giorno.`);
+        // Fallback: procedi lo stesso
+        console.log('⚠️ Check incerto, procedo');
+        this.phase = 'naming';
+        this.checkingSlot = false;
+        this.availDone = true;
+        this._say('A che nome faccio la prenotazione?');
+      }
+    } catch (err) {
+      console.error('❌ Errore check slot:', err);
+      this.phase = 'naming';
+      this.checkingSlot = false;
+      this.availDone = true;
+      this._say('A che nome faccio la prenotazione?');
+    }
+  }
+
+  // ── Confirm Reservation ───────────────────────────────────────────────────
+
+  _confirmReservation() {
+    const { date, time, people, name } = this.data;
+    const dateDisplay  = DateManager.formatForDisplay(date);
+    const timeDisplay  = TimeManager.formatForDisplay(time);
+    const firstName    = (name || '').split(' ')[0];
+
+    this._say(
+      `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`
+    );
+
+    // Crea prenotazione in background
+    this._callAppsScript({
+      source: 'telnyx',
+      nome: name,
+      persone: people,
+      data: date,
+      ora: time,
+    }).then(result => {
+      console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌');
+    }).catch(err => {
+      console.error('❌ Errore creazione prenotazione:', err);
+    });
+  }
+
+  // ── Name Extractor ────────────────────────────────────────────────────────
+
+  _extractName(text) {
+    if (!text) return null;
+    const t = text.trim();
+
+    const patterns = [
+      /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/,
+    ];
+
+    for (const p of patterns) {
+      const match = t.match(p);
+      if (match && match[1] && match[1].length >= 2) {
+        const name = match[1].trim();
+        const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo'];
+        if (!excluded.includes(name.toLowerCase())) {
+          return name;
+        }
       }
     }
-
-    this._checkingSlot = false;
+    return null;
   }
 
-  // ─── INJECT ──────────────────────────────────────────────────────────────────
+  // ── Say / Send ────────────────────────────────────────────────────────────
 
-  _sistema(text) {
-    console.log(`💉 [SISTEMA]: ${text.substring(0,120)}`);
-    this._send({ type:'conversation.item.create', item:{
-      type:'message', role:'user',
-      content:[{ type:'input_text', text:`[SISTEMA: ${text}]` }]
-    }});
-    this._send({ type:'response.create' });
+  _say(text) {
+    console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    this._send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: `[SISTEMA: ${text}]` }],
+      },
+    });
+    this._send({
+      type: 'response.create',
+      response: { instructions: text },
+    });
   }
 
-  // ─── ECHO ────────────────────────────────────────────────────────────────────
-
-  _echo(text) {
-    if (!text || text.length <= 20) return false;
-    const uw = text.toLowerCase().replace(/[.,!?]/g,'').split(/\s+/).filter(w=>w.length>1);
-    if (uw.length <= 3 || Date.now()-this.lastAITime > this.ECHO_MS) return false;
-    for (const phrase of this.recentAI) {
-      const aw = phrase.toLowerCase().replace(/[.,!?]/g,'').split(/\s+/).filter(w=>w.length>1);
-      const hits = uw.filter(w=>aw.includes(w)).length;
-      if (hits/uw.length > 0.75 && hits >= 6) return true;
+  _send(obj) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(obj));
     }
-    return false;
   }
 
-  // ─── AUDIO ───────────────────────────────────────────────────────────────────
+  // ── Audio ─────────────────────────────────────────────────────────────────
 
-  sendAudio(b64) {
-    if (this.isConnected) this._send({ type:'input_audio_buffer.append', audio:b64 });
+  sendAudio(pcmuBase64) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
+    }
   }
 
-  _send(msg) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  close() {
+    this.ws?.close();
   }
 
-  disconnect() {
-    if (this.ws) { this.ws.close(); this.ws=null; }
-    this.isConnected = false;
+  // ── Apps Script ───────────────────────────────────────────────────────────
+
+  async _callAppsScript(payload) {
+    const url = this.restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
+    if (!url) return null;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    try { return JSON.parse(text); } catch { return null; }
   }
 }
-
-export default OpenAIRealtimeClient;
