@@ -816,8 +816,8 @@ export class OpenAIRealtimeClient {
       type: 'conversation.item.create',
       item: {
         type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text: `[SISTEMA: ${text}]` }],
+        role: 'assistant',
+        content: [{ type: 'text', text: text }],
       },
     });
     this._send({
