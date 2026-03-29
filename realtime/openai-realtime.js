@@ -516,8 +516,8 @@ export class OpenAIRealtimeClient {
         modalities: ['audio', 'text'],
         voice: 'alloy',
         instructions: this.systemPrompt,
-        input_audio_format: 'pcmu',
-        output_audio_format: 'pcmu',
+        input_audio_format: 'g711_ulaw',
+        output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model: 'whisper-1', language: 'it' },
         turn_detection: {
           type: 'server_vad',
