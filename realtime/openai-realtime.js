@@ -822,9 +822,7 @@ export class OpenAIRealtimeClient {
     });
     this._send({
       type: 'response.create',
-      response: {
-        instructions: `${text} (una frase sola, breve e naturale, massimo 10 parole)`,
-      },
+      response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
     });
   }
 
