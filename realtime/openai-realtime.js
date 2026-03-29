@@ -482,6 +482,7 @@ export class OpenAIRealtimeClient {
     // Anti-loop flags
     this._checkingDay  = false;
     this._checkingTime = false;
+    this._sessionReady = false;  // evita doppio greeting
   }
 
   // ── Connect ──────────────────────────────────────────────────────────────
@@ -542,8 +543,11 @@ export class OpenAIRealtimeClient {
         console.log(`📋 Sessione: ${msg.session?.id}`);
         break;
       case 'session.updated':
-        console.log('✅ Sessione ok');
-        this._onSessionReady();
+        if (!this._sessionReady) {
+          this._sessionReady = true;
+          console.log('✅ Sessione ok');
+          this._onSessionReady();
+        }
         break;
       case 'response.audio_transcript.done':
         if (msg.transcript) {
