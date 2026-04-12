@@ -730,7 +730,43 @@ export class OpenAIRealtimeClient {
   }
 
   _processNaming(text) {
-    // Estrai nome
+    const rc = this.restaurantConfig;
+
+    // ── Controlla se l'utente sta correggendo i dati prima di dare il nome ──
+    const newPeople = PeopleManager.parseFromText(text);
+    const newTime   = TimeManager.parseFromText(text);
+    const newDate   = DateManager.parseFromText(text);
+
+    const isCorrection = /anzi|aspetta|no aspetta|scusa|invece|facciamo|meglio|cambia|cambiare|cambio/i.test(text);
+
+    if (isCorrection) {
+      let changed = false;
+      if (newPeople && newPeople !== this.data.people) {
+        console.log(`👥 Correzione persone in naming: ${this.data.people} → ${newPeople}`);
+        this.data.people = newPeople;
+        changed = true;
+      }
+      if (newTime && newTime !== this.data.time) {
+        console.log(`⏰ Correzione orario in naming: ${this.data.time} → ${newTime}`);
+        this.data.time = newTime;
+        changed = true;
+      }
+      if (newDate && newDate !== this.data.date) {
+        console.log(`📅 Correzione data in naming: ${this.data.date} → ${newDate}`);
+        this.data.date = newDate;
+        changed = true;
+      }
+      if (changed) {
+        // Riesegui check slot con i dati aggiornati
+        this.phase = 'collecting';
+        this.availDone = false;
+        this.checkingSlot = false;
+        this._checkSlot();
+        return;
+      }
+    }
+
+    // ── Estrai nome ───────────────────────────────────────────────────────────
     const name = this._extractName(text);
     if (name) {
       this.data.name = name;
