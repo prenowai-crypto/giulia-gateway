@@ -765,6 +765,12 @@ export class OpenAIRealtimeClient {
       }
 
       if (changed) {
+        // Controlla se il nome era già nella stessa frase della correzione
+        const nameInCorrection = this._extractName(text);
+        if (nameInCorrection) {
+          this.data.name = nameInCorrection;
+          console.log(`👤 Nome trovato nella correzione: ${nameInCorrection}`);
+        }
         this.phase = 'collecting';
         this.availDone = false;
         this.checkingSlot = false;
@@ -842,7 +848,12 @@ export class OpenAIRealtimeClient {
         this.phase = 'naming';
         this.checkingSlot = false;
         this.availDone = true;
-        this._say('Perfetto! A che nome faccio la prenotazione?');
+        // Se il nome è già stato salvato (dalla frase di correzione), conferma direttamente
+        if (this.data.name) {
+          this._confirmReservation();
+        } else {
+          this._say('Perfetto! A che nome faccio la prenotazione?');
+        }
       } else if (result?.reason === 'slot_full') {
         console.log('❌ Slot pieno');
         this.checkingSlot = false;
