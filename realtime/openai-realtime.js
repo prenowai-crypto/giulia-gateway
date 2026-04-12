@@ -624,12 +624,12 @@ export class OpenAIRealtimeClient {
 
     // ── Keyword note ─────────────────────────────────────────────────────────
     const noteKeywords = [
-      { pattern: /celiaco|celiaca|glutine|gluten/i,                 note: 'Intolleranza glutine' },
+      { pattern: /celiac[oai]/i,                                   note: 'Intolleranza glutine' },
       { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
       { pattern: /allergi[ao]/i,                                    note: 'Allergia (verifica con cliente)' },
       { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
-      { pattern: /vegetarian[oa]/i,                                 note: 'Vegetariano' },
-      { pattern: /vegan[oa]/i,                                      note: 'Vegano' },
+      { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
+      { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
       { pattern: /seggiol[eo]n[eo]|seggiolino|highchair/i,          note: 'Richiesto seggiolone' },
       { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
       { pattern: /anniversario/i,                                   note: 'Anniversario' },
@@ -716,6 +716,15 @@ export class OpenAIRealtimeClient {
     if (date   && date   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${date}`);     this.data.date=date; }
     if (time   && time   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${time}`);     this.data.time=time; }
     if (people && people !== this.data.people) { console.log(`👥 people: ${this.data.people} → ${people}`); this.data.people=people; }
+
+    // Estrai nome anticipato se già presente nel messaggio (es. "sabato alle 21 per 2, nome Luca")
+    if (!this.data.name) {
+      const earlyName = this._extractName(text);
+      if (earlyName) {
+        this.data.name = earlyName;
+        console.log(`👤 Nome anticipato: ${earlyName}`);
+      }
+    }
 
     console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people}`);
 
@@ -1042,7 +1051,7 @@ export class OpenAIRealtimeClient {
       /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /^(?:no[,\s]+)?a\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
-      /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/,
+      /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,  // i flag: Whisper spesso trascrive in minuscolo
     ];
 
     for (const p of patterns) {
@@ -1054,7 +1063,8 @@ export class OpenAIRealtimeClient {
           : match[1].trim();
 
         if (name.length >= 2 && !excluded.includes(name.toLowerCase())) {
-          return name;
+          // Capitalizza prima lettera di ogni parola (Whisper trascrive spesso in minuscolo)
+          return name.replace(/\b\w/g, c => c.toUpperCase());
         }
       }
     }
