@@ -751,9 +751,12 @@ export class OpenAIRealtimeClient {
         this.data.time = newTime;
         changed = true;
       }
-      if (newDate && newDate !== this.data.date) {
-        console.log(`📅 Correzione data in naming: ${this.data.date} → ${newDate}`);
-        this.data.date = newDate;
+      // Per la data: rimuovi contesto negativo ("non per sabato") prima di parsare
+      const textForDate = text.replace(/\bnon\s+per\s+\w+/gi, '');
+      const correctedDate = DateManager.parseFromText(textForDate);
+      if (correctedDate && correctedDate !== this.data.date) {
+        console.log(`📅 Correzione data in naming: ${this.data.date} → ${correctedDate}`);
+        this.data.date = correctedDate;
         changed = true;
       }
       if (changed) {
@@ -947,9 +950,9 @@ export class OpenAIRealtimeClient {
                       'nome','certo','quello','quella','giusto','pronto'];
 
     // Pulizia: rimuovi congiunzioni inserite da Whisper tra "nome" e il nome vero
-    // es. "Nome e Mirko" → "Nome Mirko", "Il nome è Mirko" → "Nome Mirko"
+    // es. "Nome e Mirko" → "Nome Mirko", "Nome è Mirko" → "Nome Mirko"
     let t = text.trim();
-    t = t.replace(/\bnome\s+e\s+/i, 'Nome ');
+    t = t.replace(/\bnome\s+[eè]\s+/i, 'Nome ');
     t = t.replace(/\bil\s+nome\s+è\s+/i, 'Nome ');
     t = t.replace(/\bil\s+nome\s+/i, 'Nome ');
 
