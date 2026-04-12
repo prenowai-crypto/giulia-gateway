@@ -225,8 +225,8 @@ export const TimeManager = {
       }
     }
 
-    // "alle 21" / "alle 21.30" / "alle 21:30"
-    const pattern1 = /(?:alle|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
+    // "alle 21" / "alla 21" / "alle 21.30" / "alle 21:30"
+    const pattern1 = /(?:alle|alla|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
     while ((match = pattern1.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = match[2] ? parseInt(match[2]) : 0;
@@ -289,7 +289,7 @@ export const PeopleManager = {
     // Evita che "alle 21.30 per due persone" → people=30
     const tClean = t
       .replace(/\b\d{1,2}[.:]\d{2}\b/g, '')           // rimuove 21.30, 21:30
-      .replace(/\b(?:alle|ore|per le)\s*\d{1,2}\b/gi, '') // rimuove "alle 21"
+      .replace(/\b(?:alle|alla|ore|per le)\s*\d{1,2}\b/gi, '') // rimuove "alle 21", "alla 21"
       .replace(/\s+/g, ' ').trim();
 
     // Correction pattern: usa ULTIMO numero (sia cifre che parole)
