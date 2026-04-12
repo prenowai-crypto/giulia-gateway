@@ -782,13 +782,46 @@ export class OpenAIRealtimeClient {
         this._say('Perfetto! A che nome faccio la prenotazione?');
       } else if (result?.reason === 'slot_full') {
         console.log('❌ Slot pieno');
-        this.data.time = null;
         this.checkingSlot = false;
-        const ds = rc?.dinner_start || '21:00';
-        const de = rc?.dinner_end   || '22:30';
-        // TEST 10: resettiamo time e chiediamo orario — il sistema aspetta
-        // il prossimo turno senza che GPT improvvisi
-        this._say(`Mi dispiace, quell'orario è al completo. Abbiamo disponibilità in altre fasce tra le ${ds} e le ${de}. Quale preferisce?`);
+
+        // Cerca slot realmente disponibili invece di dire orari hardcoded
+        try {
+          const alts = await this._callAppsScript({
+            action: 'find_available_slots',
+            data: date,
+            ora: time,
+            persone: people,
+          });
+
+          const sameDay = alts?.availableSlots?.sameDay || [];
+          const nextDays = alts?.availableSlots?.nextDays || [];
+
+          if (sameDay.length > 0) {
+            const times = sameDay.slice(0, 3).map(s => s.time.substring(0,5)).join(', ');
+            console.log(`✅ Alternative stesso giorno: ${times}`);
+            this.data.time = null;
+            this._say(`Mi dispiace, quell'orario è al completo. Oggi ho disponibilità alle ${times}. Quale preferisce?`);
+          } else if (nextDays.length > 0) {
+            const first = nextDays[0];
+            const dayName = first.dayName || '';
+            const times = (first.slots || []).slice(0, 2).map(s => s.time.substring(0,5)).join(' o ');
+            console.log(`✅ Alternative prossimi giorni: ${dayName} ${times}`);
+            this.data.date = null;
+            this.data.time = null;
+            this._say(`Mi dispiace, siamo al completo martedì. Prima disponibilità ${dayName} alle ${times}. Vuole prenotare?`);
+          } else {
+            console.log('❌ Nessuna alternativa trovata');
+            this.data.date = null;
+            this.data.time = null;
+            this._say('Mi dispiace, siamo al completo per quel giorno. Vuole provare un altro giorno?');
+          }
+        } catch (err) {
+          console.error('❌ Errore ricerca alternative:', err);
+          this.data.time = null;
+          const ds = rc?.dinner_start || '21:00';
+          const de = rc?.dinner_end   || '22:30';
+          this._say(`Mi dispiace, quell'orario è al completo. Abbiamo disponibilità in altre fasce tra le ${ds} e le ${de}. Quale preferisce?`);
+        }
       } else if (result?.reason === 'day_closed') {
         console.log('🚫 Giorno chiuso (da Apps Script)');
         this.data.date = null;
