@@ -875,6 +875,7 @@ export class OpenAIRealtimeClient {
       data: date,
       ora: time,
       telefono: this.callerPhone || '',
+      forceNew: true,
     }).then(result => {
       console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌', result);
     }).catch(err => {
