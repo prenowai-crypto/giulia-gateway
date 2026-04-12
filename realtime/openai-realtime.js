@@ -499,7 +499,7 @@ export class OpenAIRealtimeClient {
     this.callerPhone   = opts.callerPhone || '';
 
     // ── State (dalla logica del vecchio index) ──────────────────────────────
-    this.data = { date: null, time: null, people: null, name: null };
+    this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
     this.phase         = 'collecting';   // collecting | checking | naming | done
     this.intent        = null;           // create | modify | cancel
     this.existingRes   = null;           // prenotazione trovata per modify/cancel
@@ -617,11 +617,74 @@ export class OpenAIRealtimeClient {
     this._say(`Buongiorno! Benvenuto a ${nome}. Per quale giorno desidera prenotare?`);
   }
 
+  // ── Note e Telefono Alternativo ───────────────────────────────────────────
+
+  _detectNotesAndPhone(text) {
+    const t = text.toLowerCase();
+
+    // ── Keyword note ─────────────────────────────────────────────────────────
+    const noteKeywords = [
+      { pattern: /celiaco|celiaca|glutine|gluten/i,                 note: 'Intolleranza glutine' },
+      { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
+      { pattern: /allergi[ao]/i,                                    note: 'Allergia (verifica con cliente)' },
+      { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
+      { pattern: /vegetarian[oa]/i,                                 note: 'Vegetariano' },
+      { pattern: /vegan[oa]/i,                                      note: 'Vegano' },
+      { pattern: /seggiol[eo]n[eo]|seggiolino|highchair/i,          note: 'Richiesto seggiolone' },
+      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
+      { pattern: /anniversario/i,                                   note: 'Anniversario' },
+      { pattern: /compleanno|birthday/i,                            note: 'Compleanno' },
+      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,     note: 'Proposta di matrimonio' },
+      { pattern: /occasion[ei]\s*speciale/i,                        note: 'Occasione speciale' },
+      { pattern: /romantico|romantica/i,                            note: 'Cena romantica' },
+      { pattern: /finestra|vista/i,                                 note: 'Tavolo vicino finestra' },
+      { pattern: /esterno|terrazza|giardino|dehor/i,                note: 'Tavolo esterno/terrazza' },
+      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,          note: 'Accessibilità disabili' },
+      { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
+    ];
+
+    const newNotes = [];
+    for (const { pattern, note } of noteKeywords) {
+      if (pattern.test(text)) {
+        // Evita duplicati
+        if (!this.data.notes || !this.data.notes.includes(note)) {
+          newNotes.push(note);
+          console.log(`📝 Nota rilevata: "${note}"`);
+        }
+      }
+    }
+
+    if (newNotes.length > 0) {
+      const toAdd = newNotes.join('; ');
+      this.data.notes = this.data.notes
+        ? `${this.data.notes}; ${toAdd}`
+        : toAdd;
+    }
+
+    // ── Telefono alternativo ─────────────────────────────────────────────────
+    const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
+    const phoneMatch = text.match(phonePattern);
+    if (phoneMatch && !this.data.alternativePhone) {
+      const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
+      this.data.alternativePhone = phoneNumber;
+      const phoneNote = `Tel. alternativo: ${phoneNumber}`;
+      console.log(`📞 Telefono alternativo: "${phoneNumber}"`);
+      if (!this.data.notes || !this.data.notes.includes('Tel. alternativo')) {
+        this.data.notes = this.data.notes
+          ? `${this.data.notes}; ${phoneNote}`
+          : phoneNote;
+      }
+    }
+  }
+
   // ── Core Logic Engine ─────────────────────────────────────────────────────
 
   async _onUserText(text) {
     if (this.checkingSlot) return;
     if (this.phase === 'done') return;
+
+    // Rileva note e telefono alternativo su ogni messaggio
+    this._detectNotesAndPhone(text);
 
     // Detect intent on first message
     if (!this.intent) {
@@ -948,9 +1011,11 @@ export class OpenAIRealtimeClient {
       data: date,
       ora: time,
       telefono: this.callerPhone || '',
+      notes: this.data.notes || '',
       forceNew: true,
     }).then(result => {
       console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌', result);
+      if (this.data.notes) console.log(`📝 Note inviate: "${this.data.notes}"`);
     }).catch(err => {
       console.error('❌ Errore creazione prenotazione:', err);
     });
