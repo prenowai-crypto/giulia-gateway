@@ -906,10 +906,16 @@ export class OpenAIRealtimeClient {
 
   _extractName(text) {
     if (!text) return null;
-    const t = text.trim();
 
     const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
                       'nome','certo','quello','quella','giusto','pronto'];
+
+    // Pulizia: rimuovi congiunzioni inserite da Whisper tra "nome" e il nome vero
+    // es. "Nome e Mirko" → "Nome Mirko", "Il nome è Mirko" → "Nome Mirko"
+    let t = text.trim();
+    t = t.replace(/\bnome\s+e\s+/i, 'Nome ');
+    t = t.replace(/\bil\s+nome\s+è\s+/i, 'Nome ');
+    t = t.replace(/\bil\s+nome\s+/i, 'Nome ');
 
     const patterns = [
       /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
@@ -922,7 +928,6 @@ export class OpenAIRealtimeClient {
     for (const p of patterns) {
       const match = t.match(p);
       if (match && match[1] && match[1].length >= 2) {
-        // Prendi solo la prima parola se la prima parola è esclusa
         const words = match[1].trim().split(/\s+/);
         const name = excluded.includes(words[0].toLowerCase())
           ? words.slice(1).join(' ')
