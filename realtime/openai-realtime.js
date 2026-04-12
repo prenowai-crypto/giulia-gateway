@@ -292,13 +292,32 @@ export const PeopleManager = {
       .replace(/\b(?:alle|ore|per le)\s*\d{1,2}\b/gi, '') // rimuove "alle 21"
       .replace(/\s+/g, ' ').trim();
 
-    // Correction pattern: usa ULTIMO numero
+    // Correction pattern: usa ULTIMO numero (sia cifre che parole)
     if (/anzi|no aspetta|aspetta|facciamo|meglio|diciamo/.test(tClean)) {
+      // Prima prova con cifre
       const allNums = tClean.match(/\b(\d+)\b/g);
       if (allNums && allNums.length >= 2) {
         const last = parseInt(allNums[allNums.length - 1]);
         if (last > 0 && last <= 45) return last;
       }
+      // Poi prova con parole numeriche — cerca l'ULTIMA nel testo
+      const wordNums = {
+        'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
+        'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,
+      };
+      let lastFound = null;
+      let lastPos = -1;
+      for (const [word, num] of Object.entries(wordNums)) {
+        const regex = new RegExp(`\\b${word}\\b`, 'gi');
+        let m;
+        while ((m = regex.exec(tClean)) !== null) {
+          if (m.index > lastPos) {
+            lastPos = m.index;
+            lastFound = num;
+          }
+        }
+      }
+      if (lastFound !== null) return lastFound;
     }
 
     const patterns = [
