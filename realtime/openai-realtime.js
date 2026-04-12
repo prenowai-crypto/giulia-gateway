@@ -246,8 +246,8 @@ export const TimeManager = {
         allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00` });
     }
 
-    // Plain HH:MM
-    const pattern3 = /\b(\d{1,2})[.:](\d{2})\b/g;
+    // Plain HH:MM or HH-MM (es. "19:30", "19.30", "19-30")
+    const pattern3 = /\b(\d{1,2})[.:\-](\d{2})\b/g;
     while ((match = pattern3.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = parseInt(match[2]);
@@ -796,21 +796,30 @@ export class OpenAIRealtimeClient {
           const sameDay = alts?.availableSlots?.sameDay || [];
           const nextDays = alts?.availableSlots?.nextDays || [];
 
-          if (sameDay.length > 0) {
-            const times = sameDay.slice(0, 3).map(s => s.time.substring(0,5)).join(', ');
-            console.log(`✅ Alternative stesso giorno: ${times}`);
+          // Filtra solo orari nei nostri orari di apertura
+          const validSameDay = sameDay.filter(s =>
+            ValidationPipeline.isValidTime(s.time, rc)
+          );
+
+          if (validSameDay.length > 0) {
+            const times = validSameDay.slice(0, 3).map(s => s.time.substring(0,5)).join(', ');
+            console.log(`✅ Alternative stesso giorno (filtrate): ${times}`);
             this.data.time = null;
             this._say(`Mi dispiace, quell'orario è al completo. Oggi ho disponibilità alle ${times}. Quale preferisce?`);
           } else if (nextDays.length > 0) {
             const first = nextDays[0];
             const dayName = first.dayName || '';
-            const times = (first.slots || []).slice(0, 2).map(s => s.time.substring(0,5)).join(' o ');
+            // Filtra anche i prossimi giorni
+            const validSlots = (first.slots || []).filter(s =>
+              ValidationPipeline.isValidTime(s.time, rc)
+            );
+            const times = validSlots.slice(0, 2).map(s => s.time.substring(0,5)).join(' o ');
             console.log(`✅ Alternative prossimi giorni: ${dayName} ${times}`);
             this.data.date = null;
             this.data.time = null;
-            this._say(`Mi dispiace, siamo al completo martedì. Prima disponibilità ${dayName} alle ${times}. Vuole prenotare?`);
+            this._say(`Mi dispiace, siamo al completo per quel giorno. Prima disponibilità ${dayName} alle ${times}. Vuole prenotare?`);
           } else {
-            console.log('❌ Nessuna alternativa trovata');
+            console.log('❌ Nessuna alternativa valida trovata');
             this.data.date = null;
             this.data.time = null;
             this._say('Mi dispiace, siamo al completo per quel giorno. Vuole provare un altro giorno?');
