@@ -141,6 +141,7 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
         case 'start': {
           callId = msg.start?.call_sid || msg.start?.callSid || `call-${Date.now()}`;
           const toNumber   = msg.start?.to        || '';
+          const fromNumber = msg.start?.from      || '';
           const streamSid  = msg.start?.stream_sid || callId;
 
           console.log(`📞 CallSid: ${callId}`);
@@ -153,6 +154,7 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
             apiKey:           process.env.OPENAI_API_KEY,
             restaurantConfig: rc,
             systemPrompt:     buildSystemPrompt(rc),
+            callerPhone:      fromNumber,
             onTranscript(text, role) {
               // già loggato internamente
             },
