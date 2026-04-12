@@ -477,6 +477,7 @@ export class OpenAIRealtimeClient {
     this.onClose      = opts.onClose      || (() => {});
 
     this.ws = null;
+    this.callerPhone   = opts.callerPhone || '';
 
     // ── State (dalla logica del vecchio index) ──────────────────────────────
     this.data = { date: null, time: null, people: null, name: null };
@@ -600,8 +601,8 @@ export class OpenAIRealtimeClient {
   // ── Core Logic Engine ─────────────────────────────────────────────────────
 
   async _onUserText(text) {
-    if (this.availDone) return;
     if (this.checkingSlot) return;
+    if (this.phase === 'done') return;
 
     // Detect intent on first message
     if (!this.intent) {
@@ -860,6 +861,8 @@ export class OpenAIRealtimeClient {
     const timeDisplay  = TimeManager.formatForDisplay(time);
     const firstName    = (name || '').split(' ')[0];
 
+    this.phase = 'done';
+
     this._say(
       `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`
     );
@@ -871,8 +874,9 @@ export class OpenAIRealtimeClient {
       persone: people,
       data: date,
       ora: time,
+      telefono: this.callerPhone || '',
     }).then(result => {
-      console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌');
+      console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌', result);
     }).catch(err => {
       console.error('❌ Errore creazione prenotazione:', err);
     });
