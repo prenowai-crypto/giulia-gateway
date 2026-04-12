@@ -707,11 +707,7 @@ export class OpenAIRealtimeClient {
     const { date, time, people } = this.data;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
-    // Dì "Un attimo" con istruzione precisa
-    this._send({
-      type: 'response.create',
-      response: { instructions: 'Di\' SOLO: "Un attimo, verifico la disponibilità..." e taci.' },
-    });
+    // Silenzio durante il check — GPT non parla fino al risultato
 
     try {
       const result = await this._callAppsScript({
