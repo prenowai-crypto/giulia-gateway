@@ -739,7 +739,9 @@ export class OpenAIRealtimeClient {
     {
       let changed = false;
 
-      const newPeople = PeopleManager.parseFromText(text);
+      const newPeople = PeopleManager.parseFromText(
+        text.replace(/\bnon\s+(?:in\s+)?\w+/gi, '')
+      );
       const newTime   = TimeManager.parseFromText(text);
 
       // Per la data: rimuovi contesto negativo ("non per sabato") prima di parsare
