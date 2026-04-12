@@ -809,14 +809,6 @@ export class OpenAIRealtimeClient {
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
     this._send({
-      type: 'conversation.item.create',
-      item: {
-        type: 'message',
-        role: 'assistant',
-        content: [{ type: 'text', text: text }],
-      },
-    });
-    this._send({
       type: 'response.create',
       response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
     });
