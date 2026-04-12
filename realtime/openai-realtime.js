@@ -733,14 +733,19 @@ export class OpenAIRealtimeClient {
     const rc = this.restaurantConfig;
 
     // ── Controlla se l'utente sta correggendo i dati prima di dare il nome ──
-    const newPeople = PeopleManager.parseFromText(text);
-    const newTime   = TimeManager.parseFromText(text);
-    const newDate   = DateManager.parseFromText(text);
-
-    const isCorrection = /anzi|aspetta|no aspetta|scusa|invece|facciamo|meglio|cambia|cambiare|cambio/i.test(text);
-
-    if (isCorrection) {
+    // ── Controlla correzioni dati in fase naming ──────────────────────────────
+    // Anche senza parole trigger esplicite, se il cliente menziona dati diversi
+    // da quelli già raccolti, trattiamo come correzione
+    {
       let changed = false;
+
+      const newPeople = PeopleManager.parseFromText(text);
+      const newTime   = TimeManager.parseFromText(text);
+
+      // Per la data: rimuovi contesto negativo ("non per sabato") prima di parsare
+      const textForDate = text.replace(/\bnon\s+per\s+\w+/gi, '');
+      const correctedDate = DateManager.parseFromText(textForDate);
+
       if (newPeople && newPeople !== this.data.people) {
         console.log(`👥 Correzione persone in naming: ${this.data.people} → ${newPeople}`);
         this.data.people = newPeople;
@@ -751,16 +756,13 @@ export class OpenAIRealtimeClient {
         this.data.time = newTime;
         changed = true;
       }
-      // Per la data: rimuovi contesto negativo ("non per sabato") prima di parsare
-      const textForDate = text.replace(/\bnon\s+per\s+\w+/gi, '');
-      const correctedDate = DateManager.parseFromText(textForDate);
       if (correctedDate && correctedDate !== this.data.date) {
         console.log(`📅 Correzione data in naming: ${this.data.date} → ${correctedDate}`);
         this.data.date = correctedDate;
         changed = true;
       }
+
       if (changed) {
-        // Riesegui check slot con i dati aggiornati
         this.phase = 'collecting';
         this.availDone = false;
         this.checkingSlot = false;
@@ -961,6 +963,7 @@ export class OpenAIRealtimeClient {
       /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /^(?:no[,\s]+)?a\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
       /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/,
     ];
 
