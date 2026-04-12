@@ -285,12 +285,19 @@ export const PeopleManager = {
     if (!text) return null;
     const t = text.toLowerCase().trim();
 
-    // Correction pattern: use LAST number
-    if (/anzi|no aspetta|aspetta|facciamo|meglio|diciamo/.test(t)) {
-      const allNums = t.match(/\b(\d+)\b/g);
+    // ── Rimuovi orari dal testo prima di parsare le persone ──────────────────
+    // Evita che "alle 21.30 per due persone" → people=30
+    const tClean = t
+      .replace(/\b\d{1,2}[.:]\d{2}\b/g, '')           // rimuove 21.30, 21:30
+      .replace(/\b(?:alle|ore|per le)\s*\d{1,2}\b/gi, '') // rimuove "alle 21"
+      .replace(/\s+/g, ' ').trim();
+
+    // Correction pattern: usa ULTIMO numero
+    if (/anzi|no aspetta|aspetta|facciamo|meglio|diciamo/.test(tClean)) {
+      const allNums = tClean.match(/\b(\d+)\b/g);
       if (allNums && allNums.length >= 2) {
         const last = parseInt(allNums[allNums.length - 1]);
-        if (last > 0 && last < 100) return last;
+        if (last > 0 && last <= 45) return last;
       }
     }
 
@@ -303,20 +310,20 @@ export const PeopleManager = {
     ];
 
     for (const p of patterns) {
-      const match = t.match(p);
+      const match = tClean.match(p);
       if (match) {
         const num = parseInt(match[1]);
-        if (num > 0 && num < 100) return num;
+        if (num > 0 && num <= 45) return num;
       }
     }
 
     const wordNumbers = {
-      'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
-      'sette':7,'otto':8,'nove':9,'dieci':10,
+      'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
+      'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,
     };
     for (const [word, num] of Object.entries(wordNumbers)) {
       const regex = new RegExp(`\\b${word}\\b`, 'i');
-      if (regex.test(t)) return num;
+      if (regex.test(tClean)) return num;
     }
 
     return null;
@@ -640,7 +647,7 @@ export class OpenAIRealtimeClient {
       }
     }
 
-    // ②③ Check fascia oraria
+    // ②③ Check fascia oraria + pranzo/cena chiuso
     if (this.data.date && this.data.time && this.data.time !== prevTime) {
       if (!ValidationPipeline.isValidTime(this.data.time, rc)) {
         const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
@@ -649,6 +656,34 @@ export class OpenAIRealtimeClient {
         this._say(msg);
         return;
       }
+
+      // ② Check pranzo chiuso per quel giorno
+      const [h] = this.data.time.split(':').map(Number);
+      const isPranzo = h >= 10 && h <= 16;
+      if (isPranzo && ValidationPipeline.isLunchClosed(this.data.date, rc)) {
+        const dayName = DateManager.getDayName(this.data.date);
+        const ds = rc?.dinner_start || '21:00';
+        const de = rc?.dinner_end   || '22:30';
+        const msg = `Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`;
+        console.log(`🚫 Pranzo chiuso: ${this.data.date}`);
+        this.data.time = null;
+        this._say(msg);
+        return;
+      }
+
+      // ③ Check cena chiusa per quel giorno
+      const isCena = h >= 17 || h <= 3;
+      if (isCena && ValidationPipeline.isDinnerClosed(this.data.date, rc)) {
+        const dayName = DateManager.getDayName(this.data.date);
+        const ls = rc?.lunch_start || '12:00';
+        const le = rc?.lunch_end   || '14:30';
+        const msg = `Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`;
+        console.log(`🚫 Cena chiusa: ${this.data.date}`);
+        this.data.time = null;
+        this._say(msg);
+        return;
+      }
+
       // Orario ok — se abbiamo anche le persone vai al check slot
       if (this.data.people) {
         await this._checkSlot();
@@ -705,7 +740,29 @@ export class OpenAIRealtimeClient {
     this.checkingSlot = true;
 
     const { date, time, people } = this.data;
+    const rc = this.restaurantConfig;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
+
+    // ── TEST 9: Gruppi grandi ─────────────────────────────────────────────────
+    const eventThreshold = Number(rc?.event_threshold) || 45;
+    const largeGroupThreshold = Number(rc?.large_group_threshold) || 10;
+    const ownerEmail = rc?.owner_email || '';
+
+    if (people >= eventThreshold) {
+      console.log(`🎉 Evento: ${people} persone (soglia: ${eventThreshold})`);
+      this.checkingSlot = false;
+      this._say(`Per eventi di ${people} persone o più, ti chiedo di contattarci via email a ${ownerEmail}. Saremo felici di organizzare!`);
+      return;
+    }
+
+    if (people > largeGroupThreshold) {
+      console.log(`👥 Gruppo grande: ${people} persone (soglia: ${largeGroupThreshold})`);
+      this.checkingSlot = false;
+      this.phase = 'naming';
+      this.availDone = true;
+      this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
+      return;
+    }
 
     // Silenzio durante il check — GPT non parla fino al risultato
 
@@ -727,8 +784,10 @@ export class OpenAIRealtimeClient {
         console.log('❌ Slot pieno');
         this.data.time = null;
         this.checkingSlot = false;
-        const ds = this.restaurantConfig?.dinner_start || '19:00';
-        const de = this.restaurantConfig?.dinner_end   || '22:30';
+        const ds = rc?.dinner_start || '21:00';
+        const de = rc?.dinner_end   || '22:30';
+        // TEST 10: resettiamo time e chiediamo orario — il sistema aspetta
+        // il prossimo turno senza che GPT improvvisi
         this._say(`Mi dispiace, quell'orario è al completo. Abbiamo disponibilità in altre fasce tra le ${ds} e le ${de}. Quale preferisce?`);
       } else if (result?.reason === 'day_closed') {
         console.log('🚫 Giorno chiuso (da Apps Script)');
@@ -736,7 +795,6 @@ export class OpenAIRealtimeClient {
         this.checkingSlot = false;
         this._say('Mi dispiace, quel giorno siamo chiusi. Per quale altro giorno vuole prenotare?');
       } else {
-        // Fallback: procedi lo stesso
         console.log('⚠️ Check incerto, procedo');
         this.phase = 'naming';
         this.checkingSlot = false;
