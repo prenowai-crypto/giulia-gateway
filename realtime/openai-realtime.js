@@ -888,19 +888,27 @@ export class OpenAIRealtimeClient {
     if (!text) return null;
     const t = text.trim();
 
+    const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
+                      'nome','certo','quello','quella','giusto','pronto'];
+
     const patterns = [
       /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/,
     ];
 
     for (const p of patterns) {
       const match = t.match(p);
       if (match && match[1] && match[1].length >= 2) {
-        const name = match[1].trim();
-        const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo'];
-        if (!excluded.includes(name.toLowerCase())) {
+        // Prendi solo la prima parola se la prima parola è esclusa
+        const words = match[1].trim().split(/\s+/);
+        const name = excluded.includes(words[0].toLowerCase())
+          ? words.slice(1).join(' ')
+          : match[1].trim();
+
+        if (name.length >= 2 && !excluded.includes(name.toLowerCase())) {
           return name;
         }
       }
