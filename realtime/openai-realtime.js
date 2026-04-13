@@ -1044,8 +1044,6 @@ export class OpenAIRealtimeClient {
     t = t.replace(/\bnome\s+[eè]\s+/i, 'Nome ');
     t = t.replace(/\bil\s+nome\s+è\s+/i, 'Nome ');
     t = t.replace(/\bil\s+nome\s+/i, 'Nome ');
-    // Fix "nomeverdi" / "nomemario" senza spazio (Whisper fonde le parole)
-    t = t.replace(/\bnome([A-ZÀÈÉÌÒÙ][a-zA-ZÀ-ÿ]+)/g, 'Nome $1');
 
     const patterns = [
       /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
