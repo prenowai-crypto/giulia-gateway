@@ -94,15 +94,36 @@ function buildSystemPrompt(rc) {
   const ds = rc?.dinner_start || '19:00';
   const de = rc?.dinner_end   || '22:30';
 
+  // Giorni aperti a pranzo e cena
+  const lunchClosedDays = rc?.lunch_closed_days
+    ? String(rc.lunch_closed_days).split(',').map(Number)
+    : [];
+  const dinnerClosedDays = rc?.dinner_closed_days
+    ? String(rc.dinner_closed_days).split(',').map(Number)
+    : [];
+
+  const allDays = [0,1,2,3,4,5,6];
+  const openForLunch = allDays
+    .filter(d => !closedDays.includes(d) && !lunchClosedDays.includes(d))
+    .map(d => dayNames[d]).join(', ');
+  const openForDinner = allDays
+    .filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d))
+    .map(d => dayNames[d]).join(', ');
+
   const recName = rc?.receptionist_name || 'Giulia';
   const rName   = rc?.restaurant_name   || 'ristorante';
 
   return `Sei ${recName}, receptionist di ${rName}.
 Parla in italiano, frasi brevi (max 2 frasi), tono professionale e cordiale.
 Oggi è ${dayNames[now.getDay()]} ${todayISO}.
-Orari: pranzo ${ls}-${le}, cena ${ds}-${de}.
+Orari pranzo: ${ls}-${le} (aperti: ${openForLunch}).
+Orari cena: ${ds}-${de} (aperti: ${openForDinner}).
 Chiuso il: ${closedText}.
-REGOLA ASSOLUTA: esegui SOLO le istruzioni [SISTEMA:...] che ricevi. Non aggiungere mai informazioni di tua iniziativa.`;
+REGOLE ASSOLUTE:
+1. Pronuncia ESATTAMENTE e SOLO la frase che ricevi nell'istruzione "Di' ESATTAMENTE e SOLO questa frase".
+2. Non aggiungere mai parole, saluti o informazioni non presenti nell'istruzione.
+3. Se non ricevi un'istruzione esplicita, di' solo: "Un momento prego."
+4. Per domande sugli orari, rispondi con i dati esatti qui sopra — non inventare.`;
 }
 
 // ─── CALL STATE ───────────────────────────────────────────────────────────────
