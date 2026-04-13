@@ -659,11 +659,13 @@ export class OpenAIRealtimeClient {
         }
         break;
       case 'response.function_call_arguments.done':
-        // Fallback per function calling (non usato attivamente)
+        // GPT ha usato function calling — sia JSON text che function call sono validi
         try {
           const args = JSON.parse(msg.arguments);
           console.log(`🔧 GPT function call:`, JSON.stringify(args));
-          this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: msg.call_id, output: '{"status":"ok"}' }});
+          // NON mandiamo function_call_output: evita risposta automatica GPT rogue
+          // Il controllo torna a noi via _processGPTData → _say
+          this._awaitingExtraction = false;
           this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
         } catch (err) {
           console.error('❌ Errore function call:', err);
