@@ -225,14 +225,25 @@ export const TimeManager = {
       }
     }
 
-    // "alle 21" / "alla 21" / "alle 21.30" / "alle 21:30"
-    const pattern1 = /(?:alle|alla|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
+    // "alle 21" / "alla 21" / "all'una" / "all'1" / "alle 21.30" / "alle 21:30"
+    const pattern1 = /(?:alle|alla|all'|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
     while ((match = pattern1.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = match[2] ? parseInt(match[2]) : 0;
       if (hour >= 1 && hour <= 11 && !/mattina|pranzo/.test(t)) hour += 12;
       if (hour >= 0 && hour <= 23)
         allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:00` });
+    }
+
+    // "all'una" / "all'Una" con parola
+    const patternAllUna = /\ball'(una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici)/gi;
+    while ((match = patternAllUna.exec(t)) !== null) {
+      const hourWord = match[1].toLowerCase();
+      let hour = { 'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
+                   'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12 }[hourWord];
+      if (hour === undefined) continue;
+      if (hour >= 1 && hour <= 11 && !/mattina|pranzo/.test(t)) hour += 12;
+      allTimes.push({ position: match.index, time: `${String(hour).padStart(2,'0')}:00:00` });
     }
 
     // "e un quarto" / "e mezza" after an hour
@@ -337,9 +348,10 @@ export const PeopleManager = {
     }
 
     const wordNumbers = {
-      'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
+      'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
       'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,
     };
+    // Nota: 'una'/'uno' esclusi deliberatamente — troppo ambigui con orari (all'una, all'uno)
     for (const [word, num] of Object.entries(wordNumbers)) {
       const regex = new RegExp(`\\b${word}\\b`, 'i');
       if (regex.test(tClean)) return num;
@@ -1020,6 +1032,7 @@ export class OpenAIRealtimeClient {
         this.phase = 'naming';
         this.checkingSlot = false;
         this.availDone = true;
+        this._lastAsked = null;  // Reset: in naming non vogliamo fallback su campi data/ora/persone
         // Se il nome è già stato salvato (dalla frase di correzione), conferma direttamente
         if (this.data.name) {
           this._confirmReservation();
