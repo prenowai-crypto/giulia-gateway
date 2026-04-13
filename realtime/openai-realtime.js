@@ -770,13 +770,31 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
-    // Se intent=unknown, lascia sempre rispondere GPT liberamente (domanda informativa)
+    // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
     if (!args.intent || args.intent === 'unknown') {
-      console.log('💬 Intent unknown — GPT risponde liberamente');
+      console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
+      const rc = this.restaurantConfig;
+      const ls = rc?.lunch_start  || '12:00';
+      const le = rc?.lunch_end    || '14:30';
+      const ds = rc?.dinner_start || '19:00';
+      const de = rc?.dinner_end   || '22:30';
+      const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+      const closedDays = rc?.closed_days ? String(rc.closed_days).split(',').map(Number) : [1];
+      const lunchClosedDays = rc?.lunch_closed_days ? String(rc.lunch_closed_days).split(',').map(Number) : [];
+      const dinnerClosedDays = rc?.dinner_closed_days ? String(rc.dinner_closed_days).split(',').map(Number) : [];
+      const allDays = [0,1,2,3,4,5,6];
+      const openForLunch = allDays.filter(d => !closedDays.includes(d) && !lunchClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
+      const openForDinner = allDays.filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
+      const closedText = closedDays.map(d => dayNames[d]).join(', ');
+
       this._send({
         type: 'response.create',
         response: {
-          instructions: 'Rispondi alla domanda del cliente usando SOLO le informazioni sugli orari e giorni di apertura presenti nel tuo sistema prompt. Non inventare nulla. Sii breve (max 2 frasi).',
+          instructions: `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:
+- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}
+- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}
+- Chiuso il: ${closedText}
+Max 2 frasi. Non inventare nulla.`,
         },
       });
       return;
@@ -861,7 +879,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // ── Keyword note ─────────────────────────────────────────────────────────
     const noteKeywords = [
-      { pattern: /celiac[oai]/i,                                   note: 'Intolleranza glutine' },
+      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
       { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
       { pattern: /allergi[ao]/i,                                    note: 'Allergia (verifica con cliente)' },
       { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
