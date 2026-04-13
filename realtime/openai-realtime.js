@@ -654,7 +654,7 @@ export class OpenAIRealtimeClient {
               },
             });
             // Processa i dati estratti
-            await this._processGPTData(args);
+            this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
           } catch (err) {
             console.error('❌ Errore function call:', err);
           }
