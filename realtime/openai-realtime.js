@@ -510,6 +510,7 @@ export class OpenAIRealtimeClient {
     this._checkingDay  = false;
     this._checkingTime = false;
     this._sessionReady = false;  // evita doppio greeting
+    this._lastAsked    = null;   // ultimo campo chiesto, per GPT fallback
   }
 
   // ── Connect ──────────────────────────────────────────────────────────────
@@ -573,7 +574,8 @@ export class OpenAIRealtimeClient {
         if (!this._sessionReady) {
           this._sessionReady = true;
           console.log('✅ Sessione ok');
-          this._onSessionReady();
+          // Delay per dare tempo a OpenAI di stabilizzarsi prima del primo response.create
+          setTimeout(() => this._onSessionReady(), 600);
         }
         break;
       case 'response.audio_transcript.done':
@@ -598,7 +600,14 @@ export class OpenAIRealtimeClient {
         console.log('🎤 Fine');
         break;
       case 'response.done':
-        if (msg.response?.status === 'failed') console.error('❌ Response failed');
+        if (msg.response?.status === 'failed') {
+          console.error('❌ Response failed');
+          // Se falliamo durante il greeting (nessun dato ancora raccolto), riprova
+          if (this.phase === 'collecting' && !this.data.date && !this.data.time && !this.data.people) {
+            console.log('🔄 Retry greeting...');
+            setTimeout(() => this._onSessionReady(), 800);
+          }
+        }
         break;
       case 'error':
         if (msg.error?.code !== 'conversation_already_has_active_response') {
@@ -723,6 +732,20 @@ export class OpenAIRealtimeClient {
       if (earlyName) {
         this.data.name = earlyName;
         console.log(`👤 Nome anticipato: ${earlyName}`);
+      }
+    }
+
+    // ── GPT Fallback: se regex non capisce il campo che avevamo appena chiesto ──
+    if (this._lastAsked) {
+      const stillMissing = (
+        (this._lastAsked === 'date'   && !this.data.date)   ||
+        (this._lastAsked === 'time'   && !this.data.time)   ||
+        (this._lastAsked === 'people' && !this.data.people)
+      );
+      if (stillMissing) {
+        console.log(`🤖 GPT fallback: regex non ha capito "${this._lastAsked}" da "${text}"`);
+        await this._gptFallback(text, this._lastAsked);
+        return;
       }
     }
 
@@ -862,6 +885,82 @@ export class OpenAIRealtimeClient {
     }
   }
 
+  // ── GPT Fallback ─────────────────────────────────────────────────────────
+  // Chiamato quando regex non capisce un campo specifico.
+  // Usa gpt-4o-mini per estrarre semanticamente il valore.
+
+  async _gptFallback(text, field) {
+    const now = DateManager.getNow();
+    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+
+    const fieldPrompts = {
+      date: `Oggi è ${todayISO} (${DateManager.DAYS_IT[now.getDay()]}). Estrai la DATA di prenotazione da questo testo italiano parlato al telefono (qualità audio 8kHz, possibili errori di trascrizione). Rispondi SOLO con la data in formato YYYY-MM-DD oppure null. Esempi: "sabato" → prossimo sabato, "domani" → domani, "15" → giorno 15 del mese corrente o prossimo. Testo: "${text}"`,
+      time: `Estrai l'ORARIO di prenotazione da questo testo italiano parlato al telefono (qualità audio 8kHz, possibili errori di trascrizione). Rispondi SOLO con l'orario in formato HH:MM:SS oppure null. Esempi: "alluna" → 13:00:00, "alle otto" → 20:00:00, "nove e mezza di sera" → 21:30:00, "eventuno" → 21:00:00, "ventuno" → 21:00:00. Considera che siamo in un ristorante italiano, gli orari sono pranzo 12-15 o cena 19-23. Testo: "${text}"`,
+      people: `Estrai il NUMERO DI PERSONE da questo testo italiano parlato al telefono (qualità audio 8kHz, possibili errori di trascrizione). Rispondi SOLO con un numero intero oppure null. Esempi: "siamo in sé" → 6, "quattro" → 4, "per me" → 1. Testo: "${text}"`,
+    };
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          max_tokens: 20,
+          temperature: 0,
+          messages: [{ role: 'user', content: fieldPrompts[field] }],
+        }),
+      });
+
+      const data = await response.json();
+      const raw = data.choices?.[0]?.message?.content?.trim();
+      console.log(`🤖 GPT fallback risposta per "${field}": ${raw}`);
+
+      if (!raw || raw === 'null') {
+        // GPT non è riuscito nemmeno lui — chiedi di nuovo
+        this._ask(field);
+        return;
+      }
+
+      if (field === 'date') {
+        // Valida formato YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+          console.log(`📅 GPT date: ${raw}`);
+          this.data.date = raw;
+          this._lastAsked = null;
+          await this._processCollecting(text);  // Riesegui con il campo ora popolato
+        } else {
+          this._ask(field);
+        }
+      } else if (field === 'time') {
+        // Valida formato HH:MM:SS
+        if (/^\d{2}:\d{2}:\d{2}$/.test(raw)) {
+          console.log(`⏰ GPT time: ${raw}`);
+          this.data.time = raw;
+          this._lastAsked = null;
+          await this._processCollecting(text);
+        } else {
+          this._ask(field);
+        }
+      } else if (field === 'people') {
+        const num = parseInt(raw);
+        if (!isNaN(num) && num > 0 && num < 100) {
+          console.log(`👥 GPT people: ${num}`);
+          this.data.people = num;
+          this._lastAsked = null;
+          await this._processCollecting(text);
+        } else {
+          this._ask(field);
+        }
+      }
+    } catch (err) {
+      console.error('❌ GPT fallback errore:', err);
+      this._ask(field);  // Fallback al semplice "ripeti"
+    }
+  }
+
   // ── Ask Next Field ────────────────────────────────────────────────────────
 
   _ask(field) {
@@ -871,6 +970,7 @@ export class OpenAIRealtimeClient {
       people: 'Per quante persone?',
       name:   'A che nome faccio la prenotazione?',
     };
+    this._lastAsked = field;  // Traccia quale campo abbiamo appena chiesto
     this._say(msgs[field] || 'Può ripetere?');
   }
 
@@ -1044,6 +1144,8 @@ export class OpenAIRealtimeClient {
     t = t.replace(/\bnome\s+[eè]\s+/i, 'Nome ');
     t = t.replace(/\bil\s+nome\s+è\s+/i, 'Nome ');
     t = t.replace(/\bil\s+nome\s+/i, 'Nome ');
+    // Fix "nomeverdi" / "nomemario" senza spazio (Whisper fonde le parole)
+    t = t.replace(/\bnome([A-ZÀÈÉÌÒÙ][a-zA-ZÀ-ÿ]+)/g, 'Nome $1');
 
     const patterns = [
       /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
