@@ -538,6 +538,10 @@ export class OpenAIRealtimeClient {
   }
 
   _configureSession() {
+    const now = DateManager.getNow();
+    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    const dayName = DateManager.DAYS_IT[now.getDay()];
+
     this._send({
       type: 'session.update',
       session: {
@@ -546,14 +550,47 @@ export class OpenAIRealtimeClient {
         instructions: this.systemPrompt,
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'whisper-1', language: 'it' },
+        input_audio_transcription: { model: 'whisper-1', language: 'it' }, // solo per log
         turn_detection: {
           type: 'server_vad',
           threshold: 0.4,
           prefix_padding_ms: 300,
           silence_duration_ms: 1200,
-          create_response: false,   // NOI controlliamo ogni risposta
+          create_response: false,
         },
+        tools: [{
+          type: 'function',
+          name: 'extract_booking_data',
+          description: `Estrai i dati di prenotazione dall'audio appena ascoltato. Oggi è ${dayName} ${todayISO}. Chiama SEMPRE questa funzione dopo ogni messaggio del cliente, anche se non hai capito tutti i campi. Per i campi non presenti usa la stringa "null".`,
+          parameters: {
+            type: 'object',
+            properties: {
+              date: {
+                type: 'string',
+                description: `Data ISO YYYY-MM-DD oppure "null". Calcola date relative: "domani"=domani, "sabato"=prossimo sabato, "mercoledì"=prossimo mercoledì. Oggi è ${todayISO}.`
+              },
+              time: {
+                type: 'string',
+                description: 'Orario HH:MM:SS oppure "null". Esempi: "alle 21"=21:00:00, "all\'una"=13:00:00, "nove e mezza di sera"=21:30:00, "all\'una e mezza"=13:30:00, "ventuno"=21:00:00, "mezzogiorno"=12:00:00.'
+              },
+              people: {
+                type: 'string',
+                description: 'Numero di persone come stringa oppure "null". Esempi: "per due"=2, "siamo in quattro"=4, "per me"=1.'
+              },
+              name: {
+                type: 'string',
+                description: 'Nome del cliente per la prenotazione oppure "null". Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
+              },
+              intent: {
+                type: 'string',
+                enum: ['create', 'modify', 'cancel', 'unknown'],
+                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica, cancel=cancellazione, unknown=non chiaro.'
+              }
+            },
+            required: ['date', 'time', 'people', 'name', 'intent']
+          }
+        }],
+        tool_choice: 'auto',
       },
     });
     console.log('✅ Sessione configurata');
@@ -588,7 +625,8 @@ export class OpenAIRealtimeClient {
           if (!t || t.length < 2) return;
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-          this._onUserText(t);
+          // Whisper usato solo per log — i dati vengono estratti da GPT via function calling
+          this._detectNotesAndPhone(t);
         }
         break;
       case 'input_audio_buffer.speech_started':
@@ -596,6 +634,31 @@ export class OpenAIRealtimeClient {
         break;
       case 'input_audio_buffer.speech_stopped':
         console.log('🎤 Fine');
+        // Triggera estrazione dati via GPT function calling
+        if (!this.checkingSlot && this.phase !== 'done') {
+          this._triggerExtraction();
+        }
+        break;
+      case 'response.function_call_arguments.done':
+        if (msg.name === 'extract_booking_data') {
+          try {
+            const args = JSON.parse(msg.arguments);
+            console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
+            // Chiudi il turn con il risultato della funzione
+            this._send({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: msg.call_id,
+                output: JSON.stringify({ status: 'received' }),
+              },
+            });
+            // Processa i dati estratti
+            await this._processGPTData(args);
+          } catch (err) {
+            console.error('❌ Errore function call:', err);
+          }
+        }
         break;
       case 'response.done':
         if (msg.response?.status === 'failed') console.error('❌ Response failed');
@@ -615,6 +678,115 @@ export class OpenAIRealtimeClient {
     const rc = this.restaurantConfig;
     const nome = rc?.restaurant_name || 'ristorante';
     this._say(`Buongiorno! Benvenuto a ${nome}. Per quale giorno desidera prenotare?`);
+  }
+
+  // ── Trigger GPT Extraction ────────────────────────────────────────────────
+
+  _triggerExtraction() {
+    const now = DateManager.getNow();
+    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    const dayName = DateManager.DAYS_IT[now.getDay()];
+
+    this._send({
+      type: 'response.create',
+      response: {
+        tool_choice: { type: 'function', function: { name: 'extract_booking_data' } },
+        instructions: `Oggi è ${dayName} ${todayISO}. Analizza l'audio appena ricevuto e chiama extract_booking_data con tutti i dati che hai capito. Per i campi non menzionati usa "null".`,
+        max_output_tokens: 150,
+      },
+    });
+  }
+
+  // ── Processa dati estratti da GPT ─────────────────────────────────────────
+
+  async _processGPTData(args) {
+    if (this.checkingSlot || this.phase === 'done') return;
+
+    const rc = this.restaurantConfig;
+
+    // ── Intent ───────────────────────────────────────────────────────────────
+    if (!this.intent && args.intent && args.intent !== 'unknown') {
+      this.intent = args.intent;
+      console.log(`🎯 Intent (GPT): ${this.intent}`);
+    }
+
+    const prevDate = this.data.date;
+    const prevTime = this.data.time;
+
+    // ── Aggiorna dati ────────────────────────────────────────────────────────
+    const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
+    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
+    const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
+    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    if (newDate   && newDate   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${newDate}`);     this.data.date   = newDate; }
+    if (newTime   && newTime   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${newTime}`);     this.data.time   = newTime; }
+    if (newPeople && newPeople !== this.data.people) { console.log(`👥 people: ${this.data.people} → ${newPeople}`); this.data.people = newPeople; }
+    if (newName   && !this.data.name)                { console.log(`👤 name:   ${newName}`);                         this.data.name   = newName; }
+
+    console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people} name=${this.data.name}`);
+
+    // ── Fase naming: se siamo già in naming basta il nome ────────────────────
+    if (this.phase === 'naming') {
+      this._processNaming(this.data.name ? '__name_already_set__' : (newName || ''));
+      return;
+    }
+
+    // ── Fase collecting ──────────────────────────────────────────────────────
+
+    // ① Check giorno chiuso
+    if (this.data.date && this.data.date !== prevDate) {
+      const msg = ValidationPipeline.getDayClosedMessage(this.data.date, rc);
+      if (msg) {
+        console.log(`🚫 Giorno chiuso: ${this.data.date}`);
+        this.data.date = null;
+        this._say(msg);
+        return;
+      }
+    }
+
+    // ② Check orario valido
+    if (this.data.date && this.data.time && this.data.time !== prevTime) {
+      if (!ValidationPipeline.isValidTime(this.data.time, rc)) {
+        const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
+        console.log(`🚫 Orario non valido: ${this.data.time}`);
+        this.data.time = null;
+        this._say(msg);
+        return;
+      }
+
+      // ③ Check pranzo/cena chiuso
+      const [h] = this.data.time.split(':').map(Number);
+      const isPranzo = h >= 10 && h <= 16;
+      if (isPranzo && ValidationPipeline.isLunchClosed(this.data.date, rc)) {
+        const dayName = DateManager.getDayName(this.data.date);
+        const ds = rc?.dinner_start || '21:00';
+        const de = rc?.dinner_end   || '22:30';
+        this.data.time = null;
+        this._say(`Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`);
+        return;
+      }
+      const isCena = h >= 17 || h <= 3;
+      if (isCena && ValidationPipeline.isDinnerClosed(this.data.date, rc)) {
+        const dayName = DateManager.getDayName(this.data.date);
+        const ls = rc?.lunch_start || '12:00';
+        const le = rc?.lunch_end   || '14:30';
+        this.data.time = null;
+        this._say(`Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`);
+        return;
+      }
+    }
+
+    // ④ Tutti e 3 → check slot
+    if (this.data.date && this.data.time && this.data.people && !this.checkingSlot) {
+      await this._checkSlot();
+      return;
+    }
+
+    // Chiedi dato mancante
+    if (!this.data.date)   { this._ask('date');   }
+    else if (!this.data.time)   { this._ask('time');   }
+    else if (!this.data.people) { this._ask('people'); }
   }
 
   // ── Note e Telefono Alternativo ───────────────────────────────────────────
@@ -803,6 +975,13 @@ export class OpenAIRealtimeClient {
 
   _processNaming(text) {
     const rc = this.restaurantConfig;
+
+    // Se il nome è già stato settato da GPT, conferma direttamente
+    if (text === '__name_already_set__' && this.data.name) {
+      console.log(`👤 Nome (GPT): ${this.data.name}`);
+      this._confirmReservation();
+      return;
+    }
 
     // ── Controlla se l'utente sta correggendo i dati prima di dare il nome ──
     // ── Controlla correzioni dati in fase naming ──────────────────────────────
