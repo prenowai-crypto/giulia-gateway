@@ -750,6 +750,19 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       console.log(`🎯 Intent (GPT): ${this.intent}`);
     }
 
+    // Se GPT non ha capito nulla di utile (domanda generica), lascia rispondere GPT liberamente
+    const nothingExtracted = !newDate && !newTime && !newPeople && !newName;
+    if (nothingExtracted && (!args.intent || args.intent === 'unknown')) {
+      console.log('💬 Domanda generica — GPT risponde liberamente');
+      this._send({
+        type: 'response.create',
+        response: {
+          instructions: 'Rispondi alla domanda del cliente usando SOLO le informazioni sugli orari e giorni di apertura presenti nel tuo sistema prompt. Non inventare nulla.',
+        },
+      });
+      return;
+    }
+
     const prevDate = this.data.date;
     const prevTime = this.data.time;
 
@@ -1104,9 +1117,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const { date, time, people } = this.data;
     const rc = this.restaurantConfig;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
-
-    // Messaggio audio durante il check — l'utente non sente silenzio
-    this._say('Un momento, verifico la disponibilità...');
 
     // ── TEST 9: Gruppi grandi ─────────────────────────────────────────────────
     const eventThreshold = Number(rc?.event_threshold) || 45;
