@@ -699,21 +699,33 @@ export class OpenAIRealtimeClient {
 
   _triggerExtraction() {
     const now = DateManager.getNow();
-    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayISO = DateManager.toISO(today);
     const dayName = DateManager.DAYS_IT[now.getDay()];
+
+    // Costruisce il calendario dei prossimi 7 giorni in modo esplicito
+    const nextDays = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      nextDays.push(`${DateManager.DAYS_IT[d.getDay()]}=${DateManager.toISO(d)}`);
+    }
+    const calendarStr = nextDays.join(', ');
 
     this._awaitingExtraction = true;
     this._send({
       type: 'response.create',
       response: {
-        modalities: ['text'],  // Solo testo — silenzioso, nessun audio
-        instructions: `Oggi è ${dayName} ${todayISO}. Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
+        modalities: ['text'],
+        instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
+
+Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
 {"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
 
 Esempi di interpretazione audio:
 - "all'una" o "all'uno" → time: "13:00:00"
 - "alle ventuno" o "alle 21" → time: "21:00:00"
-- "mercoledì" → prossimo mercoledì
+- "sabato" → usa la data sabato dal calendario sopra
 - "siamo in sei" → people: "6"
 - "per me" → people: "1"
 
@@ -1089,6 +1101,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const rc = this.restaurantConfig;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
 
+    // Messaggio audio durante il check — l'utente non sente silenzio
+    this._say('Un momento, verifico la disponibilità...');
+
     // ── TEST 9: Gruppi grandi ─────────────────────────────────────────────────
     const eventThreshold = Number(rc?.event_threshold) || 45;
     const largeGroupThreshold = Number(rc?.large_group_threshold) || 10;
@@ -1125,7 +1140,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this.phase = 'naming';
         this.checkingSlot = false;
         this.availDone = true;
-        // Se il nome è già stato salvato (dalla frase di correzione), conferma direttamente
+        this._lastAsked = null;
+        // Piccolo delay per assicurarsi che la risposta di estrazione sia completata
+        await new Promise(r => setTimeout(r, 300));
         if (this.data.name) {
           this._confirmReservation();
         } else {
@@ -1310,12 +1327,27 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const url = this.restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
     if (!url) return null;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const text = await response.text();
-    try { return JSON.parse(text); } catch { return null; }
+    // Timeout di 15 secondi — Apps Script può essere lento su cold start
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const text = await response.text();
+      try { return JSON.parse(text); } catch { return null; }
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        console.error('❌ Apps Script timeout (15s)');
+        return { success: false, reason: 'timeout' };
+      }
+      throw err;
+    }
   }
 }
