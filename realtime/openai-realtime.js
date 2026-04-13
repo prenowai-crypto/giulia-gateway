@@ -509,7 +509,8 @@ export class OpenAIRealtimeClient {
     // Anti-loop flags
     this._checkingDay  = false;
     this._checkingTime = false;
-    this._sessionReady = false;  // evita doppio greeting
+    this._sessionReady = false;      // evita doppio greeting
+    this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
   }
 
   // ── Connect ──────────────────────────────────────────────────────────────
@@ -639,21 +640,30 @@ export class OpenAIRealtimeClient {
           this._triggerExtraction();
         }
         break;
+      case 'response.text.done':
+        // Cattura il JSON di estrazione dati
+        if (this._awaitingExtraction && msg.text) {
+          this._awaitingExtraction = false;
+          try {
+            const json = msg.text.trim().replace(/```json|```/g, '').trim();
+            const args = JSON.parse(json);
+            console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
+            this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
+          } catch (err) {
+            console.error('❌ Parsing JSON estrazione:', err, '| Testo ricevuto:', msg.text);
+            // GPT non ha restituito JSON valido — chiedi di nuovo il dato mancante
+            if (!this.data.date) this._ask('date');
+            else if (!this.data.time) this._ask('time');
+            else if (!this.data.people) this._ask('people');
+          }
+        }
+        break;
       case 'response.function_call_arguments.done':
-        // Nella Realtime API questo evento non include 'name' — ma abbiamo solo una funzione
+        // Fallback per function calling (non usato attivamente)
         try {
           const args = JSON.parse(msg.arguments);
-          console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
-          // Chiudi il turn con il risultato della funzione
-          this._send({
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: msg.call_id,
-              output: JSON.stringify({ status: 'received' }),
-            },
-          });
-          // Processa i dati estratti
+          console.log(`🔧 GPT function call:`, JSON.stringify(args));
+          this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: msg.call_id, output: '{"status":"ok"}' }});
           this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
         } catch (err) {
           console.error('❌ Errore function call:', err);
@@ -692,12 +702,23 @@ export class OpenAIRealtimeClient {
     const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
     const dayName = DateManager.DAYS_IT[now.getDay()];
 
+    this._awaitingExtraction = true;
     this._send({
       type: 'response.create',
       response: {
-        tool_choice: { type: 'function', name: 'extract_booking_data' },
-        instructions: `Oggi è ${dayName} ${todayISO}. Analizza l'audio appena ricevuto e chiama extract_booking_data con tutti i dati che hai capito. Per i campi non menzionati usa "null".`,
-        max_output_tokens: 150,
+        modalities: ['text'],  // Solo testo — silenzioso, nessun audio
+        instructions: `Oggi è ${dayName} ${todayISO}. Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
+{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
+
+Esempi di interpretazione audio:
+- "all'una" o "all'uno" → time: "13:00:00"
+- "alle ventuno" o "alle 21" → time: "21:00:00"
+- "mercoledì" → prossimo mercoledì
+- "siamo in sei" → people: "6"
+- "per me" → people: "1"
+
+Rispondi SOLO con il JSON, nessun'altra parola.`,
+        max_output_tokens: 80,
       },
     });
   }
