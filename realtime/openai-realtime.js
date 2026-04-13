@@ -750,6 +750,15 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       console.log(`🎯 Intent (GPT): ${this.intent}`);
     }
 
+    const prevDate = this.data.date;
+    const prevTime = this.data.time;
+
+    // ── Aggiorna dati ────────────────────────────────────────────────────────
+    const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
+    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
+    const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
+    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
     // Se GPT non ha capito nulla di utile (domanda generica), lascia rispondere GPT liberamente
     const nothingExtracted = !newDate && !newTime && !newPeople && !newName;
     if (nothingExtracted && (!args.intent || args.intent === 'unknown')) {
@@ -762,15 +771,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       });
       return;
     }
-
-    const prevDate = this.data.date;
-    const prevTime = this.data.time;
-
-    // ── Aggiorna dati ────────────────────────────────────────────────────────
-    const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
-    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
-    const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
-    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
     if (newDate   && newDate   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${newDate}`);     this.data.date   = newDate; }
     if (newTime   && newTime   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${newTime}`);     this.data.time   = newTime; }
