@@ -770,14 +770,13 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
-    // Se GPT non ha capito nulla di utile (domanda generica), lascia rispondere GPT liberamente
-    const nothingExtracted = !newDate && !newTime && !newPeople && !newName;
-    if (nothingExtracted && (!args.intent || args.intent === 'unknown')) {
-      console.log('💬 Domanda generica — GPT risponde liberamente');
+    // Se intent=unknown, lascia sempre rispondere GPT liberamente (domanda informativa)
+    if (!args.intent || args.intent === 'unknown') {
+      console.log('💬 Intent unknown — GPT risponde liberamente');
       this._send({
         type: 'response.create',
         response: {
-          instructions: 'Rispondi alla domanda del cliente usando SOLO le informazioni sugli orari e giorni di apertura presenti nel tuo sistema prompt. Non inventare nulla.',
+          instructions: 'Rispondi alla domanda del cliente usando SOLO le informazioni sugli orari e giorni di apertura presenti nel tuo sistema prompt. Non inventare nulla. Sii breve (max 2 frasi).',
         },
       });
       return;
