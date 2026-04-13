@@ -785,8 +785,10 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
     }
 
-    // ② Check orario valido
-    if (this.data.date && this.data.time && this.data.time !== prevTime) {
+    // ② Check orario valido + pranzo/cena chiuso
+    // Triggera quando time OPPURE date cambia (es: stesso orario, giorno diverso)
+    if (this.data.date && this.data.time &&
+        (this.data.time !== prevTime || this.data.date !== prevDate)) {
       if (!ValidationPipeline.isValidTime(this.data.time, rc)) {
         const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
         console.log(`🚫 Orario non valido: ${this.data.time}`);
