@@ -506,6 +506,11 @@ export class OpenAIRealtimeClient {
     this.availDone     = false;
     this.checkingSlot  = false;
 
+    // ── MODIFY / CANCEL state machine ────────────────────────────────────────
+    this.modifyState      = null;   // null | 'awaiting_search' | 'awaiting_changes'
+    this.cancelState      = null;   // null | 'awaiting_search' | 'awaiting_confirm'
+    this.foundReservation = null;   // dati prenotazione trovata da find_reservation
+
     // Anti-loop flags
     this._checkingDay  = false;
     this._checkingTime = false;
@@ -800,6 +805,21 @@ Max 2 frasi. Non inventare nulla.`,
       return;
     }
 
+    // ── MODIFY flow ──────────────────────────────────────────────────────────
+    if (this.intent === 'modify') {
+      await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+      return;
+    }
+
+    // ── CANCEL flow ──────────────────────────────────────────────────────────
+    if (this.intent === 'cancel') {
+      // confirm phase gestita direttamente via testo in _onUserText
+      if (this.cancelState !== 'awaiting_confirm') {
+        await this._handleCancelFlow(newDate, newName);
+      }
+      return;
+    }
+
     if (newDate   && newDate   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${newDate}`);     this.data.date   = newDate; }
     if (newTime   && newTime   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${newTime}`);     this.data.time   = newTime; }
     if (newPeople && newPeople !== this.data.people) { console.log(`👥 people: ${this.data.people} → ${newPeople}`); this.data.people = newPeople; }
@@ -940,6 +960,12 @@ Max 2 frasi. Non inventare nulla.`,
 
     // Rileva note e telefono alternativo su ogni messaggio
     this._detectNotesAndPhone(text);
+
+    // ── CANCEL: conferma sì/no via testo grezzo ──────────────────────────────
+    if (this.cancelState === 'awaiting_confirm') {
+      await this._handleCancelConfirmText(text);
+      return;
+    }
 
     // Detect intent on first message
     if (!this.intent) {
@@ -1122,6 +1148,217 @@ Max 2 frasi. Non inventare nulla.`,
     } else {
       this._say('A che nome faccio la prenotazione?');
     }
+  }
+
+  // ── MODIFY flow ───────────────────────────────────────────────────────────
+
+  async _handleModifyFlow(newDate, newTime, newPeople, newName) {
+    // Phase 1: primo messaggio modify → chiedi nome + data
+    if (!this.modifyState) {
+      this.modifyState = 'awaiting_search';
+      this._say('Certo! A che nome è la prenotazione e per quale data?');
+      return;
+    }
+
+    // Phase 2: cerca la prenotazione
+    if (this.modifyState === 'awaiting_search') {
+      const searchName = newName || this.data.name;
+      const searchDate = newDate || this.data.date;
+
+      // Aggiorna dati locali per mantenere contesto
+      if (newName) this.data.name = newName;
+      if (newDate) this.data.date = newDate;
+
+      if (!searchName && !searchDate) {
+        this._say('Può dirmi a che nome è la prenotazione e per quale data?');
+        return;
+      }
+      if (!searchName) {
+        this._say('A che nome è la prenotazione?');
+        return;
+      }
+      if (!searchDate) {
+        this._say('Per quale data è la prenotazione?');
+        return;
+      }
+
+      console.log(`🔍 MODIFY cerca: nome=${searchName}, data=${searchDate}`);
+      const result = await this._callAppsScript({
+        action: 'find_reservation',
+        nome: searchName,
+        data: searchDate,
+      });
+
+      if (result?.found && result.reservation) {
+        this.foundReservation = result.reservation;
+        const r = result.reservation;
+        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+        const dateDisplay = DateManager.formatForDisplay(r.date);
+        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+        this.modifyState = 'awaiting_changes';
+        this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+      } else {
+        const dateDisplay = DateManager.formatForDisplay(searchDate);
+        this._say(`Non trovo nessuna prenotazione a nome ${searchName} per il ${dateDisplay}. Può riprovare con un altro nome o data?`);
+      }
+      return;
+    }
+
+    // Phase 3: applica le modifiche
+    if (this.modifyState === 'awaiting_changes') {
+      const r = this.foundReservation;
+      if (!r) { this.modifyState = null; return; }
+
+      const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+      const updDate   = newDate   || r.date;
+      const updTime   = newTime   || timeOrig;
+      const updPeople = newPeople || Number(r.people);
+      const updName   = newName   || r.name;
+
+      const dateChanged   = newDate   && newDate   !== r.date;
+      const timeChanged   = newTime   && newTime   !== timeOrig;
+      const peopleChanged = newPeople && newPeople !== Number(r.people);
+
+      if (!dateChanged && !timeChanged && !peopleChanged && !newName) {
+        this._say('Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?');
+        return;
+      }
+
+      // Se data/ora/persone cambiano → check disponibilità
+      if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
+        console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
+        const checkResult = await this._callAppsScript({
+          action: 'check_availability',
+          data: updDate,
+          ora: updTime,
+          persone: updPeople,
+          existingPeople: Number(r.people),
+        });
+
+        if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
+          this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro orario?`);
+          return;
+        }
+      }
+
+      console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
+      const updateResult = await this._callAppsScript({
+        action: 'update_reservation',
+        eventId: r.eventId,
+        nome: updName,
+        data: updDate,
+        ora: updTime,
+        persone: updPeople,
+        telefono: r.phone || this.callerPhone || '',
+        notes: this.data.notes || r.notes || '',
+      });
+
+      this.phase = 'done';
+      if (updateResult?.success) {
+        const dateDisplay = DateManager.formatForDisplay(updDate);
+        const timeDisplay = TimeManager.formatForDisplay(updTime);
+        const firstName = (updName || '').split(' ')[0];
+        this._say(`Perfetto ${firstName}! Ho aggiornato la prenotazione: ${dateDisplay} alle ${timeDisplay} per ${updPeople} persone. Ti aspettiamo!`);
+      } else {
+        this._say(`Mi dispiace, c'è stato un problema nell'aggiornamento. Può richiamare?`);
+      }
+    }
+  }
+
+  // ── CANCEL flow ───────────────────────────────────────────────────────────
+
+  async _handleCancelFlow(newDate, newName) {
+    // Phase 1: primo messaggio cancel → chiedi nome + data
+    if (!this.cancelState) {
+      this.cancelState = 'awaiting_search';
+      this._say('Certo! A che nome è la prenotazione e per quale data?');
+      return;
+    }
+
+    // Phase 2: cerca la prenotazione
+    if (this.cancelState === 'awaiting_search') {
+      const searchName = newName || this.data.name;
+      const searchDate = newDate || this.data.date;
+
+      if (newName) this.data.name = newName;
+      if (newDate) this.data.date = newDate;
+
+      if (!searchName && !searchDate) {
+        this._say('Può dirmi a che nome è la prenotazione e per quale data?');
+        return;
+      }
+      if (!searchName) {
+        this._say('A che nome è la prenotazione?');
+        return;
+      }
+      if (!searchDate) {
+        this._say('Per quale data è la prenotazione?');
+        return;
+      }
+
+      console.log(`🔍 CANCEL cerca: nome=${searchName}, data=${searchDate}`);
+      const result = await this._callAppsScript({
+        action: 'find_reservation',
+        nome: searchName,
+        data: searchDate,
+      });
+
+      if (result?.found && result.reservation) {
+        this.foundReservation = result.reservation;
+        const r = result.reservation;
+        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+        const dateDisplay = DateManager.formatForDisplay(r.date);
+        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+        this.cancelState = 'awaiting_confirm';
+        this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+      } else {
+        const dateDisplay = DateManager.formatForDisplay(searchDate);
+        this._say(`Non trovo nessuna prenotazione a nome ${searchName} per il ${dateDisplay}.`);
+      }
+    }
+  }
+
+  // ── CANCEL conferma via testo grezzo ──────────────────────────────────────
+
+  async _handleCancelConfirmText(text) {
+    const t = text.toLowerCase().trim();
+    const isYes = /\bsì|si\b|yes\b|certo\b|confermo\b|ok\b|esatto\b|giusto\b|procedi\b/i.test(t);
+    const isNo  = /\bno\b|niente\b|lascia\s+perdere\b|annulla\b|stop\b/i.test(t);
+
+    console.log(`🔤 CANCEL confirm text: "${text}" → yes=${isYes} no=${isNo}`);
+
+    if (isNo) {
+      this.phase = 'done';
+      this._say('Nessun problema, la prenotazione rimane invariata. Arrivederci!');
+      return;
+    }
+
+    if (isYes) {
+      const r = this.foundReservation;
+      if (!r) { this.phase = 'done'; return; }
+
+      const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+      console.log(`🗑️ CANCEL conferma: nome=${r.name}, data=${r.date}, ora=${timeNorm}`);
+
+      const result = await this._callAppsScript({
+        action: 'cancel_reservation',
+        nome: r.name,
+        data: r.date,
+        ora: timeNorm,
+        telefono: r.phone || this.callerPhone || '',
+      });
+
+      this.phase = 'done';
+      if (result?.success || result?.status === 'CANCELLED') {
+        this._say('La prenotazione è stata cancellata. Speriamo di rivederla presto!');
+      } else {
+        this._say(`Mi dispiace, c'è stato un problema nella cancellazione. Può richiamare?`);
+      }
+      return;
+    }
+
+    // Risposta non chiara
+    this._say('Non ho capito. Conferma la cancellazione? Dica sì o no.');
   }
 
   // ── Ask Next Field ────────────────────────────────────────────────────────
