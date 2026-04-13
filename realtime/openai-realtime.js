@@ -640,24 +640,23 @@ export class OpenAIRealtimeClient {
         }
         break;
       case 'response.function_call_arguments.done':
-        if (msg.name === 'extract_booking_data') {
-          try {
-            const args = JSON.parse(msg.arguments);
-            console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
-            // Chiudi il turn con il risultato della funzione
-            this._send({
-              type: 'conversation.item.create',
-              item: {
-                type: 'function_call_output',
-                call_id: msg.call_id,
-                output: JSON.stringify({ status: 'received' }),
-              },
-            });
-            // Processa i dati estratti
-            this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
-          } catch (err) {
-            console.error('❌ Errore function call:', err);
-          }
+        // Nella Realtime API questo evento non include 'name' — ma abbiamo solo una funzione
+        try {
+          const args = JSON.parse(msg.arguments);
+          console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
+          // Chiudi il turn con il risultato della funzione
+          this._send({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: msg.call_id,
+              output: JSON.stringify({ status: 'received' }),
+            },
+          });
+          // Processa i dati estratti
+          this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
+        } catch (err) {
+          console.error('❌ Errore function call:', err);
         }
         break;
       case 'response.done':
