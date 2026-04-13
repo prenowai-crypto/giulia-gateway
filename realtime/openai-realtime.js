@@ -668,6 +668,12 @@ export class OpenAIRealtimeClient {
           this.onError(msg.error);
         }
         break;
+      default:
+        // Debug: logga tutti gli eventi non-audio per capire il flusso
+        if (msg.type && !msg.type.includes('audio.delta') && !msg.type.includes('audio_transcript.delta')) {
+          console.log(`🔍 OpenAI event: ${msg.type}`);
+        }
+        break;
     }
   }
 
