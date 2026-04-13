@@ -690,7 +690,7 @@ export class OpenAIRealtimeClient {
     this._send({
       type: 'response.create',
       response: {
-        tool_choice: { type: 'function', function: { name: 'extract_booking_data' } },
+        tool_choice: { type: 'function', name: 'extract_booking_data' },
         instructions: `Oggi è ${dayName} ${todayISO}. Analizza l'audio appena ricevuto e chiama extract_booking_data con tutti i dati che hai capito. Per i campi non menzionati usa "null".`,
         max_output_tokens: 150,
       },
