@@ -540,8 +540,19 @@ export class OpenAIRealtimeClient {
 
   _configureSession() {
     const now = DateManager.getNow();
-    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayISO = DateManager.toISO(today);
     const dayName = DateManager.DAYS_IT[now.getDay()];
+
+    // Calendario esplicito dei prossimi 7 giorni
+    const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+    const nextDays = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      nextDays.push(`${dayNames[d.getDay()]}=${DateManager.toISO(d)}`);
+    }
+    const calendarStr = nextDays.join(', ');
 
     this._send({
       type: 'session.update',
@@ -562,13 +573,13 @@ export class OpenAIRealtimeClient {
         tools: [{
           type: 'function',
           name: 'extract_booking_data',
-          description: `Estrai i dati di prenotazione dall'audio appena ascoltato. Oggi è ${dayName} ${todayISO}. Chiama SEMPRE questa funzione dopo ogni messaggio del cliente, anche se non hai capito tutti i campi. Per i campi non presenti usa la stringa "null".`,
+          description: `Estrai i dati di prenotazione dall'audio. Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}. Chiama SEMPRE questa funzione dopo ogni messaggio del cliente. Per i campi non presenti usa "null".`,
           parameters: {
             type: 'object',
             properties: {
               date: {
                 type: 'string',
-                description: `Data ISO YYYY-MM-DD oppure "null". Calcola date relative: "domani"=domani, "sabato"=prossimo sabato, "mercoledì"=prossimo mercoledì. Oggi è ${todayISO}.`
+                description: `Data ISO YYYY-MM-DD oppure "null". USA il calendario nel campo description della funzione. Esempi: "mercoledì"=data mercoledì dal calendario, "sabato"=data sabato dal calendario, "domani"=domani.`
               },
               time: {
                 type: 'string',
