@@ -701,7 +701,8 @@ export class OpenAIRealtimeClient {
         if (msg.response?.status === 'failed') console.error('❌ Response failed');
         break;
       case 'error':
-        if (msg.error?.code !== 'conversation_already_has_active_response') {
+        if (msg.error?.code !== 'conversation_already_has_active_response' &&
+            msg.error?.code !== 'response_cancel_not_active') {
           console.error('❌ OpenAI:', msg.error);
           this.onError(msg.error);
         }
