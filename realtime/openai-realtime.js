@@ -642,7 +642,12 @@ export class OpenAIRealtimeClient {
           if (!t || t.length < 2) return;
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-          // Whisper usato solo per log — i dati vengono estratti da GPT via function calling
+          // Se in attesa di conferma cancellazione, gestisce qui via testo grezzo
+          if (this.cancelState === 'awaiting_confirm') {
+            this._handleCancelConfirmText(t).catch(err => console.error('❌ _handleCancelConfirmText:', err));
+            return;
+          }
+          // Rileva note e telefono alternativo
           this._detectNotesAndPhone(t);
         }
         break;
@@ -1228,6 +1233,34 @@ Max 2 frasi. Non inventare nulla.`,
 
   // ── MODIFY flow ───────────────────────────────────────────────────────────
 
+  // Helper: ricerca a 3 stadi (nome+data → solo nome → solo telefono)
+  async _findReservationWithFallback(searchName, searchDate, logPrefix) {
+    const phone = this.callerPhone || '';
+
+    // Stadio 1: nome + data
+    if (searchName && searchDate) {
+      console.log(`🔍 ${logPrefix} cerca: nome=${searchName}, data=${searchDate}`);
+      const r1 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, data: searchDate });
+      if (r1?.found && r1.reservation) return r1.reservation;
+    }
+
+    // Stadio 2: solo nome (GPT potrebbe aver estratto data di destinazione)
+    if (searchName) {
+      console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
+      const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName });
+      if (r2?.found && r2.reservation) return r2.reservation;
+    }
+
+    // Stadio 3: solo telefono (cliente corregge nome, es: "Conti"→"Conte")
+    if (phone) {
+      console.log(`🔍 ${logPrefix} fallback: solo telefono=${phone}`);
+      const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone });
+      if (r3?.found && r3.reservation) return r3.reservation;
+    }
+
+    return null;
+  }
+
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
     // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
     if (!this.modifyState) {
@@ -1237,38 +1270,16 @@ Max 2 frasi. Non inventare nulla.`,
       if (newName && newDate) {
         if (newName) this.data.name = newName;
         if (newDate) this.data.date = newDate;
-        console.log(`🔍 MODIFY cerca (primo msg): nome=${newName}, data=${newDate}`);
-        const result = await this._callAppsScript({
-          action: 'find_reservation',
-          nome: newName,
-          data: newDate,
-        });
-        if (result?.found && result.reservation) {
-          this.foundReservation = result.reservation;
-          const r = result.reservation;
+        const r = await this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg');
+        if (r) {
+          this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.modifyState = 'awaiting_changes';
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
-          // Fallback: GPT ha estratto la data di destinazione, cerca solo per nome
-          console.log(`🔍 MODIFY fallback (primo msg): cerca solo nome=${newName}`);
-          const fallback = await this._callAppsScript({
-            action: 'find_reservation',
-            nome: newName,
-          });
-          if (fallback?.found && fallback.reservation) {
-            this.foundReservation = fallback.reservation;
-            const r = fallback.reservation;
-            const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-            const dateDisplay = DateManager.formatForDisplay(r.date);
-            const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-            this.modifyState = 'awaiting_changes';
-            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
-          } else {
-            this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
-          }
+          this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
         }
         return;
       }
@@ -1300,39 +1311,16 @@ Max 2 frasi. Non inventare nulla.`,
         return;
       }
 
-      console.log(`🔍 MODIFY cerca: nome=${searchName}, data=${searchDate}`);
-      const result = await this._callAppsScript({
-        action: 'find_reservation',
-        nome: searchName,
-        data: searchDate,
-      });
-
-      if (result?.found && result.reservation) {
-        this.foundReservation = result.reservation;
-        const r = result.reservation;
+      const r = await this._findReservationWithFallback(searchName, searchDate, 'MODIFY');
+      if (r) {
+        this.foundReservation = r;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
         this.modifyState = 'awaiting_changes';
         this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
       } else {
-        // Fallback: cerca solo per nome (GPT potrebbe aver estratto la data di destinazione)
-        console.log(`🔍 MODIFY fallback: cerca solo per nome=${searchName}`);
-        const fallback = await this._callAppsScript({
-          action: 'find_reservation',
-          nome: searchName,
-        });
-        if (fallback?.found && fallback.reservation) {
-          this.foundReservation = fallback.reservation;
-          const r = fallback.reservation;
-          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-          const dateDisplay = DateManager.formatForDisplay(r.date);
-          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          this.modifyState = 'awaiting_changes';
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
-        } else {
-          this._say(`Non trovo nessuna prenotazione a nome ${searchName}. Può riprovare con un altro nome o data?`);
-        }
+        this._say(`Non trovo nessuna prenotazione a nome ${searchName}. Può riprovare con un altro nome o data?`);
       }
       return;
     }
@@ -1414,38 +1402,16 @@ Max 2 frasi. Non inventare nulla.`,
       if (newName && newDate) {
         if (newName) this.data.name = newName;
         if (newDate) this.data.date = newDate;
-        console.log(`🔍 CANCEL cerca (primo msg): nome=${newName}, data=${newDate}`);
-        const result = await this._callAppsScript({
-          action: 'find_reservation',
-          nome: newName,
-          data: newDate,
-        });
-        if (result?.found && result.reservation) {
-          this.foundReservation = result.reservation;
-          const r = result.reservation;
+        const r = await this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg');
+        if (r) {
+          this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.cancelState = 'awaiting_confirm';
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
         } else {
-          // Fallback: cerca solo per nome
-          console.log(`🔍 CANCEL fallback (primo msg): cerca solo nome=${newName}`);
-          const fallback = await this._callAppsScript({
-            action: 'find_reservation',
-            nome: newName,
-          });
-          if (fallback?.found && fallback.reservation) {
-            this.foundReservation = fallback.reservation;
-            const r = fallback.reservation;
-            const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-            const dateDisplay = DateManager.formatForDisplay(r.date);
-            const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-            this.cancelState = 'awaiting_confirm';
-            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
-          } else {
-            this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
-          }
+          this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
         }
         return;
       }
@@ -1475,39 +1441,16 @@ Max 2 frasi. Non inventare nulla.`,
         return;
       }
 
-      console.log(`🔍 CANCEL cerca: nome=${searchName}, data=${searchDate}`);
-      const result = await this._callAppsScript({
-        action: 'find_reservation',
-        nome: searchName,
-        data: searchDate,
-      });
-
-      if (result?.found && result.reservation) {
-        this.foundReservation = result.reservation;
-        const r = result.reservation;
+      const r = await this._findReservationWithFallback(searchName, searchDate, 'CANCEL');
+      if (r) {
+        this.foundReservation = r;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
         this.cancelState = 'awaiting_confirm';
         this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
       } else {
-        // Fallback: cerca solo per nome
-        console.log(`🔍 CANCEL fallback: cerca solo per nome=${searchName}`);
-        const fallback = await this._callAppsScript({
-          action: 'find_reservation',
-          nome: searchName,
-        });
-        if (fallback?.found && fallback.reservation) {
-          this.foundReservation = fallback.reservation;
-          const r = fallback.reservation;
-          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-          const dateDisplay = DateManager.formatForDisplay(r.date);
-          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          this.cancelState = 'awaiting_confirm';
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
-        } else {
-          this._say(`Non trovo nessuna prenotazione a nome ${searchName}.`);
-        }
+        this._say(`Non trovo nessuna prenotazione a nome ${searchName}.`);
       }
     }
   }
