@@ -740,12 +740,25 @@ export class OpenAIRealtimeClient {
 Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
 {"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
 
-Esempi di interpretazione audio:
-- "all'una" o "all'uno" → time: "13:00:00"
-- "alle ventuno" o "alle 21" → time: "21:00:00"
-- "sabato" → usa la data sabato dal calendario sopra
-- "siamo in sei" → people: "6"
-- "per me" → people: "1"
+REGOLE INTENT:
+- create = vuole fare UNA NUOVA prenotazione ("vorrei prenotare", "un tavolo per", "prenoto")
+- modify = vuole cambiare una prenotazione ESISTENTE ("modificare", "spostare", "cambiare", "ho prenotato e vorrei")
+- cancel = vuole cancellare ("cancellare", "annullare", "disdire")
+- unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
+
+REGOLE DATE/ORA:
+- "alle 21" → time: "21:00:00"
+- "all'una" / "all'uno" → time: "13:00:00"
+- "alle nove di sera" / "alle 9 di sera" → time: "21:00:00"
+- "alle nove" senza contesto → time: "09:00:00"
+- "sabato" → data sabato dal calendario sopra
+- "venerdì" → data venerdì dal calendario sopra
+- "alla stessa ora" → time: null (non inventare)
+
+REGOLE NOME+DATA insieme:
+- "a nome Rossi per sabato" → name: "Rossi", date: data sabato
+- "la prenotazione Ferrari per venerdì" → name: "Ferrari", date: data venerdì
+- "prenotazione Bianchi del 18" → name: "Bianchi", date: ${todayISO.substring(0,8)}18
 
 Rispondi SOLO con il JSON, nessun'altra parola.`,
         max_output_tokens: 80,
@@ -756,9 +769,71 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   // ── Processa dati estratti da GPT ─────────────────────────────────────────
 
   async _processGPTData(args) {
-    if (this.checkingSlot || this.phase === 'done') return;
+    if (this.checkingSlot) return;
 
     const rc = this.restaurantConfig;
+
+    const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
+    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
+    const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
+    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    // ── Fix 1: CANCEL confirm intercetta anche qui (GPT più veloce di Whisper) ─
+    if (this.cancelState === 'awaiting_confirm') {
+      // Non fare nulla — la conferma è gestita via testo in _onUserText
+      // ma se GPT rileva un cancel/unknown, ignoriamo per non interferire
+      return;
+    }
+
+    // ── Fix 3: Phase=done — gestisce saluti, ringraziamenti e nuovi intent ────
+    if (this.phase === 'done') {
+      const intent = args.intent;
+
+      // Nuovo intent modify → avvia MODIFY flow
+      if (intent === 'modify') {
+        this.intent = 'modify';
+        this.modifyState = null;
+        this.foundReservation = null;
+        console.log('🔄 Phase=done: nuovo intent modify rilevato');
+        await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+        return;
+      }
+
+      // Nuovo intent cancel → avvia CANCEL flow
+      if (intent === 'cancel') {
+        this.intent = 'cancel';
+        this.cancelState = null;
+        this.foundReservation = null;
+        console.log('🔄 Phase=done: nuovo intent cancel rilevato');
+        await this._handleCancelFlow(newDate, newName);
+        return;
+      }
+
+      // Nuovo intent create → reset e riparte
+      if (intent === 'create') {
+        this.intent = 'create';
+        this.phase = 'collecting';
+        this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
+        this.modifyState = null;
+        this.cancelState = null;
+        this.foundReservation = null;
+        this.checkingSlot = false;
+        this.availDone = false;
+        console.log('🔄 Phase=done: nuovo intent create — reset e riparto');
+        await this._processGPTData(args);
+        return;
+      }
+
+      // Intent unknown (saluti, ringraziamenti, "posso aiutarti con altro?")
+      console.log('💬 Phase=done: intent unknown — risposta cortese');
+      this._send({
+        type: 'response.create',
+        response: {
+          instructions: `Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`,
+        },
+      });
+      return;
+    }
 
     // ── Intent ───────────────────────────────────────────────────────────────
     if (!this.intent && args.intent && args.intent !== 'unknown') {
@@ -768,12 +843,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     const prevDate = this.data.date;
     const prevTime = this.data.time;
-
-    // ── Aggiorna dati ────────────────────────────────────────────────────────
-    const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
-    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
-    const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
-    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
     // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
     if (!args.intent || args.intent === 'unknown') {
@@ -1153,9 +1222,36 @@ Max 2 frasi. Non inventare nulla.`,
   // ── MODIFY flow ───────────────────────────────────────────────────────────
 
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
-    // Phase 1: primo messaggio modify → chiedi nome + data
+    // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
     if (!this.modifyState) {
       this.modifyState = 'awaiting_search';
+
+      // Se il primo messaggio contiene già nome E data, cerca subito
+      if (newName && newDate) {
+        if (newName) this.data.name = newName;
+        if (newDate) this.data.date = newDate;
+        console.log(`🔍 MODIFY cerca (primo msg): nome=${newName}, data=${newDate}`);
+        const result = await this._callAppsScript({
+          action: 'find_reservation',
+          nome: newName,
+          data: newDate,
+        });
+        if (result?.found && result.reservation) {
+          this.foundReservation = result.reservation;
+          const r = result.reservation;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.modifyState = 'awaiting_changes';
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+        } else {
+          const dateDisplay = DateManager.formatForDisplay(newDate);
+          this._say(`Non trovo nessuna prenotazione a nome ${newName} per il ${dateDisplay}. Può riprovare con un altro nome o data?`);
+        }
+        return;
+      }
+
+      // Altrimenti chiedi nome e data
       this._say('Certo! A che nome è la prenotazione e per quale data?');
       return;
     }
@@ -1210,13 +1306,19 @@ Max 2 frasi. Non inventare nulla.`,
       if (!r) { this.modifyState = null; return; }
 
       const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+
+      // Fix 2: accetta newTime solo se diverso da timeOrig (evita che GPT inventi orari)
+      // Se il cliente dice "stessa ora" o non menziona l'orario, GPT può estrarre un orario
+      // diverso dalla conversazione precedente — lo ignoriamo e usiamo sempre timeOrig
+      const timeChangedExplicitly = newTime && newTime !== timeOrig;
+
       const updDate   = newDate   || r.date;
-      const updTime   = newTime   || timeOrig;
+      const updTime   = timeChangedExplicitly ? newTime : timeOrig;
       const updPeople = newPeople || Number(r.people);
       const updName   = newName   || r.name;
 
       const dateChanged   = newDate   && newDate   !== r.date;
-      const timeChanged   = newTime   && newTime   !== timeOrig;
+      const timeChanged   = timeChangedExplicitly;
       const peopleChanged = newPeople && newPeople !== Number(r.people);
 
       if (!dateChanged && !timeChanged && !peopleChanged && !newName) {
@@ -1268,9 +1370,34 @@ Max 2 frasi. Non inventare nulla.`,
   // ── CANCEL flow ───────────────────────────────────────────────────────────
 
   async _handleCancelFlow(newDate, newName) {
-    // Phase 1: primo messaggio cancel → chiedi nome + data
+    // Phase 1: primo messaggio cancel → se contiene già nome e data, cerca subito
     if (!this.cancelState) {
       this.cancelState = 'awaiting_search';
+
+      if (newName && newDate) {
+        if (newName) this.data.name = newName;
+        if (newDate) this.data.date = newDate;
+        console.log(`🔍 CANCEL cerca (primo msg): nome=${newName}, data=${newDate}`);
+        const result = await this._callAppsScript({
+          action: 'find_reservation',
+          nome: newName,
+          data: newDate,
+        });
+        if (result?.found && result.reservation) {
+          this.foundReservation = result.reservation;
+          const r = result.reservation;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.cancelState = 'awaiting_confirm';
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+        } else {
+          const dateDisplay = DateManager.formatForDisplay(newDate);
+          this._say(`Non trovo nessuna prenotazione a nome ${newName} per il ${dateDisplay}.`);
+        }
+        return;
+      }
+
       this._say('Certo! A che nome è la prenotazione e per quale data?');
       return;
     }
