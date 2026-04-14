@@ -651,8 +651,13 @@ export class OpenAIRealtimeClient {
         break;
       case 'input_audio_buffer.speech_stopped':
         console.log('🎤 Fine');
-        // Triggera estrazione dati via GPT function calling
-        if (!this.checkingSlot && this.phase !== 'done') {
+        if (this.cancelState === 'awaiting_confirm') {
+          // Cancella la risposta auto-VAD, lascia gestire a _handleCancelConfirmText via Whisper
+          this._send({ type: 'response.cancel' });
+        } else if (!this.checkingSlot) {
+          // Cancella sempre la risposta auto-VAD prima della nostra estrazione
+          // (evita conversation_already_has_active_response silenzioso)
+          this._send({ type: 'response.cancel' });
           this._triggerExtraction();
         }
         break;
@@ -1025,16 +1030,18 @@ Max 2 frasi. Non inventare nulla.`,
 
   async _onUserText(text) {
     if (this.checkingSlot) return;
-    if (this.phase === 'done') return;
 
-    // Rileva note e telefono alternativo su ogni messaggio
-    this._detectNotesAndPhone(text);
-
-    // ── CANCEL: conferma sì/no via testo grezzo ──────────────────────────────
+    // ── CANCEL: conferma sì/no via testo grezzo — intercetta PRIMA di tutto ──
     if (this.cancelState === 'awaiting_confirm') {
       await this._handleCancelConfirmText(text);
       return;
     }
+
+    // Dopo phase=done, la logica è gestita da _processGPTData (via extraction)
+    if (this.phase === 'done') return;
+
+    // Rileva note e telefono alternativo su ogni messaggio
+    this._detectNotesAndPhone(text);
 
     // Detect intent on first message
     if (!this.intent) {
