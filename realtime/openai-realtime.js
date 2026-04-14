@@ -1272,28 +1272,31 @@ Max 2 frasi. Non inventare nulla.`,
   // ── MODIFY flow ───────────────────────────────────────────────────────────
 
   // Helper: ricerca a 3 stadi (nome+data → solo nome → solo telefono)
+  // Valida che il risultato abbia almeno date e name non null
   async _findReservationWithFallback(searchName, searchDate, logPrefix) {
     const phone = this.callerPhone || '';
+
+    const isValid = (r) => r && r.date && r.name && r.date !== 'null' && r.name !== 'null';
 
     // Stadio 1: nome + data
     if (searchName && searchDate) {
       console.log(`🔍 ${logPrefix} cerca: nome=${searchName}, data=${searchDate}`);
       const r1 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, data: searchDate });
-      if (r1?.found && r1.reservation) return r1.reservation;
+      if (r1?.found && isValid(r1.reservation)) return r1.reservation;
     }
 
     // Stadio 2: solo nome (GPT potrebbe aver estratto data di destinazione)
     if (searchName) {
       console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
       const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName });
-      if (r2?.found && r2.reservation) return r2.reservation;
+      if (r2?.found && isValid(r2.reservation)) return r2.reservation;
     }
 
     // Stadio 3: solo telefono (cliente corregge nome, es: "Conti"→"Conte")
     if (phone) {
       console.log(`🔍 ${logPrefix} fallback: solo telefono=${phone}`);
       const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone });
-      if (r3?.found && r3.reservation) return r3.reservation;
+      if (r3?.found && isValid(r3.reservation)) return r3.reservation;
     }
 
     return null;
@@ -1318,6 +1321,24 @@ Max 2 frasi. Non inventare nulla.`,
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
           this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
+        }
+        return;
+      }
+
+      // Se abbiamo solo il nome (senza data), cerca subito per nome/telefono
+      if (newName && !newDate) {
+        if (newName) this.data.name = newName;
+        console.log(`🔍 MODIFY primo msg: solo nome=${newName}, cerco senza data`);
+        const r = await this._findReservationWithFallback(newName, null, 'MODIFY solo nome');
+        if (r) {
+          this.foundReservation = r;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.modifyState = 'awaiting_changes';
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+        } else {
+          this._say('A che nome è la prenotazione e per quale data?');
         }
         return;
       }
@@ -1368,7 +1389,13 @@ Max 2 frasi. Non inventare nulla.`,
       const r = this.foundReservation;
       if (!r) { this.modifyState = null; return; }
 
-      const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+      const timeOrig = r.time?.length >= 5 ? (r.time.length === 5 ? r.time + ':00' : r.time) : null;
+
+      if (!timeOrig && !newTime) {
+        // Non abbiamo né l'orario originale né uno nuovo — chiedi
+        this._say(`Non riesco a leggere l'orario della prenotazione. A che ora era prevista?`);
+        return;
+      }
 
       // Fix 2: accetta newTime solo se diverso da timeOrig (evita che GPT inventi orari)
       // Se il cliente dice "stessa ora" o non menziona l'orario, GPT può estrarre un orario
