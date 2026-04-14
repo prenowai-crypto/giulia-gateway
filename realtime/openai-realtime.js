@@ -1509,6 +1509,18 @@ Max 2 frasi. Non inventare nulla.`,
           this.cancelState = 'awaiting_confirm';
           this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+        } else {
+          this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
+        }
+        return;
+      }
+
+      this._say('Certo! A che nome è la prenotazione e per quale data?');
+      return;
+    }
+
+    // Phase 2: cerca la prenotazione
+    if (this.cancelState === 'awaiting_search') {
       const searchName = newName || this.data.name;
       const searchDate = newDate || this.data.date;
 
