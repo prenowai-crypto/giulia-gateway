@@ -636,6 +636,10 @@ export class OpenAIRealtimeClient {
           this.onTranscript(msg.transcript, 'assistant');
         }
         break;
+      case 'response.audio.done':
+        // Audio finito di generare → aggiorna il timestamp per il deaf period
+        this._lastSaidAt = Date.now();
+        break;
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
@@ -656,12 +660,17 @@ export class OpenAIRealtimeClient {
         break;
       case 'input_audio_buffer.speech_stopped':
         console.log('🎤 Fine');
+        // Deaf period: ignora speech_stopped per 1500ms dopo la fine dell'audio
+        // Parte da response.audio.done (momento corretto) non da _say()
+        if (this._lastSaidAt && (Date.now() - this._lastSaidAt) < 1500) {
+          console.log(`🔇 speech_stopped ignorato (deaf period: ${Date.now() - this._lastSaidAt}ms < 1500ms)`);
+          break;
+        }
         if (this.cancelState === 'awaiting_confirm') {
           // Cancella la risposta auto-VAD, lascia gestire a _handleCancelConfirmText via Whisper
           this._send({ type: 'response.cancel' });
         } else if (!this.checkingSlot) {
           // Cancella sempre la risposta auto-VAD prima della nostra estrazione
-          // (evita conversation_already_has_active_response silenzioso)
           this._send({ type: 'response.cancel' });
           this._triggerExtraction();
         }
@@ -811,6 +820,15 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         if (this.lastReservation?.eventId) {
           this.foundReservation = this.lastReservation;
           this.modifyState = 'awaiting_changes';
+
+          // Se il messaggio contiene già la modifica esplicita, applicala subito
+          if (newName || newDate || newTime || newPeople) {
+            console.log(`💾 Phase=done MODIFY: applico cambio diretto su lastReservation`);
+            await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+            return;
+          }
+
+          // Altrimenti mostra la prenotazione trovata e chiedi cosa modificare
           const r = this.lastReservation;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
