@@ -1245,8 +1245,23 @@ Max 2 frasi. Non inventare nulla.`,
           this.modifyState = 'awaiting_changes';
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
-          const dateDisplay = DateManager.formatForDisplay(newDate);
-          this._say(`Non trovo nessuna prenotazione a nome ${newName} per il ${dateDisplay}. Può riprovare con un altro nome o data?`);
+          // Fallback: GPT ha estratto la data di destinazione, cerca solo per nome
+          console.log(`🔍 MODIFY fallback (primo msg): cerca solo nome=${newName}`);
+          const fallback = await this._callAppsScript({
+            action: 'find_reservation',
+            nome: newName,
+          });
+          if (fallback?.found && fallback.reservation) {
+            this.foundReservation = fallback.reservation;
+            const r = fallback.reservation;
+            const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+            const dateDisplay = DateManager.formatForDisplay(r.date);
+            const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+            this.modifyState = 'awaiting_changes';
+            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+          } else {
+            this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
+          }
         }
         return;
       }
@@ -1294,8 +1309,23 @@ Max 2 frasi. Non inventare nulla.`,
         this.modifyState = 'awaiting_changes';
         this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
       } else {
-        const dateDisplay = DateManager.formatForDisplay(searchDate);
-        this._say(`Non trovo nessuna prenotazione a nome ${searchName} per il ${dateDisplay}. Può riprovare con un altro nome o data?`);
+        // Fallback: cerca solo per nome (GPT potrebbe aver estratto la data di destinazione)
+        console.log(`🔍 MODIFY fallback: cerca solo per nome=${searchName}`);
+        const fallback = await this._callAppsScript({
+          action: 'find_reservation',
+          nome: searchName,
+        });
+        if (fallback?.found && fallback.reservation) {
+          this.foundReservation = fallback.reservation;
+          const r = fallback.reservation;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.modifyState = 'awaiting_changes';
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+        } else {
+          this._say(`Non trovo nessuna prenotazione a nome ${searchName}. Può riprovare con un altro nome o data?`);
+        }
       }
       return;
     }
@@ -1392,8 +1422,23 @@ Max 2 frasi. Non inventare nulla.`,
           this.cancelState = 'awaiting_confirm';
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
         } else {
-          const dateDisplay = DateManager.formatForDisplay(newDate);
-          this._say(`Non trovo nessuna prenotazione a nome ${newName} per il ${dateDisplay}.`);
+          // Fallback: cerca solo per nome
+          console.log(`🔍 CANCEL fallback (primo msg): cerca solo nome=${newName}`);
+          const fallback = await this._callAppsScript({
+            action: 'find_reservation',
+            nome: newName,
+          });
+          if (fallback?.found && fallback.reservation) {
+            this.foundReservation = fallback.reservation;
+            const r = fallback.reservation;
+            const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+            const dateDisplay = DateManager.formatForDisplay(r.date);
+            const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+            this.cancelState = 'awaiting_confirm';
+            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+          } else {
+            this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
+          }
         }
         return;
       }
@@ -1439,8 +1484,23 @@ Max 2 frasi. Non inventare nulla.`,
         this.cancelState = 'awaiting_confirm';
         this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
       } else {
-        const dateDisplay = DateManager.formatForDisplay(searchDate);
-        this._say(`Non trovo nessuna prenotazione a nome ${searchName} per il ${dateDisplay}.`);
+        // Fallback: cerca solo per nome
+        console.log(`🔍 CANCEL fallback: cerca solo per nome=${searchName}`);
+        const fallback = await this._callAppsScript({
+          action: 'find_reservation',
+          nome: searchName,
+        });
+        if (fallback?.found && fallback.reservation) {
+          this.foundReservation = fallback.reservation;
+          const r = fallback.reservation;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.cancelState = 'awaiting_confirm';
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+        } else {
+          this._say(`Non trovo nessuna prenotazione a nome ${searchName}.`);
+        }
       }
     }
   }
