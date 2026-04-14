@@ -800,12 +800,26 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (this.phase === 'done') {
       const intent = args.intent;
 
-      // Nuovo intent modify → avvia MODIFY flow
+      // Nuovo intent modify → usa lastReservation se disponibile, altrimenti cerca
       if (intent === 'modify') {
         this.intent = 'modify';
         this.modifyState = null;
         this.foundReservation = null;
         console.log('🔄 Phase=done: nuovo intent modify rilevato');
+
+        // Se abbiamo la prenotazione appena gestita, usala direttamente
+        if (this.lastReservation?.eventId) {
+          this.foundReservation = this.lastReservation;
+          this.modifyState = 'awaiting_changes';
+          const r = this.lastReservation;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          console.log(`💾 Phase=done MODIFY: uso lastReservation direttamente (${r.name}, ${r.date})`);
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+          return;
+        }
+
         await this._handleModifyFlow(newDate, newTime, newPeople, newName);
         return;
       }
@@ -835,8 +849,31 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
 
-      // Intent unknown (saluti, ringraziamenti, "posso aiutarti con altro?")
+      // Intent unknown (saluti, ringraziamenti, note aggiuntive, "posso aiutarti con altro?")
       console.log('💬 Phase=done: intent unknown — risposta cortese');
+
+      // Se ci sono nuove note rilevate dalla trascrizione e abbiamo lastReservation, aggiorna
+      // (es: "siamo celiaci" dopo la prenotazione confermata)
+      // La rilevazione note avviene in _detectNotesAndPhone via Whisper transcript
+      // Il controllo lo facciamo qui: se this.data.notes è cambiato rispetto a lastReservation
+      if (this.lastReservation?.eventId && this.data.notes &&
+          this.data.notes !== this.lastReservation.notes) {
+        const updatedNotes = this.data.notes;
+        console.log(`📝 Phase=done: nuove note rilevate, aggiorno lastReservation: "${updatedNotes}"`);
+        this._callAppsScript({
+          action: 'update_reservation',
+          eventId: this.lastReservation.eventId,
+          nome: this.lastReservation.name,
+          data: this.lastReservation.date,
+          ora: this.lastReservation.time,
+          persone: this.lastReservation.people,
+          telefono: this.lastReservation.phone,
+          notes: updatedNotes,
+        }).then(r => {
+          console.log(`✅ Note aggiornate su prenotazione: ${r?.status}`);
+          if (this.lastReservation) this.lastReservation.notes = updatedNotes;
+        }).catch(err => console.error('❌ Errore aggiornamento note:', err));
+      }
       this._send({
         type: 'response.create',
         response: {
@@ -1386,6 +1423,17 @@ Max 2 frasi. Non inventare nulla.`,
         const dateDisplay = DateManager.formatForDisplay(updDate);
         const timeDisplay = TimeManager.formatForDisplay(updTime);
         const firstName = (updName || '').split(' ')[0];
+        // Salva riferimento alla prenotazione aggiornata per uso post-done
+        this.lastReservation = {
+          eventId: r.eventId,
+          name: updName,
+          date: updDate,
+          time: updTime,
+          people: updPeople,
+          phone: r.phone || this.callerPhone || '',
+          notes: this.data.notes || r.notes || '',
+        };
+        console.log(`💾 lastReservation aggiornato dopo MODIFY: eventId=${r.eventId}`);
         this._say(`Perfetto ${firstName}! Ho aggiornato la prenotazione: ${dateDisplay} alle ${timeDisplay} per ${updPeople} persone. Ti aspettiamo!`);
       } else {
         this._say(`Mi dispiace, c'è stato un problema nell'aggiornamento. Può richiamare?`);
@@ -1664,6 +1712,19 @@ Max 2 frasi. Non inventare nulla.`,
     }).then(result => {
       console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌', result);
       if (this.data.notes) console.log(`📝 Note inviate: "${this.data.notes}"`);
+      // Salva riferimento alla prenotazione appena creata per uso post-done
+      if (result?.success && result.eventId) {
+        this.lastReservation = {
+          eventId: result.eventId,
+          name: name,
+          date: date,
+          time: time,
+          people: people,
+          phone: this.callerPhone || '',
+          notes: this.data.notes || '',
+        };
+        console.log(`💾 lastReservation salvato: eventId=${result.eventId}`);
+      }
     }).catch(err => {
       console.error('❌ Errore creazione prenotazione:', err);
     });
