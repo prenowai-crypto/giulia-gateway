@@ -834,6 +834,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           console.log(`💾 Phase=done MODIFY: uso lastReservation direttamente (${r.name}, ${r.date})`);
+          this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
           return;
         }
@@ -1336,6 +1337,7 @@ Max 2 frasi. Non inventare nulla.`,
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.modifyState = 'awaiting_changes';
+          this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
           this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
@@ -1354,6 +1356,7 @@ Max 2 frasi. Non inventare nulla.`,
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.modifyState = 'awaiting_changes';
+          this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
           this._say('A che nome è la prenotazione e per quale data?');
@@ -1395,6 +1398,7 @@ Max 2 frasi. Non inventare nulla.`,
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
         this.modifyState = 'awaiting_changes';
+        this._injectContext(r);
         this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
       } else {
         this._say(`Non trovo nessuna prenotazione a nome ${searchName}. Può riprovare con un altro nome o data?`);
@@ -1503,19 +1507,8 @@ Max 2 frasi. Non inventare nulla.`,
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.cancelState = 'awaiting_confirm';
+          this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
-        } else {
-          this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
-        }
-        return;
-      }
-
-      this._say('Certo! A che nome è la prenotazione e per quale data?');
-      return;
-    }
-
-    // Phase 2: cerca la prenotazione
-    if (this.cancelState === 'awaiting_search') {
       const searchName = newName || this.data.name;
       const searchDate = newDate || this.data.date;
 
@@ -1542,6 +1535,7 @@ Max 2 frasi. Non inventare nulla.`,
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
         this.cancelState = 'awaiting_confirm';
+        this._injectContext(r);
         this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
       } else {
         this._say(`Non trovo nessuna prenotazione a nome ${searchName}.`);
@@ -1830,6 +1824,21 @@ Max 2 frasi. Non inventare nulla.`,
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(obj));
     }
+  }
+
+  // ── Inietta dati reali nel context di GPT prima di _say() ─────────────────
+  // Evita che GPT "corregga" la risposta con dati estratti nel turno precedente
+  _injectContext(r) {
+    if (!r) return;
+    const text = `[Dati reali trovati: nome="${r.name}", data="${r.date}", ora="${r.time}", persone="${r.people}"]`;
+    this._send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text }],
+      },
+    });
   }
 
   // ── Audio ─────────────────────────────────────────────────────────────────
