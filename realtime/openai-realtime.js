@@ -639,6 +639,12 @@ export class OpenAIRealtimeClient {
       case 'response.audio.done':
         // Audio finito di generare → aggiorna il timestamp per il deaf period
         this._lastSaidAt = Date.now();
+        // Segnala a _waitForAudioDone() che l'audio è terminato
+        if (this._audioDoneResolve) {
+          const r = this._audioDoneResolve;
+          this._audioDoneResolve = null;
+          r();
+        }
         break;
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
@@ -913,6 +919,20 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
     if (!args.intent || args.intent === 'unknown') {
+
+      // Se abbiamo date+time+people completi, il cliente sta chiedendo disponibilità
+      // con intenzione implicita di prenotare → inferisci create
+      const hasDate   = args.date   && args.date   !== 'null';
+      const hasTime   = args.time   && args.time   !== 'null';
+      const hasPeople = args.people && args.people !== 'null';
+
+      if (hasDate && hasTime && hasPeople) {
+        console.log(`💬 Intent unknown con dati completi → inferisco create (data=${args.date}, ora=${args.time}, people=${args.people})`);
+        args.intent = 'create';
+        // Riprocessa con intent=create
+        return this._processGPTData(args);
+      }
+
       console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
       const rc = this.restaurantConfig;
       const ls = rc?.lunch_start  || '12:00';
@@ -1304,14 +1324,14 @@ Max 2 frasi. Non inventare nulla.`,
       if (r1?.found && isValid(r1.reservation)) return r1.reservation;
     }
 
-    // Stadio 2: solo nome (GPT potrebbe aver estratto data di destinazione)
+    // Stadio 2: solo nome
     if (searchName) {
       console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
       const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName });
       if (r2?.found && isValid(r2.reservation)) return r2.reservation;
     }
 
-    // Stadio 3: solo telefono (cliente corregge nome, es: "Conti"→"Conte")
+    // Stadio 3: solo telefono
     if (phone) {
       console.log(`🔍 ${logPrefix} fallback: solo telefono=${phone}`);
       const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone });
@@ -1330,7 +1350,7 @@ Max 2 frasi. Non inventare nulla.`,
       if (newName && newDate) {
         if (newName) this.data.name = newName;
         if (newDate) this.data.date = newDate;
-        const r = await this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg');
+        const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg'));
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1349,7 +1369,7 @@ Max 2 frasi. Non inventare nulla.`,
       if (newName && !newDate) {
         if (newName) this.data.name = newName;
         console.log(`🔍 MODIFY primo msg: solo nome=${newName}, cerco senza data`);
-        const r = await this._findReservationWithFallback(newName, null, 'MODIFY solo nome');
+        const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, null, 'MODIFY solo nome'));
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1391,7 +1411,7 @@ Max 2 frasi. Non inventare nulla.`,
         return;
       }
 
-      const r = await this._findReservationWithFallback(searchName, searchDate, 'MODIFY');
+      const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(searchName, searchDate, 'MODIFY'));
       if (r) {
         this.foundReservation = r;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1414,14 +1434,10 @@ Max 2 frasi. Non inventare nulla.`,
       const timeOrig = r.time?.length >= 5 ? (r.time.length === 5 ? r.time + ':00' : r.time) : null;
 
       if (!timeOrig && !newTime) {
-        // Non abbiamo né l'orario originale né uno nuovo — chiedi
         this._say(`Non riesco a leggere l'orario della prenotazione. A che ora era prevista?`);
         return;
       }
 
-      // Fix 2: accetta newTime solo se diverso da timeOrig (evita che GPT inventi orari)
-      // Se il cliente dice "stessa ora" o non menziona l'orario, GPT può estrarre un orario
-      // diverso dalla conversazione precedente — lo ignoriamo e usiamo sempre timeOrig
       const timeChangedExplicitly = newTime && newTime !== timeOrig;
 
       const updDate   = newDate   || r.date;
@@ -1441,13 +1457,13 @@ Max 2 frasi. Non inventare nulla.`,
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
-        const checkResult = await this._callAppsScript({
+        const checkResult = await this._sayThenDo('Un attimo che verifico la disponibilità...', () => this._callAppsScript({
           action: 'check_availability',
           data: updDate,
           ora: updTime,
           persone: updPeople,
           existingPeople: Number(r.people),
-        });
+        }));
 
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
           this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro orario?`);
@@ -1456,7 +1472,7 @@ Max 2 frasi. Non inventare nulla.`,
       }
 
       console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
-      const updateResult = await this._callAppsScript({
+      const updateResult = await this._sayThenDo('Perfetto, aggiorno subito...', () => this._callAppsScript({
         action: 'update_reservation',
         eventId: r.eventId,
         nome: updName,
@@ -1465,7 +1481,7 @@ Max 2 frasi. Non inventare nulla.`,
         persone: updPeople,
         telefono: r.phone || this.callerPhone || '',
         notes: this.data.notes || r.notes || '',
-      });
+      }));
 
       this.phase = 'done';
       if (updateResult?.success) {
@@ -1500,7 +1516,7 @@ Max 2 frasi. Non inventare nulla.`,
       if (newName && newDate) {
         if (newName) this.data.name = newName;
         if (newDate) this.data.date = newDate;
-        const r = await this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg');
+        const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg'));
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1540,7 +1556,7 @@ Max 2 frasi. Non inventare nulla.`,
         return;
       }
 
-      const r = await this._findReservationWithFallback(searchName, searchDate, 'CANCEL');
+      const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(searchName, searchDate, 'CANCEL'));
       if (r) {
         this.foundReservation = r;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1577,13 +1593,13 @@ Max 2 frasi. Non inventare nulla.`,
       const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
       console.log(`🗑️ CANCEL conferma: nome=${r.name}, data=${r.date}, ora=${timeNorm}`);
 
-      const result = await this._callAppsScript({
+      const result = await this._sayThenDo('Un attimo che procedo con la cancellazione...', () => this._callAppsScript({
         action: 'cancel_reservation',
         nome: r.name,
         data: r.date,
         ora: timeNorm,
         telefono: r.phone || this.callerPhone || '',
-      });
+      }));
 
       this.phase = 'done';
       if (result?.success || result?.status === 'CANCELLED') {
@@ -1641,15 +1657,13 @@ Max 2 frasi. Non inventare nulla.`,
       return;
     }
 
-    // Silenzio durante il check — GPT non parla fino al risultato
-
     try {
-      const result = await this._callAppsScript({
+      const result = await this._sayThenDo('Un attimo che verifico la disponibilità...', async () => this._callAppsScript({
         action: 'check_availability',
         data: date,
         ora: time,
         persone: people,
-      });
+      }));
 
       if (result?.success || result?.reason === 'slot_available') {
         console.log('✅ Slot disponibile');
@@ -1823,6 +1837,24 @@ Max 2 frasi. Non inventare nulla.`,
   }
 
   // ── Say / Send ────────────────────────────────────────────────────────────
+
+  // Attende che response.audio.done arrivi (max 3s per sicurezza)
+  _waitForAudioDone() {
+    return new Promise(resolve => {
+      const timeout = setTimeout(resolve, 3000);
+      this._audioDoneResolve = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+    });
+  }
+
+  // Dice una frase "thinking" e aspetta che finisca prima di eseguire l'operazione lenta
+  async _sayThenDo(thinkingMsg, asyncOperation) {
+    this._say(thinkingMsg);
+    await this._waitForAudioDone();
+    return await asyncOperation();
+  }
 
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
