@@ -938,7 +938,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       this._send({
         type: 'response.create',
         response: {
-          instructions: `Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`,
+          instructions: `Respond in ${this.language || 'it'}. Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`,
         },
       });
       return;
@@ -987,7 +987,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       this._send({
         type: 'response.create',
         response: {
-          instructions: `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:
+          instructions: `Respond in ${this.language || 'it'}. Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:
 - Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}
 - Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}
 - Chiuso il: ${closedText}
@@ -1911,7 +1911,7 @@ Max 2 frasi. Non inventare nulla.`,
     const lang = this.language || 'it';
     const instruction = lang === 'it'
       ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
-      : `Translate the following Italian phrase to ${lang} and say ONLY the translation, nothing else. Do not add greetings or extra words: "${text}"`;
+      : `TRANSLATION TASK ONLY. Translate this exact Italian text to ${lang} and say ONLY the translation. Do NOT use any other information from the conversation. Do NOT add anything extra. Translate word for word: "${text}"`;
     this._send({
       type: 'response.create',
       response: { instructions: instruction },
