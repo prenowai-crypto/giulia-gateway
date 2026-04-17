@@ -1943,9 +1943,13 @@ Max 2 frasi. Non inventare nulla.`,
   // Dice una frase esatta senza traduzione GPT (per frasi pre-tradotte)
   _sayDirect(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    const lang = this.language || 'it';
+    const instruction = lang === 'it'
+      ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
+      : `Say EXACTLY and ONLY this phrase with correct ${lang} pronunciation, nothing else: "${text}"`;
     this._send({
       type: 'response.create',
-      response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
+      response: { instructions: instruction },
     });
   }
 
