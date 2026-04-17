@@ -1397,17 +1397,9 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-
-          // Se già sappiamo cosa modificare (es: "sposta alle 21:30"), applica subito
-          if ((newTime || newDate || newPeople) && (newTime !== timeNorm || newDate !== r.date || newPeople !== Number(r.people))) {
-            this.foundReservation = r;
-            this.modifyState = 'awaiting_changes';
-            await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-          } else {
-            this.modifyState = 'awaiting_changes';
-            this._injectContext(r);
-            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
-          }
+          this.modifyState = 'awaiting_changes';
+          this._injectContext(r);
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
           this._say('Certo! A che nome è la prenotazione e per quale data?');
         }
