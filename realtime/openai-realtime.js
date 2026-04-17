@@ -1899,11 +1899,54 @@ Max 2 frasi. Non inventare nulla.`,
     });
   }
 
-  // Dice una frase "thinking" e aspetta che finisca prima di eseguire l'operazione lenta
-  async _sayThenDo(thinkingMsg, asyncOperation) {
-    this._say(thinkingMsg);
+  // Frasi thinking pre-tradotte — evita che GPT usi il context per hallucinate
+  static THINKING_PHRASES = {
+    'Un attimo che verifico la disponibilità...': {
+      en: 'Just a moment while I check availability...',
+      fr: 'Un instant, je vérifie la disponibilité...',
+      es: 'Un momento mientras verifico la disponibilidad...',
+      de: 'Einen Moment, ich prüfe die Verfügbarkeit...',
+    },
+    'Un momento, cerco la prenotazione...': {
+      en: 'Just a moment, looking for your reservation...',
+      fr: 'Un instant, je cherche votre réservation...',
+      es: 'Un momento, busco su reserva...',
+      de: 'Einen Moment, ich suche Ihre Reservierung...',
+    },
+    'Perfetto, aggiorno subito...': {
+      en: 'Perfect, updating right away...',
+      fr: 'Parfait, je mets à jour immédiatement...',
+      es: 'Perfecto, actualizando ahora mismo...',
+      de: 'Perfekt, ich aktualisiere sofort...',
+    },
+    'Un attimo che procedo con la cancellazione...': {
+      en: 'Just a moment while I process the cancellation...',
+      fr: 'Un instant pendant que je procède à l\'annulation...',
+      es: 'Un momento mientras proceso la cancelación...',
+      de: 'Einen Moment, ich bearbeite die Stornierung...',
+    },
+  };
+
+  // Dice una frase "thinking" pre-tradotta e aspetta che finisca prima di eseguire l'operazione lenta
+  async _sayThenDo(italianMsg, asyncOperation) {
+    const lang = this.language || 'it';
+    // Usa la versione pre-tradotta se disponibile, altrimenti usa l'italiano
+    const translated = OpenAIRealtimeClient.THINKING_PHRASES[italianMsg]?.[lang];
+    const textToSay = (lang !== 'it' && translated) ? translated : italianMsg;
+    // _sayDirect: dice la frase ESATTAMENTE senza passare per GPT translation
+    // (evita hallucination da context window)
+    this._sayDirect(textToSay);
     await this._waitForAudioDone();
     return await asyncOperation();
+  }
+
+  // Dice una frase esatta senza traduzione GPT (per frasi pre-tradotte)
+  _sayDirect(text) {
+    console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    this._send({
+      type: 'response.create',
+      response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
+    });
   }
 
   _say(text) {
