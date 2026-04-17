@@ -516,6 +516,9 @@ export class OpenAIRealtimeClient {
     this._checkingTime = false;
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
+
+    // ── Lingua rilevata automaticamente da Whisper ───────────────────────────
+    this.language = 'it';  // default italiano, aggiornato al primo messaggio
   }
 
   // ── Connect ──────────────────────────────────────────────────────────────
@@ -567,7 +570,7 @@ export class OpenAIRealtimeClient {
         instructions: this.systemPrompt,
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'whisper-1', language: 'it' }, // solo per log
+        input_audio_transcription: { model: 'whisper-1' }, // lingua rilevata automaticamente
         turn_detection: {
           type: 'server_vad',
           threshold: 0.4,
@@ -652,6 +655,13 @@ export class OpenAIRealtimeClient {
           if (!t || t.length < 2) return;
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
+
+          // Rileva lingua automaticamente da Whisper (al primo messaggio significativo)
+          if (msg.language && msg.language !== this.language) {
+            this.language = msg.language;
+            console.log(`🌐 Lingua rilevata: ${this.language}`);
+          }
+
           // Se in attesa di conferma cancellazione, gestisce qui via testo grezzo
           if (this.cancelState === 'awaiting_confirm') {
             this._handleCancelConfirmText(t).catch(err => console.error('❌ _handleCancelConfirmText:', err));
@@ -828,7 +838,23 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           this.modifyState = 'awaiting_changes';
 
           // Se il messaggio contiene già la modifica esplicita, applicala subito
+          // MA solo se almeno un campo è effettivamente diverso da lastReservation
+          // (evita doppio aggiornamento quando il cliente dice "grazie" e GPT estrae il contesto residuo)
           if (newName || newDate || newTime || newPeople) {
+            const r = this.lastReservation;
+            const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+            const actuallyChanged =
+              (newName   && newName   !== r.name)   ||
+              (newDate   && newDate   !== r.date)   ||
+              (newTime   && newTime   !== timeNorm) ||
+              (newPeople && Number(newPeople) !== Number(r.people));
+
+            if (!actuallyChanged) {
+              console.log(`💾 Phase=done MODIFY: dati identici a lastReservation, ignoro`);
+              this._say('Grazie a lei! Posso aiutarla con altro?');
+              return;
+            }
+
             console.log(`💾 Phase=done MODIFY: applico cambio diretto su lastReservation`);
             await this._handleModifyFlow(newDate, newTime, newPeople, newName);
             return;
@@ -1055,23 +1081,23 @@ Max 2 frasi. Non inventare nulla.`,
 
     // ── Keyword note ─────────────────────────────────────────────────────────
     const noteKeywords = [
-      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
-      { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
-      { pattern: /allergi[ao]/i,                                    note: 'Allergia (verifica con cliente)' },
-      { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
-      { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
-      { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
-      { pattern: /seggiol[eo]n[eo]|seggiolino|highchair/i,          note: 'Richiesto seggiolone' },
-      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
-      { pattern: /anniversario/i,                                   note: 'Anniversario' },
-      { pattern: /compleanno|birthday/i,                            note: 'Compleanno' },
-      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,     note: 'Proposta di matrimonio' },
-      { pattern: /occasion[ei]\s*speciale/i,                        note: 'Occasione speciale' },
-      { pattern: /romantico|romantica/i,                            note: 'Cena romantica' },
-      { pattern: /finestra|vista/i,                                 note: 'Tavolo vicino finestra' },
-      { pattern: /esterno|terrazza|giardino|dehor/i,                note: 'Tavolo esterno/terrazza' },
-      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,          note: 'Accessibilità disabili' },
-      { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
+      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine|celiac|gluten[\s-]free/i, note: 'Intolleranza glutine' },
+      { pattern: /lattosio|lactose|lactose[\s-]intolerant/i,               note: 'Intolleranza lattosio' },
+      { pattern: /allergi[ao]|allerg[iy]/i,                                note: 'Allergia (verifica con cliente)' },
+      { pattern: /arachidi|arachide|frutta\s*secca|noci|peanut|tree\s*nut/i, note: 'Allergia frutta secca' },
+      { pattern: /vegetarian[oai]|vegetarian/i,                            note: 'Vegetariano' },
+      { pattern: /vegan[oai]|vegan/i,                                      note: 'Vegano' },
+      { pattern: /seggiol[eo]n[eo]|seggiolino|highchair|high\s*chair/i,   note: 'Richiesto seggiolone' },
+      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol|baby|infant/i, note: 'Neonato/bambino piccolo' },
+      { pattern: /anniversario|anniversary/i,                              note: 'Anniversario' },
+      { pattern: /compleanno|birthday/i,                                   note: 'Compleanno' },
+      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento|proposal|engagement/i, note: 'Proposta di matrimonio' },
+      { pattern: /occasion[ei]\s*speciale|special\s*occasion/i,           note: 'Occasione speciale' },
+      { pattern: /romantico|romantica|romantic/i,                          note: 'Cena romantica' },
+      { pattern: /finestra|vista|window\s*seat|window\s*table/i,          note: 'Tavolo vicino finestra' },
+      { pattern: /esterno|terrazza|giardino|dehor|outdoor|terrace/i,      note: 'Tavolo esterno/terrazza' },
+      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin|wheelchair|disabled/i, note: 'Accessibilità disabili' },
+      { pattern: /tranquill[oa]|riservat[oa]|quiet|private/i,             note: 'Tavolo tranquillo/riservato' },
     ];
 
     const newNotes = [];
@@ -1811,12 +1837,26 @@ Max 2 frasi. Non inventare nulla.`,
     t = t.replace(/\bil\s+nome\s+/i, 'Nome ');
 
     const patterns = [
+      // Italiano
       /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /^(?:no[,\s]+)?a\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
-      /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,  // i flag: Whisper spesso trascrive in minuscolo
+      // Inglese / universale
+      /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bi(?:'m|\s+am)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      /\bname\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bbook(?:ing)?\s+(?:for|under)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      // Francese
+      /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Spagnolo
+      /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Generico — nome da solo o ultima parola (fallback)
+      /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
     ];
 
     for (const p of patterns) {
@@ -1858,9 +1898,13 @@ Max 2 frasi. Non inventare nulla.`,
 
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    const lang = this.language || 'it';
+    const instruction = lang === 'it'
+      ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
+      : `Translate the following Italian phrase to ${lang} and say ONLY the translation, nothing else. Do not add greetings or extra words: "${text}"`;
     this._send({
       type: 'response.create',
-      response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
+      response: { instructions: instruction },
     });
   }
 
