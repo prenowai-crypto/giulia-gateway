@@ -605,9 +605,13 @@ export class OpenAIRealtimeClient {
                 type: 'string',
                 enum: ['create', 'modify', 'cancel', 'unknown'],
                 description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica, cancel=cancellazione, unknown=non chiaro.'
+              },
+              language: {
+                type: 'string',
+                description: 'ISO 639-1 language code of the customer message. Examples: "it" for Italian, "en" for English, "fr" for French, "de" for German, "es" for Spanish.'
               }
             },
-            required: ['date', 'time', 'people', 'name', 'intent']
+            required: ['date', 'time', 'people', 'name', 'intent', 'language']
           }
         }],
         tool_choice: 'auto',
@@ -796,7 +800,7 @@ REGOLE NOME+DATA insieme:
 - "la prenotazione Ferrari per venerdì" → name: "Ferrari", date: data venerdì
 - "prenotazione Bianchi del 18" → name: "Bianchi", date: ${todayISO.substring(0,8)}18
 
-Rispondi SOLO con il JSON, nessun'altra parola.`,
+Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "language" con il codice ISO 639-1 della lingua del cliente (es: "it", "en", "fr", "de", "es").`,
         max_output_tokens: 80,
       },
     });
@@ -813,6 +817,12 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    // ── Aggiorna lingua rilevata da GPT ──────────────────────────────────────
+    if (args.language && args.language !== this.language) {
+      this.language = args.language;
+      console.log(`🌐 Lingua rilevata da GPT: ${this.language}`);
+    }
 
     // ── Fix 1: CANCEL confirm intercetta anche qui (GPT più veloce di Whisper) ─
     if (this.cancelState === 'awaiting_confirm') {
