@@ -1465,7 +1465,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       const updDate   = newDate   || r.date;
       const updTime   = timeChangedExplicitly ? newTime : timeOrig;
       const updPeople = newPeople || Number(r.people);
-      const updName   = newName   || r.name;
+      const updName   = r.name;  // Mantieni sempre il nome originale della prenotazione
 
       const dateChanged   = newDate   && newDate   !== r.date;
       const timeChanged   = timeChangedExplicitly;
