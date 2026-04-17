@@ -935,10 +935,13 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
           if (this.lastReservation) this.lastReservation.notes = updatedNotes;
         }).catch(err => console.error('❌ Errore aggiornamento note:', err));
       }
+      const _lang = this.language || 'it';
       this._send({
         type: 'response.create',
         response: {
-          instructions: `Respond in ${this.language || 'it'}. Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`,
+          instructions: _lang === 'it'
+            ? `Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
+            : `The customer has just successfully completed a reservation or operation. Reply warmly and naturally in ${_lang}: if they thank you say "Thank you!" or "You're welcome!"; then ask if there is anything else you can help with. Max 2 sentences. Do not invent information about the restaurant.`,
         },
       });
       return;
@@ -984,14 +987,15 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       const openForDinner = allDays.filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
       const closedText = closedDays.map(d => dayNames[d]).join(', ');
 
+      const _langFree = this.language || 'it';
+      const _scheduleIT = `- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}`;
+      const _scheduleEN = `- Lunch ${ls}-${le}: open ${openForLunch || 'no days'}\n- Dinner ${ds}-${de}: open ${openForDinner || 'no days'}\n- Closed on: ${closedText}`;
       this._send({
         type: 'response.create',
         response: {
-          instructions: `Respond in ${this.language || 'it'}. Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:
-- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}
-- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}
-- Chiuso il: ${closedText}
-Max 2 frasi. Non inventare nulla.`,
+          instructions: _langFree === 'it'
+            ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n${_scheduleIT}\nMax 2 frasi. Non inventare nulla.`
+            : `Reply in ${_langFree}. Answer the customer's question using ONLY this data, nothing else:\n${_scheduleEN}\nMax 2 sentences. Do not invent anything.`,
         },
       });
       return;
@@ -1378,49 +1382,39 @@ Max 2 frasi. Non inventare nulla.`,
   }
 
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
-    // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
+    // Phase 1: primo messaggio modify → cerca subito se abbiamo nome, data, o solo telefono
     if (!this.modifyState) {
       this.modifyState = 'awaiting_search';
 
-      // Se il primo messaggio contiene già nome E data, cerca subito
-      if (newName && newDate) {
-        if (newName) this.data.name = newName;
-        if (newDate) this.data.date = newDate;
+      if (newName) this.data.name = newName;
+      if (newDate) this.data.date = newDate;
+
+      // Se abbiamo almeno un dato → cerca subito (il fallback telefono copre i casi senza nome)
+      if (newName || newDate || this.callerPhone) {
         const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg'));
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          this.modifyState = 'awaiting_changes';
-          this._injectContext(r);
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+
+          // Se già sappiamo cosa modificare (es: "sposta alle 21:30"), applica subito
+          if ((newTime || newDate || newPeople) && (newTime !== timeNorm || newDate !== r.date || newPeople !== Number(r.people))) {
+            this.foundReservation = r;
+            this.modifyState = 'awaiting_changes';
+            await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+          } else {
+            this.modifyState = 'awaiting_changes';
+            this._injectContext(r);
+            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+          }
         } else {
-          this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
+          this._say('Certo! A che nome è la prenotazione e per quale data?');
         }
         return;
       }
 
-      // Se abbiamo solo il nome (senza data), cerca subito per nome/telefono
-      if (newName && !newDate) {
-        if (newName) this.data.name = newName;
-        console.log(`🔍 MODIFY primo msg: solo nome=${newName}, cerco senza data`);
-        const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, null, 'MODIFY solo nome'));
-        if (r) {
-          this.foundReservation = r;
-          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-          const dateDisplay = DateManager.formatForDisplay(r.date);
-          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          this.modifyState = 'awaiting_changes';
-          this._injectContext(r);
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
-        } else {
-          this._say('A che nome è la prenotazione e per quale data?');
-        }
-        return;
-      }
-
-      // Altrimenti chiedi nome e data
+      // Nessun dato disponibile
       this._say('Certo! A che nome è la prenotazione e per quale data?');
       return;
     }
@@ -1545,13 +1539,15 @@ Max 2 frasi. Non inventare nulla.`,
   // ── CANCEL flow ───────────────────────────────────────────────────────────
 
   async _handleCancelFlow(newDate, newName) {
-    // Phase 1: primo messaggio cancel → se contiene già nome e data, cerca subito
+    // Phase 1: primo messaggio cancel → cerca subito se abbiamo nome, data, o solo telefono
     if (!this.cancelState) {
       this.cancelState = 'awaiting_search';
 
-      if (newName && newDate) {
-        if (newName) this.data.name = newName;
-        if (newDate) this.data.date = newDate;
+      if (newName) this.data.name = newName;
+      if (newDate) this.data.date = newDate;
+
+      // Se abbiamo almeno un dato (nome, data, o solo il telefono del chiamante) → cerca subito
+      if (newName || newDate || this.callerPhone) {
         const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg'));
         if (r) {
           this.foundReservation = r;
@@ -1562,7 +1558,7 @@ Max 2 frasi. Non inventare nulla.`,
           this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
         } else {
-          this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
+          this._say('Certo! A che nome è la prenotazione e per quale data?');
         }
         return;
       }
