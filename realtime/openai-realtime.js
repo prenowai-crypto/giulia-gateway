@@ -599,7 +599,7 @@ export class OpenAIRealtimeClient {
               },
               name: {
                 type: 'string',
-                description: 'Nome del cliente per la prenotazione oppure "null". Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
+                description: 'Nome del cliente per la prenotazione oppure "null". Esempi IT: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni. Esempi EN: "my name is Smith"=Smith, "I\'m Johnson"=Johnson, "under the name Brown"=Brown, "name Ferrari"=Ferrari.'
               },
               intent: {
                 type: 'string',
@@ -1129,7 +1129,7 @@ Max 2 frasi. Non inventare nulla.`,
     }
 
     // ── Telefono alternativo ─────────────────────────────────────────────────
-    const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
+    const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|number|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
     const phoneMatch = text.match(phonePattern);
     if (phoneMatch && !this.data.alternativePhone) {
       const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
@@ -1901,6 +1901,7 @@ Max 2 frasi. Non inventare nulla.`,
 
   // Frasi thinking pre-tradotte — evita che GPT usi il context per hallucinate
   static THINKING_PHRASES = {
+    // ── Thinking operativi ───────────────────────────────────────────────────
     'Un attimo che verifico la disponibilità...': {
       en: 'Just a moment while I check availability...',
       fr: 'Un instant, je vérifie la disponibilité...',
@@ -1924,6 +1925,61 @@ Max 2 frasi. Non inventare nulla.`,
       fr: 'Un instant pendant que je procède à l\'annulation...',
       es: 'Un momento mientras proceso la cancelación...',
       de: 'Einen Moment, ich bearbeite die Stornierung...',
+    },
+    // ── MODIFY / CANCEL — domande statiche ───────────────────────────────────
+    'Certo! A che nome è la prenotazione e per quale data?': {
+      en: 'Of course! What name is the reservation under and for what date?',
+      fr: 'Bien sûr ! Quel est le nom de la réservation et pour quelle date ?',
+      es: 'Por supuesto! ¿A qué nombre está la reserva y para qué fecha?',
+      de: 'Natürlich! Auf welchen Namen läuft die Reservierung und für welches Datum?',
+    },
+    'Può dirmi a che nome è la prenotazione e per quale data?': {
+      en: 'Could you tell me the name on the reservation and the date?',
+      fr: 'Pouvez-vous me dire le nom de la réservation et la date ?',
+      es: '¿Puede decirme el nombre de la reserva y la fecha?',
+      de: 'Können Sie mir den Namen der Reservierung und das Datum nennen?',
+    },
+    'A che nome è la prenotazione?': {
+      en: 'What name is the reservation under?',
+      fr: 'Quel est le nom de la réservation ?',
+      es: '¿A qué nombre está la reserva?',
+      de: 'Auf welchen Namen läuft die Reservierung?',
+    },
+    'Per quale data è la prenotazione?': {
+      en: 'What date is the reservation for?',
+      fr: 'Pour quelle date est la réservation ?',
+      es: '¿Para qué fecha es la reserva?',
+      de: 'Für welches Datum ist die Reservierung?',
+    },
+    'Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?': {
+      en: 'I didn\'t quite catch that. Would you like to change the date, the time, or the number of people?',
+      fr: 'Je n\'ai pas bien compris. Voulez-vous changer la date, l\'heure ou le nombre de personnes ?',
+      es: 'No he entendido bien. ¿Desea cambiar la fecha, la hora o el número de personas?',
+      de: 'Ich habe das nicht ganz verstanden. Möchten Sie das Datum, die Uhrzeit oder die Personenanzahl ändern?',
+    },
+    'Nessun problema, la prenotazione rimane invariata. Arrivederci!': {
+      en: 'No problem, your reservation remains unchanged. Goodbye!',
+      fr: 'Pas de problème, votre réservation reste inchangée. Au revoir !',
+      es: 'Sin problema, su reserva permanece sin cambios. ¡Hasta pronto!',
+      de: 'Kein Problem, Ihre Reservierung bleibt unverändert. Auf Wiedersehen!',
+    },
+    'Non ho capito. Conferma la cancellazione? Dica sì o no.': {
+      en: 'I didn\'t understand. Do you confirm the cancellation? Please say yes or no.',
+      fr: 'Je n\'ai pas compris. Confirmez-vous l\'annulation ? Dites oui ou non.',
+      es: 'No he entendido. ¿Confirma la cancelación? Diga sí o no.',
+      de: 'Ich habe das nicht verstanden. Bestätigen Sie die Stornierung? Bitte sagen Sie ja oder nein.',
+    },
+    'Perfetto! A che nome faccio la prenotazione?': {
+      en: 'Perfect! What name should I put the reservation under?',
+      fr: 'Parfait ! À quel nom dois-je faire la réservation ?',
+      es: '¡Perfecto! ¿A qué nombre hago la reserva?',
+      de: 'Perfekt! Auf welchen Namen soll ich die Reservierung machen?',
+    },
+    'A che nome faccio la prenotazione?': {
+      en: 'What name should I put the reservation under?',
+      fr: 'À quel nom dois-je faire la réservation ?',
+      es: '¿A qué nombre hago la reserva?',
+      de: 'Auf welchen Namen soll ich die Reservierung machen?',
     },
   };
 
@@ -1956,12 +2012,27 @@ Max 2 frasi. Non inventare nulla.`,
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
     const lang = this.language || 'it';
-    const instruction = lang === 'it'
-      ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
-      : `TRANSLATION TASK ONLY. Translate this exact Italian text to ${lang} and say ONLY the translation. Do NOT use any other information from the conversation. Do NOT add anything extra. Translate word for word: "${text}"`;
+
+    // Se la frase è pre-tradotta, usa _sayDirect (nessun rischio hallucination)
+    const preTranslated = OpenAIRealtimeClient.THINKING_PHRASES[text]?.[lang];
+    if (lang !== 'it' && preTranslated) {
+      this._sayDirect(preTranslated);
+      return;
+    }
+
+    // Italiano: frase esatta
+    if (lang === 'it') {
+      this._send({
+        type: 'response.create',
+        response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
+      });
+      return;
+    }
+
+    // Frase dinamica in lingua straniera: GPT traduce
     this._send({
       type: 'response.create',
-      response: { instructions: instruction },
+      response: { instructions: `TRANSLATION TASK ONLY. Translate this exact Italian text to ${lang} and say ONLY the translation. Do NOT use any other information from the conversation. Do NOT add anything. Translate word for word: "${text}"` },
     });
   }
 
