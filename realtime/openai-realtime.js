@@ -517,7 +517,7 @@ export class OpenAIRealtimeClient {
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
 
-    // ── Lingua rilevata automaticamente da Whisper ───────────────────────────
+    // ── Lingua rilevata da GPT ───────────────────────────────────────────────
     this.language = 'it';  // default italiano, aggiornato al primo messaggio
   }
 
@@ -570,7 +570,7 @@ export class OpenAIRealtimeClient {
         instructions: this.systemPrompt,
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'whisper-1' }, // lingua rilevata automaticamente
+        input_audio_transcription: { model: 'whisper-1', language: 'it' }, // solo per log
         turn_detection: {
           type: 'server_vad',
           threshold: 0.4,
@@ -599,7 +599,7 @@ export class OpenAIRealtimeClient {
               },
               name: {
                 type: 'string',
-                description: 'Nome del cliente per la prenotazione oppure "null". Esempi IT: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni. Esempi EN: "my name is Smith"=Smith, "I\'m Johnson"=Johnson, "under the name Brown"=Brown, "name Ferrari"=Ferrari.'
+                description: 'Nome del cliente per la prenotazione oppure "null". Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
               },
               intent: {
                 type: 'string',
@@ -608,7 +608,7 @@ export class OpenAIRealtimeClient {
               },
               language: {
                 type: 'string',
-                description: 'ISO 639-1 language code of the customer message. Examples: "it" for Italian, "en" for English, "fr" for French, "de" for German, "es" for Spanish.'
+                description: 'ISO 639-1 language code of the customer message. Examples: "it"=Italian, "en"=English, "fr"=French, "de"=German, "es"=Spanish.'
               }
             },
             required: ['date', 'time', 'people', 'name', 'intent', 'language']
@@ -646,12 +646,6 @@ export class OpenAIRealtimeClient {
       case 'response.audio.done':
         // Audio finito di generare → aggiorna il timestamp per il deaf period
         this._lastSaidAt = Date.now();
-        // Segnala a _waitForAudioDone() che l'audio è terminato
-        if (this._audioDoneResolve) {
-          const r = this._audioDoneResolve;
-          this._audioDoneResolve = null;
-          r();
-        }
         break;
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
@@ -659,13 +653,6 @@ export class OpenAIRealtimeClient {
           if (!t || t.length < 2) return;
           console.log(`💬 [user]: ${t}`);
           this.onTranscript(t, 'user');
-
-          // Rileva lingua automaticamente da Whisper (al primo messaggio significativo)
-          if (msg.language && msg.language !== this.language) {
-            this.language = msg.language;
-            console.log(`🌐 Lingua rilevata: ${this.language}`);
-          }
-
           // Se in attesa di conferma cancellazione, gestisce qui via testo grezzo
           if (this.cancelState === 'awaiting_confirm') {
             this._handleCancelConfirmText(t).catch(err => console.error('❌ _handleCancelConfirmText:', err));
@@ -800,7 +787,7 @@ REGOLE NOME+DATA insieme:
 - "la prenotazione Ferrari per venerdì" → name: "Ferrari", date: data venerdì
 - "prenotazione Bianchi del 18" → name: "Bianchi", date: ${todayISO.substring(0,8)}18
 
-Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "language" con il codice ISO 639-1 della lingua del cliente (es: "it", "en", "fr", "de", "es").`,
+Rispondi SOLO con il JSON, nessun'altra parola.`,
         max_output_tokens: 80,
       },
     });
@@ -818,7 +805,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
     const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
-    // ── Aggiorna lingua rilevata da GPT ──────────────────────────────────────
+    // ── Aggiorna lingua rilevata ─────────────────────────────────────────────
     if (args.language && args.language !== this.language) {
       this.language = args.language;
       console.log(`🌐 Lingua rilevata da GPT: ${this.language}`);
@@ -848,23 +835,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
           this.modifyState = 'awaiting_changes';
 
           // Se il messaggio contiene già la modifica esplicita, applicala subito
-          // MA solo se almeno un campo è effettivamente diverso da lastReservation
-          // (evita doppio aggiornamento quando il cliente dice "grazie" e GPT estrae il contesto residuo)
           if (newName || newDate || newTime || newPeople) {
-            const r = this.lastReservation;
-            const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-            const actuallyChanged =
-              (newName   && newName   !== r.name)   ||
-              (newDate   && newDate   !== r.date)   ||
-              (newTime   && newTime   !== timeNorm) ||
-              (newPeople && Number(newPeople) !== Number(r.people));
-
-            if (!actuallyChanged) {
-              console.log(`💾 Phase=done MODIFY: dati identici a lastReservation, ignoro`);
-              this._say('Grazie a lei! Posso aiutarla con altro?');
-              return;
-            }
-
             console.log(`💾 Phase=done MODIFY: applico cambio diretto su lastReservation`);
             await this._handleModifyFlow(newDate, newTime, newPeople, newName);
             return;
@@ -941,7 +912,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
         response: {
           instructions: _lang === 'it'
             ? `Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
-            : `The customer has just successfully completed a reservation or operation. Reply warmly and naturally in ${_lang}: if they thank you say "Thank you!" or "You're welcome!"; then ask if there is anything else you can help with. Max 2 sentences. Do not invent information about the restaurant.`,
+            : `The customer has just successfully completed a reservation or operation. Reply warmly in ${_lang}: if they thank you say "Thank you!" or "You're welcome!"; then ask if there is anything else you can help with. Max 2 sentences. Do not invent information about the restaurant.`,
         },
       });
       return;
@@ -958,20 +929,6 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
 
     // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
     if (!args.intent || args.intent === 'unknown') {
-
-      // Se abbiamo date+time+people completi, il cliente sta chiedendo disponibilità
-      // con intenzione implicita di prenotare → inferisci create
-      const hasDate   = args.date   && args.date   !== 'null';
-      const hasTime   = args.time   && args.time   !== 'null';
-      const hasPeople = args.people && args.people !== 'null';
-
-      if (hasDate && hasTime && hasPeople) {
-        console.log(`💬 Intent unknown con dati completi → inferisco create (data=${args.date}, ora=${args.time}, people=${args.people})`);
-        args.intent = 'create';
-        // Riprocessa con intent=create
-        return this._processGPTData(args);
-      }
-
       console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
       const rc = this.restaurantConfig;
       const ls = rc?.lunch_start  || '12:00';
@@ -988,14 +945,13 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       const closedText = closedDays.map(d => dayNames[d]).join(', ');
 
       const _langFree = this.language || 'it';
-      const _scheduleIT = `- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}`;
-      const _scheduleEN = `- Lunch ${ls}-${le}: open ${openForLunch || 'no days'}\n- Dinner ${ds}-${de}: open ${openForDinner || 'no days'}\n- Closed on: ${closedText}`;
+      const _scheduleData = `Lunch ${ls}-${le}: open ${openForLunch || 'no days'} / Dinner ${ds}-${de}: open ${openForDinner || 'no days'} / Closed: ${closedText}`;
       this._send({
         type: 'response.create',
         response: {
           instructions: _langFree === 'it'
-            ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n${_scheduleIT}\nMax 2 frasi. Non inventare nulla.`
-            : `Reply in ${_langFree}. Answer the customer's question using ONLY this data, nothing else:\n${_scheduleEN}\nMax 2 sentences. Do not invent anything.`,
+            ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}\nMax 2 frasi. Non inventare nulla.`
+            : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
         },
       });
       return;
@@ -1095,23 +1051,23 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
 
     // ── Keyword note ─────────────────────────────────────────────────────────
     const noteKeywords = [
-      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine|celiac|gluten[\s-]free/i, note: 'Intolleranza glutine' },
-      { pattern: /lattosio|lactose|lactose[\s-]intolerant/i,               note: 'Intolleranza lattosio' },
-      { pattern: /allergi[ao]|allerg[iy]/i,                                note: 'Allergia (verifica con cliente)' },
-      { pattern: /arachidi|arachide|frutta\s*secca|noci|peanut|tree\s*nut/i, note: 'Allergia frutta secca' },
-      { pattern: /vegetarian[oai]|vegetarian/i,                            note: 'Vegetariano' },
-      { pattern: /vegan[oai]|vegan/i,                                      note: 'Vegano' },
-      { pattern: /seggiol[eo]n[eo]|seggiolino|highchair|high\s*chair/i,   note: 'Richiesto seggiolone' },
-      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol|baby|infant/i, note: 'Neonato/bambino piccolo' },
-      { pattern: /anniversario|anniversary/i,                              note: 'Anniversario' },
-      { pattern: /compleanno|birthday/i,                                   note: 'Compleanno' },
-      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento|proposal|engagement/i, note: 'Proposta di matrimonio' },
-      { pattern: /occasion[ei]\s*speciale|special\s*occasion/i,           note: 'Occasione speciale' },
-      { pattern: /romantico|romantica|romantic/i,                          note: 'Cena romantica' },
-      { pattern: /finestra|vista|window\s*seat|window\s*table/i,          note: 'Tavolo vicino finestra' },
-      { pattern: /esterno|terrazza|giardino|dehor|outdoor|terrace/i,      note: 'Tavolo esterno/terrazza' },
-      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin|wheelchair|disabled/i, note: 'Accessibilità disabili' },
-      { pattern: /tranquill[oa]|riservat[oa]|quiet|private/i,             note: 'Tavolo tranquillo/riservato' },
+      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
+      { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
+      { pattern: /allergi[ao]/i,                                    note: 'Allergia (verifica con cliente)' },
+      { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
+      { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
+      { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
+      { pattern: /seggiol[eo]n[eo]|seggiolino|highchair/i,          note: 'Richiesto seggiolone' },
+      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
+      { pattern: /anniversario/i,                                   note: 'Anniversario' },
+      { pattern: /compleanno|birthday/i,                            note: 'Compleanno' },
+      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,     note: 'Proposta di matrimonio' },
+      { pattern: /occasion[ei]\s*speciale/i,                        note: 'Occasione speciale' },
+      { pattern: /romantico|romantica/i,                            note: 'Cena romantica' },
+      { pattern: /finestra|vista/i,                                 note: 'Tavolo vicino finestra' },
+      { pattern: /esterno|terrazza|giardino|dehor/i,                note: 'Tavolo esterno/terrazza' },
+      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,          note: 'Accessibilità disabili' },
+      { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
     ];
 
     const newNotes = [];
@@ -1133,7 +1089,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
     }
 
     // ── Telefono alternativo ─────────────────────────────────────────────────
-    const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|number|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
+    const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
     const phoneMatch = text.match(phonePattern);
     if (phoneMatch && !this.data.alternativePhone) {
       const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
@@ -1364,14 +1320,14 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       if (r1?.found && isValid(r1.reservation)) return r1.reservation;
     }
 
-    // Stadio 2: solo nome
+    // Stadio 2: solo nome (GPT potrebbe aver estratto data di destinazione)
     if (searchName) {
       console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
       const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName });
       if (r2?.found && isValid(r2.reservation)) return r2.reservation;
     }
 
-    // Stadio 3: solo telefono
+    // Stadio 3: solo telefono (cliente corregge nome, es: "Conti"→"Conte")
     if (phone) {
       console.log(`🔍 ${logPrefix} fallback: solo telefono=${phone}`);
       const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone });
@@ -1382,16 +1338,15 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
   }
 
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
-    // Phase 1: primo messaggio modify → cerca subito se abbiamo nome, data, o solo telefono
+    // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
     if (!this.modifyState) {
       this.modifyState = 'awaiting_search';
 
-      if (newName) this.data.name = newName;
-      if (newDate) this.data.date = newDate;
-
-      // Se abbiamo almeno un dato → cerca subito (il fallback telefono copre i casi senza nome)
-      if (newName || newDate || this.callerPhone) {
-        const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg'));
+      // Se il primo messaggio contiene già nome E data, cerca subito
+      if (newName && newDate) {
+        if (newName) this.data.name = newName;
+        if (newDate) this.data.date = newDate;
+        const r = await this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg');
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1401,12 +1356,31 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
           this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
         } else {
-          this._say('Certo! A che nome è la prenotazione e per quale data?');
+          this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare con un altro nome o data?`);
         }
         return;
       }
 
-      // Nessun dato disponibile
+      // Se abbiamo solo il nome (senza data), cerca subito per nome/telefono
+      if (newName && !newDate) {
+        if (newName) this.data.name = newName;
+        console.log(`🔍 MODIFY primo msg: solo nome=${newName}, cerco senza data`);
+        const r = await this._findReservationWithFallback(newName, null, 'MODIFY solo nome');
+        if (r) {
+          this.foundReservation = r;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.modifyState = 'awaiting_changes';
+          this._injectContext(r);
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
+        } else {
+          this._say('A che nome è la prenotazione e per quale data?');
+        }
+        return;
+      }
+
+      // Altrimenti chiedi nome e data
       this._say('Certo! A che nome è la prenotazione e per quale data?');
       return;
     }
@@ -1433,7 +1407,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
         return;
       }
 
-      const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(searchName, searchDate, 'MODIFY'));
+      const r = await this._findReservationWithFallback(searchName, searchDate, 'MODIFY');
       if (r) {
         this.foundReservation = r;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1456,16 +1430,20 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       const timeOrig = r.time?.length >= 5 ? (r.time.length === 5 ? r.time + ':00' : r.time) : null;
 
       if (!timeOrig && !newTime) {
+        // Non abbiamo né l'orario originale né uno nuovo — chiedi
         this._say(`Non riesco a leggere l'orario della prenotazione. A che ora era prevista?`);
         return;
       }
 
+      // Fix 2: accetta newTime solo se diverso da timeOrig (evita che GPT inventi orari)
+      // Se il cliente dice "stessa ora" o non menziona l'orario, GPT può estrarre un orario
+      // diverso dalla conversazione precedente — lo ignoriamo e usiamo sempre timeOrig
       const timeChangedExplicitly = newTime && newTime !== timeOrig;
 
       const updDate   = newDate   || r.date;
       const updTime   = timeChangedExplicitly ? newTime : timeOrig;
       const updPeople = newPeople || Number(r.people);
-      const updName   = r.name;  // Mantieni sempre il nome originale della prenotazione
+      const updName   = newName   || r.name;
 
       const dateChanged   = newDate   && newDate   !== r.date;
       const timeChanged   = timeChangedExplicitly;
@@ -1479,13 +1457,13 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
-        const checkResult = await this._sayThenDo('Un attimo che verifico la disponibilità...', () => this._callAppsScript({
+        const checkResult = await this._callAppsScript({
           action: 'check_availability',
           data: updDate,
           ora: updTime,
           persone: updPeople,
           existingPeople: Number(r.people),
-        }));
+        });
 
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
           this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro orario?`);
@@ -1494,7 +1472,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       }
 
       console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
-      const updateResult = await this._sayThenDo('Perfetto, aggiorno subito...', () => this._callAppsScript({
+      const updateResult = await this._callAppsScript({
         action: 'update_reservation',
         eventId: r.eventId,
         nome: updName,
@@ -1503,7 +1481,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
         persone: updPeople,
         telefono: r.phone || this.callerPhone || '',
         notes: this.data.notes || r.notes || '',
-      }));
+      });
 
       this.phase = 'done';
       if (updateResult?.success) {
@@ -1531,16 +1509,14 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
   // ── CANCEL flow ───────────────────────────────────────────────────────────
 
   async _handleCancelFlow(newDate, newName) {
-    // Phase 1: primo messaggio cancel → cerca subito se abbiamo nome, data, o solo telefono
+    // Phase 1: primo messaggio cancel → se contiene già nome e data, cerca subito
     if (!this.cancelState) {
       this.cancelState = 'awaiting_search';
 
-      if (newName) this.data.name = newName;
-      if (newDate) this.data.date = newDate;
-
-      // Se abbiamo almeno un dato (nome, data, o solo il telefono del chiamante) → cerca subito
-      if (newName || newDate || this.callerPhone) {
-        const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg'));
+      if (newName && newDate) {
+        if (newName) this.data.name = newName;
+        if (newDate) this.data.date = newDate;
+        const r = await this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg');
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1550,7 +1526,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
           this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
         } else {
-          this._say('Certo! A che nome è la prenotazione e per quale data?');
+          this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
         }
         return;
       }
@@ -1580,7 +1556,7 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
         return;
       }
 
-      const r = await this._sayThenDo('Un momento, cerco la prenotazione...', () => this._findReservationWithFallback(searchName, searchDate, 'CANCEL'));
+      const r = await this._findReservationWithFallback(searchName, searchDate, 'CANCEL');
       if (r) {
         this.foundReservation = r;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1617,13 +1593,13 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
       console.log(`🗑️ CANCEL conferma: nome=${r.name}, data=${r.date}, ora=${timeNorm}`);
 
-      const result = await this._sayThenDo('Un attimo che procedo con la cancellazione...', () => this._callAppsScript({
+      const result = await this._callAppsScript({
         action: 'cancel_reservation',
         nome: r.name,
         data: r.date,
         ora: timeNorm,
         telefono: r.phone || this.callerPhone || '',
-      }));
+      });
 
       this.phase = 'done';
       if (result?.success || result?.status === 'CANCELLED') {
@@ -1681,13 +1657,15 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       return;
     }
 
+    // Silenzio durante il check — GPT non parla fino al risultato
+
     try {
-      const result = await this._sayThenDo('Un attimo che verifico la disponibilità...', async () => this._callAppsScript({
+      const result = await this._callAppsScript({
         action: 'check_availability',
         data: date,
         ora: time,
         persone: people,
-      }));
+      });
 
       if (result?.success || result?.reason === 'slot_available') {
         console.log('✅ Slot disponibile');
@@ -1841,19 +1819,18 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /^(?:no[,\s]+)?a\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
-      // Inglese / universale
+      // Inglese
       /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\bi(?:'m|\s+am)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       /\bname\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bbook(?:ing)?\s+(?:for|under)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       // Francese
       /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       // Spagnolo
       /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Generico — nome da solo o ultima parola (fallback)
+      // Generico (fallback)
       /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
     ];
 
@@ -1876,20 +1853,8 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
 
   // ── Say / Send ────────────────────────────────────────────────────────────
 
-  // Attende che response.audio.done arrivi (max 3s per sicurezza)
-  _waitForAudioDone() {
-    return new Promise(resolve => {
-      const timeout = setTimeout(resolve, 3000);
-      this._audioDoneResolve = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-    });
-  }
-
-  // Frasi thinking pre-tradotte — evita che GPT usi il context per hallucinate
+  // Frasi operative pre-tradotte — evita hallucination da context window
   static THINKING_PHRASES = {
-    // ── Thinking operativi ───────────────────────────────────────────────────
     'Un attimo che verifico la disponibilità...': {
       en: 'Just a moment while I check availability...',
       fr: 'Un instant, je vérifie la disponibilité...',
@@ -1914,36 +1879,23 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       es: 'Un momento mientras proceso la cancelación...',
       de: 'Einen Moment, ich bearbeite die Stornierung...',
     },
-    // ── MODIFY / CANCEL — domande statiche ───────────────────────────────────
+    'Perfetto! A che nome faccio la prenotazione?': {
+      en: 'Perfect! What name should I put the reservation under?',
+      fr: 'Parfait ! À quel nom dois-je faire la réservation ?',
+      es: '¡Perfecto! ¿A qué nombre hago la reserva?',
+      de: 'Perfekt! Auf welchen Namen soll ich die Reservierung machen?',
+    },
+    'A che nome faccio la prenotazione?': {
+      en: 'What name should I put the reservation under?',
+      fr: 'À quel nom dois-je faire la réservation ?',
+      es: '¿A qué nombre hago la reserva?',
+      de: 'Auf welchen Namen soll ich die Reservierung machen?',
+    },
     'Certo! A che nome è la prenotazione e per quale data?': {
       en: 'Of course! What name is the reservation under and for what date?',
       fr: 'Bien sûr ! Quel est le nom de la réservation et pour quelle date ?',
       es: 'Por supuesto! ¿A qué nombre está la reserva y para qué fecha?',
       de: 'Natürlich! Auf welchen Namen läuft die Reservierung und für welches Datum?',
-    },
-    'Può dirmi a che nome è la prenotazione e per quale data?': {
-      en: 'Could you tell me the name on the reservation and the date?',
-      fr: 'Pouvez-vous me dire le nom de la réservation et la date ?',
-      es: '¿Puede decirme el nombre de la reserva y la fecha?',
-      de: 'Können Sie mir den Namen der Reservierung und das Datum nennen?',
-    },
-    'A che nome è la prenotazione?': {
-      en: 'What name is the reservation under?',
-      fr: 'Quel est le nom de la réservation ?',
-      es: '¿A qué nombre está la reserva?',
-      de: 'Auf welchen Namen läuft die Reservierung?',
-    },
-    'Per quale data è la prenotazione?': {
-      en: 'What date is the reservation for?',
-      fr: 'Pour quelle date est la réservation ?',
-      es: '¿Para qué fecha es la reserva?',
-      de: 'Für welches Datum ist die Reservierung?',
-    },
-    'Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?': {
-      en: 'I didn\'t quite catch that. Would you like to change the date, the time, or the number of people?',
-      fr: 'Je n\'ai pas bien compris. Voulez-vous changer la date, l\'heure ou le nombre de personnes ?',
-      es: 'No he entendido bien. ¿Desea cambiar la fecha, la hora o el número de personas?',
-      de: 'Ich habe das nicht ganz verstanden. Möchten Sie das Datum, die Uhrzeit oder die Personenanzahl ändern?',
     },
     'Nessun problema, la prenotazione rimane invariata. Arrivederci!': {
       en: 'No problem, your reservation remains unchanged. Goodbye!',
@@ -1957,34 +1909,37 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
       es: 'No he entendido. ¿Confirma la cancelación? Diga sí o no.',
       de: 'Ich habe das nicht verstanden. Bestätigen Sie die Stornierung? Bitte sagen Sie ja oder nein.',
     },
-    'Perfetto! A che nome faccio la prenotazione?': {
-      en: 'Perfect! What name should I put the reservation under?',
-      fr: 'Parfait ! À quel nom dois-je faire la réservation ?',
-      es: '¡Perfecto! ¿A qué nombre hago la reserva?',
-      de: 'Perfekt! Auf welchen Namen soll ich die Reservierung machen?',
-    },
-    'A che nome faccio la prenotazione?': {
-      en: 'What name should I put the reservation under?',
-      fr: 'À quel nom dois-je faire la réservation ?',
-      es: '¿A qué nombre hago la reserva?',
-      de: 'Auf welchen Namen soll ich die Reservierung machen?',
-    },
   };
 
-  // Dice una frase "thinking" pre-tradotta e aspetta che finisca prima di eseguire l'operazione lenta
-  async _sayThenDo(italianMsg, asyncOperation) {
+  // Dice una frase: cerca prima nel dizionario pre-tradotto, poi usa GPT
+  _say(text) {
+    console.log(`💉 [say]: ${text.substring(0, 100)}`);
     const lang = this.language || 'it';
-    // Usa la versione pre-tradotta se disponibile, altrimenti usa l'italiano
-    const translated = OpenAIRealtimeClient.THINKING_PHRASES[italianMsg]?.[lang];
-    const textToSay = (lang !== 'it' && translated) ? translated : italianMsg;
-    // _sayDirect: dice la frase ESATTAMENTE senza passare per GPT translation
-    // (evita hallucination da context window)
-    this._sayDirect(textToSay);
-    await this._waitForAudioDone();
-    return await asyncOperation();
+
+    // Frase italiana → non serve traduzione
+    if (lang === 'it') {
+      this._send({
+        type: 'response.create',
+        response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
+      });
+      return;
+    }
+
+    // Frase pre-tradotta disponibile → usa _sayDirect (no hallucination)
+    const preTranslated = OpenAIRealtimeClient.THINKING_PHRASES[text]?.[lang];
+    if (preTranslated) {
+      this._sayDirect(preTranslated);
+      return;
+    }
+
+    // Frase dinamica → GPT traduce (TRANSLATION TASK ONLY evita di usare il context)
+    this._send({
+      type: 'response.create',
+      response: { instructions: `TRANSLATION TASK ONLY. Translate this Italian text to ${lang} and say ONLY the translation, nothing else. Do NOT use conversation context. Translate word for word: "${text}"` },
+    });
   }
 
-  // Dice una frase esatta senza traduzione GPT (per frasi pre-tradotte)
+  // Dice una frase già nella lingua giusta senza passare per traduzione GPT
   _sayDirect(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
     const lang = this.language || 'it';
@@ -1994,33 +1949,6 @@ Rispondi SOLO con il JSON, nessun'altra parola. Aggiungi sempre il campo "langua
     this._send({
       type: 'response.create',
       response: { instructions: instruction },
-    });
-  }
-
-  _say(text) {
-    console.log(`💉 [say]: ${text.substring(0, 100)}`);
-    const lang = this.language || 'it';
-
-    // Se la frase è pre-tradotta, usa _sayDirect (nessun rischio hallucination)
-    const preTranslated = OpenAIRealtimeClient.THINKING_PHRASES[text]?.[lang];
-    if (lang !== 'it' && preTranslated) {
-      this._sayDirect(preTranslated);
-      return;
-    }
-
-    // Italiano: frase esatta
-    if (lang === 'it') {
-      this._send({
-        type: 'response.create',
-        response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
-      });
-      return;
-    }
-
-    // Frase dinamica in lingua straniera: GPT traduce
-    this._send({
-      type: 'response.create',
-      response: { instructions: `TRANSLATION TASK ONLY. Translate this exact Italian text to ${lang} and say ONLY the translation. Do NOT use any other information from the conversation. Do NOT add anything. Translate word for word: "${text}"` },
     });
   }
 
