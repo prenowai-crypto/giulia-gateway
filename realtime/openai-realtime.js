@@ -1316,21 +1316,21 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // Stadio 1: nome + data
     if (searchName && searchDate) {
       console.log(`🔍 ${logPrefix} cerca: nome=${searchName}, data=${searchDate}`);
-      const r1 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, data: searchDate });
+      const r1 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, data: searchDate, sheet: 'Prenotazioni' });
       if (r1?.found && isValid(r1.reservation)) return r1.reservation;
     }
 
     // Stadio 2: solo nome (GPT potrebbe aver estratto data di destinazione)
     if (searchName) {
       console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
-      const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName });
+      const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, sheet: 'Prenotazioni' });
       if (r2?.found && isValid(r2.reservation)) return r2.reservation;
     }
 
     // Stadio 3: solo telefono (cliente corregge nome, es: "Conti"→"Conte")
     if (phone) {
       console.log(`🔍 ${logPrefix} fallback: solo telefono=${phone}`);
-      const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone });
+      const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone, sheet: 'Prenotazioni' });
       if (r3?.found && isValid(r3.reservation)) return r3.reservation;
     }
 
@@ -1346,6 +1346,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (newName && newDate) {
         if (newName) this.data.name = newName;
         if (newDate) this.data.date = newDate;
+        this._say('Un momento, cerco la prenotazione...');
         const r = await this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg');
         if (r) {
           this.foundReservation = r;
@@ -1365,6 +1366,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (newName && !newDate) {
         if (newName) this.data.name = newName;
         console.log(`🔍 MODIFY primo msg: solo nome=${newName}, cerco senza data`);
+        this._say('Un momento, cerco la prenotazione...');
         const r = await this._findReservationWithFallback(newName, null, 'MODIFY solo nome');
         if (r) {
           this.foundReservation = r;
@@ -1407,6 +1409,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
 
+      this._say('Un momento, cerco la prenotazione...');
       const r = await this._findReservationWithFallback(searchName, searchDate, 'MODIFY');
       if (r) {
         this.foundReservation = r;
@@ -1457,6 +1460,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
+        this._say('Un attimo che verifico la disponibilità...');
         const checkResult = await this._callAppsScript({
           action: 'check_availability',
           data: updDate,
@@ -1472,6 +1476,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
 
       console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
+      this._say('Perfetto, aggiorno subito...');
       const updateResult = await this._callAppsScript({
         action: 'update_reservation',
         eventId: r.eventId,
@@ -1516,6 +1521,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (newName && newDate) {
         if (newName) this.data.name = newName;
         if (newDate) this.data.date = newDate;
+        this._say('Un momento, cerco la prenotazione...');
         const r = await this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg');
         if (r) {
           this.foundReservation = r;
@@ -1556,6 +1562,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
 
+      this._say('Un momento, cerco la prenotazione...');
       const r = await this._findReservationWithFallback(searchName, searchDate, 'CANCEL');
       if (r) {
         this.foundReservation = r;
@@ -1592,7 +1599,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
       console.log(`🗑️ CANCEL conferma: nome=${r.name}, data=${r.date}, ora=${timeNorm}`);
-
+      this._say('Un attimo che procedo con la cancellazione...');
       const result = await this._callAppsScript({
         action: 'cancel_reservation',
         nome: r.name,
@@ -1635,6 +1642,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const { date, time, people } = this.data;
     const rc = this.restaurantConfig;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
+    this._say('Un attimo che verifico la disponibilità...');
 
     // ── TEST 9: Gruppi grandi ─────────────────────────────────────────────────
     const eventThreshold = Number(rc?.event_threshold) || 45;
