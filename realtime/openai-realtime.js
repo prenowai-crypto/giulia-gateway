@@ -868,6 +868,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       // Nuovo intent create → reset e riparte
       if (intent === 'create') {
+        // Guard anti-duplicato: se GPT ha estratto gli stessi dati dell'ultima prenotazione
+        // confermata (es. dopo "grazie" ricorda il contesto), NON fare reset.
+        // Si tratta di cortesia post-prenotazione, non di una nuova richiesta.
+        const lr = this.lastReservation;
+        if (lr && newDate === lr.date && newTime === lr.time &&
+            String(newPeople) === String(lr.people) && newName === lr.name) {
+          console.log('🛡️ Phase=done: create con dati identici a lastReservation → saluto senza reset');
+          this._say('Prego! A presto!');
+          return;
+        }
+
         this.intent = 'create';
         this.phase = 'collecting';
         this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
