@@ -652,6 +652,7 @@ export class OpenAIRealtimeClient {
           const t = msg.transcript.trim();
           if (!t || t.length < 2) return;
           console.log(`💬 [user]: ${t}`);
+          this.lastTranscript = t;   // 🆕 salva per cross-check people
           this.onTranscript(t, 'user');
           // Se in attesa di conferma cancellazione, gestisce qui via testo grezzo
           if (this.cancelState === 'awaiting_confirm') {
@@ -802,8 +803,18 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
     const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
-    const newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
+    let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
+    // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
+    if (newPeople && this.lastTranscript) {
+      const parsedPeople = PeopleManager.parseFromText(this.lastTranscript);
+      if (parsedPeople && parsedPeople !== newPeople) {
+        console.log(`⚠️ People mismatch: GPT=${newPeople}, transcript="${this.lastTranscript}" → parsedPeople=${parsedPeople} — uso transcript`);
+        newPeople = parsedPeople;
+      }
+    }
 
     // ── Aggiorna lingua rilevata ─────────────────────────────────────────────
     if (args.language && args.language !== this.language) {
