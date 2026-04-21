@@ -1441,6 +1441,32 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       const r = this.foundReservation;
       if (!r) { this.modifyState = null; return; }
 
+      // Guard v3.9.35: se l'utente fornisce un nome DIVERSO da quello trovato
+      // (es: "No, io sono Rossi" dopo aver trovato "Sposta") → ri-cerca con il nome corretto
+      // invece di aggiornare l'evento sbagliato.
+      if (newName && r.name && newName.toLowerCase() !== r.name.toLowerCase()) {
+        const onlyNameChanged = !newDate && !newTime && !newPeople;
+        if (onlyNameChanged) {
+          // Solo il nome è cambiato → è una correzione, non una modifica di campi
+          console.log(`🔄 MODIFY: nome corretto "${r.name}" → "${newName}", ri-cerca`);
+          this.modifyState = 'awaiting_search';
+          this.data.name = newName;
+          this.foundReservation = null;
+          const found = await this._findReservationWithFallback(newName, r.date, 'MODIFY ri-cerca');
+          if (found) {
+            this.foundReservation = found;
+            const timeNorm = found.time?.length === 5 ? found.time + ':00' : (found.time || '');
+            const dateDisplay = DateManager.formatForDisplay(found.date);
+            const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+            this.modifyState = 'awaiting_changes';
+            this._say(`Ho trovato: ${found.name}, ${dateDisplay} alle ${timeDisplay} per ${found.people} persone. Cosa vuole modificare?`);
+          } else {
+            this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare?`);
+          }
+          return;
+        }
+      }
+
       const timeOrig = r.time?.length >= 5 ? (r.time.length === 5 ? r.time + ':00' : r.time) : null;
 
       if (!timeOrig && !newTime) {
