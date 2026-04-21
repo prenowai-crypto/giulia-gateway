@@ -996,7 +996,19 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     if (newDate   && newDate   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${newDate}`);     this.data.date   = newDate; }
     if (newTime   && newTime   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${newTime}`);     this.data.time   = newTime; }
-    if (newPeople && newPeople !== this.data.people) { console.log(`👥 people: ${this.data.people} → ${newPeople}`); this.data.people = newPeople; }
+    if (newPeople && newPeople !== this.data.people) {
+      // 🔒 Lock: se il transcript corrente non contiene un numero esplicito di persone
+      // e people è già stato validato, non sovrascrivere con il valore GPT.
+      // Evita che al 2° GPT call (es: user dice "Ferrari.") GPT ri-estragga people
+      // dal contesto della conversazione e sovrascriva il valore già corretto.
+      const transcriptPeople = this.lastTranscript ? PeopleManager.parseFromText(this.lastTranscript) : null;
+      if (transcriptPeople === null && this.data.people !== null) {
+        console.log(`🔒 People locked (${this.data.people}): transcript senza numeri, ignoro GPT=${newPeople}`);
+      } else {
+        console.log(`👥 people: ${this.data.people} → ${newPeople}`);
+        this.data.people = newPeople;
+      }
+    }
     if (newName   && !this.data.name)                { console.log(`👤 name:   ${newName}`);                         this.data.name   = newName; }
 
     console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people} name=${this.data.name}`);
