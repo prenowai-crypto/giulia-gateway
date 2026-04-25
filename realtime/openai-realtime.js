@@ -688,7 +688,8 @@ export class OpenAIRealtimeClient {
         if (this._awaitingExtraction && msg.text) {
           this._awaitingExtraction = false;
           try {
-            const json = msg.text.trim().replace(/```json|```/g, '').trim();
+            // Strip sia ```json/``` (function call text) sia il prefisso "json\n" (GPT text mode)
+            const json = msg.text.trim().replace(/^```json\s*|^```\s*|^json\s*/i, '').replace(/```\s*$/g, '').trim();
             const args = JSON.parse(json);
             console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
             this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
@@ -817,9 +818,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     }
 
     // ── Aggiorna lingua rilevata ─────────────────────────────────────────────
+    // Guard: cambia lingua solo se il transcript corrente contiene almeno 3 parole
+    // ed è coerente con la lingua rilevata. Evita false detections su parole corte
+    // ambigue (es: "Salve" → es, "Merci" → fr su un singolo termine).
     if (args.language && args.language !== this.language) {
-      this.language = args.language;
-      console.log(`🌐 Lingua rilevata da GPT: ${this.language}`);
+      const transcriptWordCount = this.lastTranscript ? this.lastTranscript.trim().split(/\s+/).length : 0;
+      if (transcriptWordCount >= 3) {
+        this.language = args.language;
+        console.log(`🌐 Lingua rilevata da GPT: ${this.language}`);
+      } else {
+        console.log(`🌐 Lingua GPT=${args.language} ignorata (transcript troppo corto: "${this.lastTranscript}")`);
+      }
     }
 
     // ── Fix 1: CANCEL confirm intercetta anche qui (GPT più veloce di Whisper) ─
@@ -976,6 +985,25 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
         },
       });
+      return;
+    }
+
+    // 🆕 Guard intent-switch: se GPT dice create/unknown ma siamo in modify/cancel,
+    // l'utente sta correggendo l'intenzione → reset completo e riparte da CREATE.
+    // Esempio: "Salve vorrei modificare" → poi "No, voglio fare una NUOVA prenotazione"
+    const inModifyOrCancel = (this.intent === 'modify' || this.intent === 'cancel');
+    const gptSaysCreate = (intent === 'create');
+    if (inModifyOrCancel && gptSaysCreate && (newDate || newTime || newPeople)) {
+      console.log(`🔄 Intent-switch rilevato: ${this.intent} → create, reset`);
+      this.intent = 'create';
+      this.phase = 'collecting';
+      this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
+      this.modifyState = null;
+      this.cancelState = null;
+      this.foundReservation = null;
+      this.checkingSlot = false;
+      this.availDone = false;
+      await this._processGPTData(args);
       return;
     }
 
@@ -1590,7 +1618,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.cancelState = 'awaiting_confirm';
           this._injectContext(r);
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+          // v3.9.35: se il nome trovato è diverso da quello cercato (fallback telefono),
+          // avvisa l'utente invece di presentarlo silenziosamente come corretto
+          const nameMismatch = newName && r.name && r.name.toLowerCase() !== newName.toLowerCase();
+          if (nameMismatch) {
+            this._say(`Tramite il suo numero ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. È la sua prenotazione? Conferma la cancellazione?`);
+          } else {
+            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+          }
         } else {
           this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
         }
@@ -1631,7 +1666,12 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
         this.cancelState = 'awaiting_confirm';
         this._injectContext(r);
-        this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+        const nameMismatch2 = searchName && r.name && r.name.toLowerCase() !== searchName.toLowerCase();
+        if (nameMismatch2) {
+          this._say(`Tramite il suo numero ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. È la sua prenotazione? Conferma la cancellazione?`);
+        } else {
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+        }
       } else {
         this._say(`Non trovo nessuna prenotazione a nome ${searchName}.`);
       }
