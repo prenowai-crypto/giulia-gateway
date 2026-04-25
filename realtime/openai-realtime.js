@@ -1002,6 +1002,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this.foundReservation = null;
       this.checkingSlot = false;
       this.availDone = false;
+      this.lastTranscript = null; // 🆕 evita che il cross-check parsePeople giri sul transcript precedente
       await this._processGPTData(args);
       return;
     }
@@ -1402,6 +1403,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
     if (!this.modifyState) {
       this.modifyState = 'awaiting_search';
+      // 🆕 Cancella eventuale risposta GPT in corso
+      this._send({ type: 'response.cancel' });
 
       // Se il primo messaggio contiene già nome E data, cerca subito
       if (newName && newDate) {
@@ -1604,6 +1607,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // Phase 1: primo messaggio cancel → se contiene già nome e data, cerca subito
     if (!this.cancelState) {
       this.cancelState = 'awaiting_search';
+      // 🆕 Cancella eventuale risposta GPT in corso: vogliamo controllare noi il dialogo
+      this._send({ type: 'response.cancel' });
 
       if (newName && newDate) {
         if (newName) this.data.name = newName;
@@ -1688,6 +1693,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     if (isNo) {
       this.phase = 'done';
+      this.cancelState = null;        // 🆕 reset: utente ha rifiutato, uscire dalla confirm loop
+      this.foundReservation = null;
       this._say('Nessun problema, la prenotazione rimane invariata. Arrivederci!');
       return;
     }
