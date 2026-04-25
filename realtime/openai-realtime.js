@@ -988,11 +988,10 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       return;
     }
 
-    // 🆕 Guard intent-switch: se GPT dice create/unknown ma siamo in modify/cancel,
+    // 🆕 Guard intent-switch: se GPT dice create ma siamo in modify/cancel,
     // l'utente sta correggendo l'intenzione → reset completo e riparte da CREATE.
-    // Esempio: "Salve vorrei modificare" → poi "No, voglio fare una NUOVA prenotazione"
     const inModifyOrCancel = (this.intent === 'modify' || this.intent === 'cancel');
-    const gptSaysCreate = (intent === 'create');
+    const gptSaysCreate = (args.intent === 'create');
     if (inModifyOrCancel && gptSaysCreate && (newDate || newTime || newPeople)) {
       console.log(`🔄 Intent-switch rilevato: ${this.intent} → create, reset`);
       this.intent = 'create';
