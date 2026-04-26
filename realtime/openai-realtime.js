@@ -1613,7 +1613,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (updateResult?.success) {
         const dateDisplay = DateManager.formatForDisplay(updDate);
         const timeDisplay = TimeManager.formatForDisplay(updTime);
-        const firstName = (updName || '').split(' ')[0];
+        const firstName = updName || ''; // usa nome completo (supporta nomi composti: De Luca, Di Maio, ecc.)
         // Salva riferimento alla prenotazione aggiornata per uso post-done
         this.lastReservation = {
           eventId: r.eventId,
@@ -1903,7 +1903,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const { date, time, people, name } = this.data;
     const dateDisplay  = DateManager.formatForDisplay(date);
     const timeDisplay  = TimeManager.formatForDisplay(time);
-    const firstName    = (name || '').split(' ')[0];
+    const firstName    = name || ''; // usa nome completo (supporta nomi composti: De Luca, Di Maio, ecc.)
 
     this.phase = 'done';
 
