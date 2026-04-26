@@ -551,6 +551,10 @@ export class OpenAIRealtimeClient {
     const now = DateManager.getNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayISO = DateManager.toISO(today);
+    const tomorrowDate = new Date(today); tomorrowDate.setDate(today.getDate() + 1);
+    const tomorrowISO = DateManager.toISO(tomorrowDate);
+    const dayAfterDate = new Date(today); dayAfterDate.setDate(today.getDate() + 2);
+    const dayAfterISO = DateManager.toISO(dayAfterDate);
     const dayName = DateManager.DAYS_IT[now.getDay()];
 
     // Calendario esplicito dei prossimi 7 giorni
@@ -788,7 +792,11 @@ REGOLE DATE/ORA:
 - "alla stessa ora" → time: null (non inventare)
 - "stasera" / "questa sera" / "stanotte" → date: ${todayISO} (SEMPRE oggi, mai altra data)
 - "oggi" → date: ${todayISO}
-- REGOLA CRITICA ANCORE TEMPORALI: "domani", "dopodomani", "ieri" sono SEMPRE calcolati a partire da OGGI (${todayISO}), MAI relativi a date precedentemente menzionate nella conversazione. Esempio: se oggi è domenica 26 e prima si parlava di lunedì 27, "dopodomani" = martedì 28 (26+2), NON mercoledì 29 (27+2).
+- "domani" → date: ${tomorrowISO} SEMPRE. È il giorno successivo a oggi. MAI il prossimo giorno con lo stesso nome della settimana.
+- "dopodomani" → date: ${dayAfterISO} SEMPRE. È due giorni dopo oggi.
+- REGOLA CRITICA ANCORE TEMPORALI: "domani" e "dopodomani" sono calcolati da OGGI (${todayISO}), MAI da date precedenti nella conversazione.
+
+REGOLA CRITICA NOME: estrai il nome ESATTAMENTE come pronunciato nel messaggio corrente, ignorando qualsiasi nome presente nel contesto precedente della conversazione. Se il cliente corregge il nome ("mi chiamo X non Y", "sono X", "il mio nome è X") → usa SEMPRE X esattamente come detto, non modificarlo.
 
 REGOLE NOME+DATA insieme:
 - "a nome Rossi per sabato" → name: "Rossi", date: data sabato
