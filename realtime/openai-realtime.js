@@ -604,7 +604,7 @@ export class OpenAIRealtimeClient {
               intent: {
                 type: 'string',
                 enum: ['create', 'modify', 'cancel', 'unknown'],
-                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica, cancel=cancellazione, unknown=non chiaro.'
+                description: 'Intenzione del cliente: create=nuova prenotazione DISTINTA, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro. IMPORTANTE: se il cliente corregge una prenotazione appena confermata nella stessa chiamata (es: "no intendevo dopodomani", "aspetta sabato non venerdì", "ho detto male la data") usa SEMPRE modify, mai create. Usa create SOLO se il cliente vuole esplicitamente un tavolo aggiuntivo/separato (es: "vorrei anche un altro tavolo", "prenoto per un altro ufficio").'
               },
               language: {
                 type: 'string',
@@ -770,10 +770,12 @@ Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente
 {"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
 
 REGOLE INTENT:
-- create = vuole fare UNA NUOVA prenotazione ("vorrei prenotare", "un tavolo per", "prenoto")
-- modify = vuole cambiare una prenotazione ESISTENTE ("modificare", "spostare", "cambiare", "ho prenotato e vorrei")
+- create = vuole fare UN NUOVO tavolo SEPARATO ("vorrei prenotare", "un tavolo per", "prenoto", "anche un altro tavolo", "per un altro ufficio")
+- modify = vuole cambiare una prenotazione ESISTENTE ("modificare", "spostare", "cambiare", "ho prenotato e vorrei") OPPURE sta correggendo qualcosa detto nel corso della STESSA chiamata (es: "no intendevo dopodomani", "aspetta volevo dire sabato", "ho sbagliato il giorno", "no non venerdì ma sabato")
 - cancel = vuole cancellare ("cancellare", "annullare", "disdire")
 - unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
+
+REGOLA CRITICA CORREZIONI: se nella stessa chiamata il cliente ha già prenotato e poi corregge un dato (data, ora, persone), usa SEMPRE intent=modify. Esempi: "no dopodomani non domani" → modify, "aspetta intendevo sabato" → modify, "ho detto male, sono in 4 non 3" → modify. Usa create SOLO se il cliente chiede esplicitamente un SECONDO tavolo separato.
 
 REGOLE DATE/ORA:
 - "alle 21" → time: "21:00:00"
