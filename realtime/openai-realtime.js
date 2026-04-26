@@ -605,7 +605,7 @@ export class OpenAIRealtimeClient {
               intent: {
                 type: 'string',
                 enum: ['create', 'modify', 'cancel', 'unknown'],
-                description: 'Intenzione del cliente: create=nuova prenotazione DISTINTA, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro. IMPORTANTE: se il cliente corregge una prenotazione appena confermata nella stessa chiamata (es: "no intendevo dopodomani", "aspetta sabato non venerdì", "ho detto male la data") usa SEMPRE modify, mai create. Usa create SOLO se il cliente vuole esplicitamente un tavolo aggiuntivo/separato (es: "vorrei anche un altro tavolo", "prenoto per un altro ufficio").'
+                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro. USA create quando il cliente dice "vorrei prenotare", "un tavolo", "prenoto", "ho bisogno di un tavolo" anche se non ha detto "nuovo" o "separato". USA modify SOLO se il cliente usa parole come "modificare", "spostare", "cambiare", "aggiornare" O se sta correggendo una prenotazione appena confermata nella stessa chiamata con parole come "no intendevo", "aspetta", "ho sbagliato".'
               },
               language: {
                 type: 'string',
@@ -771,12 +771,12 @@ Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente
 {"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
 
 REGOLE INTENT:
-- create = vuole fare UN NUOVO tavolo SEPARATO ("vorrei prenotare", "un tavolo per", "prenoto", "anche un altro tavolo", "per un altro ufficio")
-- modify = vuole cambiare una prenotazione ESISTENTE ("modificare", "spostare", "cambiare", "ho prenotato e vorrei") OPPURE sta correggendo qualcosa detto nel corso della STESSA chiamata (es: "no intendevo dopodomani", "aspetta volevo dire sabato", "ho sbagliato il giorno", "no non venerdì ma sabato")
+- create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato".
+- modify = il cliente usa parole di modifica ESPLICITE: "modificare", "spostare", "cambiare", "aggiornare", "anticipare", "posticipare" OPPURE sta correggendo qualcosa detto nella STESSA chiamata con "no intendevo", "aspetta", "ho sbagliato", "anzi", "fai una cosa spostala".
 - cancel = vuole cancellare ("cancellare", "annullare", "disdire")
 - unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
 
-REGOLA CRITICA CORREZIONI: se nella stessa chiamata il cliente ha già prenotato e poi corregge un dato (data, ora, persone), usa SEMPRE intent=modify. Esempi: "no dopodomani non domani" → modify, "aspetta intendevo sabato" → modify, "ho detto male, sono in 4 non 3" → modify. Usa create SOLO se il cliente chiede esplicitamente un SECONDO tavolo separato.
+REGOLA CRITICA: se il cliente dice "vorrei prenotare" o simili → create SEMPRE, anche se nella chiamata si è già parlato di prenotazioni. Se il cliente dice "spostala", "cambiala", "modificala" riferendosi a una prenotazione appena confermata → modify.
 
 REGOLE DATE/ORA:
 - "alle 21" → time: "21:00:00"
@@ -815,11 +815,18 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
+    // Guard: scatta solo se il transcript contiene keyword legate alle persone,
+    // evita falsi positivi da numeri casuali nel testo (es: "una cosa", "alle 21")
     if (newPeople && this.lastTranscript) {
-      const parsedPeople = PeopleManager.parseFromText(this.lastTranscript);
-      if (parsedPeople && parsedPeople !== newPeople) {
-        console.log(`⚠️ People mismatch: GPT=${newPeople}, transcript="${this.lastTranscript}" → parsedPeople=${parsedPeople} — uso transcript`);
-        newPeople = parsedPeople;
+      const hasPeopleKeyword = /(person[ae]|pax|coperti|siamo|saremo|in totale|tavolo per|per noi|ospiti|d+s*person|siamo in|saremo in)/i.test(this.lastTranscript);
+      if (hasPeopleKeyword) {
+        const parsedPeople = PeopleManager.parseFromText(this.lastTranscript);
+        if (parsedPeople && parsedPeople !== newPeople) {
+          console.log(`⚠️ People mismatch: GPT=${newPeople}, transcript="${this.lastTranscript}" → parsedPeople=${parsedPeople} — uso transcript`);
+          newPeople = parsedPeople;
+        }
+      } else {
+        console.log(`🔒 People cross-check skippato: nessuna keyword persone in transcript`);
       }
     }
 
