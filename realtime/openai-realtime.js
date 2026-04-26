@@ -551,10 +551,6 @@ export class OpenAIRealtimeClient {
     const now = DateManager.getNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayISO = DateManager.toISO(today);
-    const tomorrowDate = new Date(today); tomorrowDate.setDate(today.getDate() + 1);
-    const tomorrowISO = DateManager.toISO(tomorrowDate);
-    const dayAfterDate = new Date(today); dayAfterDate.setDate(today.getDate() + 2);
-    const dayAfterISO = DateManager.toISO(dayAfterDate);
     const dayName = DateManager.DAYS_IT[now.getDay()];
 
     // Calendario esplicito dei prossimi 7 giorni
@@ -753,6 +749,10 @@ export class OpenAIRealtimeClient {
     const now = DateManager.getNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayISO = DateManager.toISO(today);
+    const tomorrowDate = new Date(today); tomorrowDate.setDate(today.getDate() + 1);
+    const tomorrowISO = DateManager.toISO(tomorrowDate);
+    const dayAfterDate = new Date(today); dayAfterDate.setDate(today.getDate() + 2);
+    const dayAfterISO = DateManager.toISO(dayAfterDate);
     const dayName = DateManager.DAYS_IT[now.getDay()];
 
     // Costruisce il calendario dei prossimi 7 giorni in modo esplicito
