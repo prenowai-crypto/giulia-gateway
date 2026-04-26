@@ -785,6 +785,9 @@ REGOLE DATE/ORA:
 - "sabato" → data sabato dal calendario sopra
 - "venerdì" → data venerdì dal calendario sopra
 - "alla stessa ora" → time: null (non inventare)
+- "stasera" / "questa sera" / "stanotte" → date: ${todayISO} (SEMPRE oggi, mai altra data)
+- "oggi" → date: ${todayISO}
+- REGOLA CRITICA ANCORE TEMPORALI: "domani", "dopodomani", "ieri" sono SEMPRE calcolati a partire da OGGI (${todayISO}), MAI relativi a date precedentemente menzionate nella conversazione. Esempio: se oggi è domenica 26 e prima si parlava di lunedì 27, "dopodomani" = martedì 28 (26+2), NON mercoledì 29 (27+2).
 
 REGOLE NOME+DATA insieme:
 - "a nome Rossi per sabato" → name: "Rossi", date: data sabato
