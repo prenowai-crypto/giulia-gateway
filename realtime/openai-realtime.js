@@ -516,6 +516,7 @@ export class OpenAIRealtimeClient {
     this._checkingTime = false;
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
+    this._processingModify = false;   // evita double MODIFY (doppio function call GPT)
 
     // ── Lingua rilevata da GPT ───────────────────────────────────────────────
     this.language = 'it';  // default italiano, aggiornato al primo messaggio
@@ -853,6 +854,12 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this.modifyState = null;
         this.foundReservation = null;
         console.log('🔄 Phase=done: nuovo intent modify rilevato');
+
+        // Guard anti-double: se stiamo già processando un MODIFY, ignora il secondo trigger
+        if (this._processingModify) {
+          console.log('🔒 Double MODIFY ignorato: _processingModify=true');
+          return;
+        }
 
         // Se abbiamo la prenotazione appena gestita, usala direttamente
         if (this.lastReservation?.eventId) {
@@ -1552,6 +1559,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
 
+      // Lock anti-double: impedisce al secondo GPT trigger di eseguire un altro MODIFY
+      this._processingModify = true;
+
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
@@ -1584,6 +1594,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       });
 
       this.phase = 'done';
+      this._processingModify = false;  // reset: MODIFY completato
       if (updateResult?.success) {
         const dateDisplay = DateManager.formatForDisplay(updDate);
         const timeDisplay = TimeManager.formatForDisplay(updTime);
