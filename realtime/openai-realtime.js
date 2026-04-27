@@ -1609,6 +1609,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             const sameDay = alts?.availableSlots?.sameDay || [];
             const nextDays = alts?.availableSlots?.nextDays || [];
 
+            const rc = this.restaurantConfig;
             const validSameDay = sameDay.filter(s =>
               ValidationPipeline.isValidTime(s.time, rc)
             );
