@@ -1036,6 +1036,16 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // ── MODIFY flow ──────────────────────────────────────────────────────────
     if (this.intent === 'modify') {
+      // Intent-switch guard: se GPT dice 'cancel' durante MODIFY, passa subito al CANCEL flow
+      // senza entrare in _handleModifyFlow (che farebbe check disponibilità invece di cancellare)
+      if (args.intent === 'cancel') {
+        console.log('🔄 Intent-switch MODIFY → cancel rilevato fuori phase=done');
+        this.intent = 'cancel';
+        this.cancelState = null;
+        this.foundReservation = null;
+        await this._handleCancelFlow(newDate, newName);
+        return;
+      }
       await this._handleModifyFlow(newDate, newTime, newPeople, newName);
       return;
     }
