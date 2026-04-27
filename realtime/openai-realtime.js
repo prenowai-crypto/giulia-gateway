@@ -967,8 +967,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
       // ricordagli che la prenotazione originale è ancora attiva prima di congedarsi.
       // Evita che riattacchi convinto che la modifica sia andata a buon fine.
-      if (this.intent === 'modify' && this.lastReservation?.eventId) {
-        const r = this.lastReservation;
+      const _modifyReminderRes = this.foundReservation || this.lastReservation;
+      if (this.intent === 'modify' && _modifyReminderRes?.eventId) {
+        const r = _modifyReminderRes;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
@@ -1004,8 +1005,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
       // ricordagli che la prenotazione originale è ancora attiva.
-      if (this.intent === 'modify' && this.lastReservation?.eventId) {
-        const r = this.lastReservation;
+      const _modifyReminderRes2 = this.foundReservation || this.lastReservation;
+      if (this.intent === 'modify' && _modifyReminderRes2?.eventId) {
+        const r = _modifyReminderRes2;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
