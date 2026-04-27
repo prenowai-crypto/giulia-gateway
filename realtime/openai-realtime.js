@@ -1640,6 +1640,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
 
       console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
+      this._resolveFailedFunctionCall('updating reservation');
       this._say('Perfetto, aggiorno subito...');
       const updateResult = await this._callAppsScript({
         action: 'update_reservation',
