@@ -1584,8 +1584,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
-        // Fix: risolve function_call pending prima di _say per evitare risposta rogue di GPT
-        this._resolveFailedFunctionCall('checking availability');
+        // Fix: usa pending (success:true) per evitare rogue response di GPT durante il check
+        this._resolveFunctionCallPending('checking availability');
         this._say('Un attimo che verifico la disponibilità...');
         const checkResult = await this._callAppsScript({
           action: 'check_availability',
@@ -1640,7 +1640,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
 
       console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
-      this._resolveFailedFunctionCall('updating reservation');
+      this._resolveFunctionCallPending('updating reservation');
       this._say('Perfetto, aggiorno subito...');
       const updateResult = await this._callAppsScript({
         action: 'update_reservation',
@@ -2114,6 +2114,24 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           type: 'function_call_output',
           call_id: this._lastFunctionCallId,
           output: JSON.stringify({ success: false, error: reason })
+        }
+      });
+      this._lastFunctionCallId = null;
+    }
+  }
+
+  // Risolve function_call pending per operazioni in corso (check/update).
+  // Usa {success: true, status: 'pending'} invece di {success: false}
+  // per evitare che GPT interpreti il resolve come un errore e generi rogue responses.
+  _resolveFunctionCallPending(reason) {
+    if (this._lastFunctionCallId) {
+      console.log(`🔧 Resolving pending function_call ${this._lastFunctionCallId}: ${reason}`);
+      this._send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: this._lastFunctionCallId,
+          output: JSON.stringify({ success: true, status: 'pending', message: reason })
         }
       });
       this._lastFunctionCallId = null;
