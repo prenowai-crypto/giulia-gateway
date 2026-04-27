@@ -1584,6 +1584,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
+        // Fix: risolve function_call pending prima di _say per evitare risposta rogue di GPT
+        this._resolveFailedFunctionCall('checking availability');
         this._say('Un attimo che verifico la disponibilità...');
         const checkResult = await this._callAppsScript({
           action: 'check_availability',
@@ -1594,7 +1596,44 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         });
 
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
-          this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro orario?`);
+          // Fix: cerca slot alternativi come fa il CREATE invece di rifiutare e basta
+          this._processingModify = false;
+          try {
+            const alts = await this._callAppsScript({
+              action: 'find_available_slots',
+              data: updDate,
+              ora: updTime,
+              persone: updPeople,
+            });
+
+            const sameDay = alts?.availableSlots?.sameDay || [];
+            const nextDays = alts?.availableSlots?.nextDays || [];
+
+            const validSameDay = sameDay.filter(s =>
+              ValidationPipeline.isValidTime(s.time, rc)
+            );
+
+            if (validSameDay.length > 0) {
+              const times = validSameDay.slice(0, 3).map(s => s.time.substring(0,5)).join(', ');
+              console.log(`✅ MODIFY alternative stesso giorno: ${times}`);
+              this._say(`Mi dispiace, quell'orario è al completo. Per quel giorno ho disponibilità alle ${times}. Vuole spostare la prenotazione a uno di questi orari?`);
+            } else if (nextDays.length > 0) {
+              const first = nextDays[0];
+              const dayName = first.dayName || '';
+              const validSlots = (first.slots || []).filter(s =>
+                ValidationPipeline.isValidTime(s.time, rc)
+              );
+              const times = validSlots.slice(0, 2).map(s => s.time.substring(0,5)).join(' o ');
+              console.log(`✅ MODIFY alternative prossimi giorni: ${dayName} ${times}`);
+              this._say(`Mi dispiace, siamo al completo per quel giorno. Prima disponibilità ${dayName} alle ${times}. Vuole spostare la prenotazione?`);
+            } else {
+              console.log('❌ MODIFY nessuna alternativa valida');
+              this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro giorno?`);
+            }
+          } catch (err) {
+            console.error('❌ MODIFY errore ricerca alternative:', err);
+            this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro orario?`);
+          }
           return;
         }
       }
