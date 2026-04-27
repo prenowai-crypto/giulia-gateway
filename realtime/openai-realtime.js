@@ -708,8 +708,8 @@ export class OpenAIRealtimeClient {
         try {
           const args = JSON.parse(msg.arguments);
           console.log(`🔧 GPT function call:`, JSON.stringify(args));
-          // NON mandiamo function_call_output: evita risposta automatica GPT rogue
-          // Il controllo torna a noi via _processGPTData → _say
+          // Salva call_id per poter mandare function_call_output in caso di errore di validazione
+          this._lastFunctionCallId = msg.call_id || null;
           this._awaitingExtraction = false;
           this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
         } catch (err) {
@@ -1082,6 +1082,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (msg) {
         console.log(`🚫 Giorno chiuso: ${this.data.date}`);
         this.data.date = null;
+        this._resolveFailedFunctionCall(`giorno chiuso: ${this.data.date || ""}`);
         this._say(msg);
         return;
       }
@@ -1095,6 +1096,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
         console.log(`🚫 Orario non valido: ${this.data.time}`);
         this.data.time = null;
+        this._resolveFailedFunctionCall(`orario non valido: 20:30`);
         this._say(msg);
         return;
       }
@@ -1107,6 +1109,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const ds = rc?.dinner_start || '21:00';
         const de = rc?.dinner_end   || '22:30';
         this.data.time = null;
+        this._resolveFailedFunctionCall(`pranzo chiuso`);
         this._say(`Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`);
         return;
       }
@@ -1116,6 +1119,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const ls = rc?.lunch_start || '12:00';
         const le = rc?.lunch_end   || '14:30';
         this.data.time = null;
+        this._resolveFailedFunctionCall(`cena chiusa`);
         this._say(`Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`);
         return;
       }
@@ -2057,6 +2061,24 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   };
 
   // Dice una frase: cerca prima nel dizionario pre-tradotto, poi usa GPT
+  // Quando GPT usa function_call e la validazione fallisce, dobbiamo
+  // mandare function_call_output con errore prima di _say.
+  // Senza questo, GPT ignora l'istruzione di _say e genera la sua risposta (es: conferma falsa).
+  _resolveFailedFunctionCall(reason) {
+    if (this._lastFunctionCallId) {
+      console.log(`🔧 Resolving failed function_call ${this._lastFunctionCallId}: ${reason}`);
+      this._send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: this._lastFunctionCallId,
+          output: JSON.stringify({ success: false, error: reason })
+        }
+      });
+      this._lastFunctionCallId = null;
+    }
+  }
+
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
     const lang = this.language || 'it';
