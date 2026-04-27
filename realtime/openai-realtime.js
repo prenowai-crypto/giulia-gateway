@@ -964,6 +964,19 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           if (this.lastReservation) this.lastReservation.notes = updatedNotes;
         }).catch(err => console.error('❌ Errore aggiornamento note:', err));
       }
+      // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
+      // ricordagli che la prenotazione originale è ancora attiva prima di congedarsi.
+      // Evita che riattacchi convinto che la modifica sia andata a buon fine.
+      if (this.intent === 'modify' && this.lastReservation?.eventId) {
+        const r = this.lastReservation;
+        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+        const dateDisplay = DateManager.formatForDisplay(r.date);
+        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+        console.log(`ℹ️ Phase=done MODIFY incomplete: ricorda prenotazione originale (${r.name}, ${r.date})`);
+        this._say(`La sua prenotazione originale per ${r.people} persone ${dateDisplay} alle ${timeDisplay} è ancora attiva. Vuole mantenerla o cancellarla?`);
+        return;
+      }
+
       const _lang = this.language || 'it';
       this._send({
         type: 'response.create',
