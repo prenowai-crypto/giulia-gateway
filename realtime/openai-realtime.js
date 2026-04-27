@@ -1001,6 +1001,18 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
     if (!args.intent || args.intent === 'unknown') {
       console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
+
+      // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
+      // ricordagli che la prenotazione originale è ancora attiva.
+      if (this.intent === 'modify' && this.lastReservation?.eventId) {
+        const r = this.lastReservation;
+        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+        const dateDisplay = DateManager.formatForDisplay(r.date);
+        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+        console.log(`ℹ️ Intent-unknown MODIFY incomplete: ricorda prenotazione originale (${r.name}, ${r.date})`);
+        this._say(`La sua prenotazione originale per ${r.people} persone ${dateDisplay} alle ${timeDisplay} è ancora attiva. Vuole mantenerla o cancellarla?`);
+        return;
+      }
       const rc = this.restaurantConfig;
       const ls = rc?.lunch_start  || '12:00';
       const le = rc?.lunch_end    || '14:30';
