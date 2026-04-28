@@ -2315,7 +2315,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       const result = await this._callAppsScript({ action: 'get_restaurant_info' });
       if (result?.success && result.info) {
         this._restaurantInfo = result.info;
-        console.log('📋 Restaurant info caricata da Config sheet');
+        const _menuLen = result.info.menuDetails ? result.info.menuDetails.length : 0;
+        console.log(`📋 Restaurant info caricata da Config sheet (menuDetails: ${_menuLen} chars)`);
         // Aggiorna la sessione con le info reali
         this._send({
           type: 'session.update',
