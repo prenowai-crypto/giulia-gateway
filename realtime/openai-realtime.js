@@ -2353,7 +2353,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (ri.prices)     lines.push(`Prezzi: ${ri.prices}`);
     if (ri.menuUrl)    lines.push(`Menu online: ${ri.menuUrl}`);
     if (ri.menuText)   lines.push(`Menu: ${ri.menuText}`);
-    if (ri.menuDetails) lines.push(`=== MENU COMPLETO ===\n${ri.menuDetails}`);
+    if (ri.menuDetails) {
+      lines.push(`=== MENU COMPLETO (DATI REALI) ===\nQUESTI SONO I PIATTI EFFETTIVI DEL RISTORANTE. Quando il cliente chiede del menu, rispondi SOLO con i piatti elencati qui sotto. NON inventare piatti non presenti in questa lista.\n${ri.menuDetails}`);
+    }
 
     if (lines.length === 0) return '';
 
