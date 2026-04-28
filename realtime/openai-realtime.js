@@ -2252,7 +2252,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // ── MENU deterministico ──────────────────────────────────────────────────
     const _riMenu = this._restaurantInfo || {};
-    console.log(`🔍 Menu check: menuDetails=${_riMenu.menuDetails ? _riMenu.menuDetails.length + ' chars' : 'NULL'}, t="${t.substring(0, 60)}"`);
+    
     if (_riMenu.menuDetails) {
       const menuText = _riMenu.menuDetails;
 
@@ -2279,29 +2279,30 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const copertLine = menuText.split('\n').find(l => /coperto/i.test(l));
         if (copertLine) {
           const price = copertLine.match(/[€£]?\s*(\d+[.,]?\d*)/);
-          if (price) return `Sì, applichiamo un coperto di €${price[1].replace('.', ',')} a persona.`;
+          if (price) { const pStr = parseFloat(price[1]).toFixed(2).replace('.', ','); return `Sì, applichiamo un coperto di €${pStr} a persona.`; }
         }
       }
 
-      // Domanda su piatto specifico: "avete la carbonara?"
-      // Skip dishMatch se il transcript contiene keyword di categoria (es: "primi piatti", "antipasto")
+      // Domanda su piatto specifico: ricerca diretta nome piatto nel transcript
+      // Più robusto del regex dishMatch — gestisce STT distortion e frasi complesse
       const _hasCategoryKeyword = /antipast|prim[io].{0,10}piatt|second[io]|contorn|dolc|dessert/i.test(t);
-      const dishMatch = !_hasCategoryKeyword && (t.match(/avete.{0,20}([\wàèìòù ]{3,30})\??/i) || t.match(/fate.{0,10}([\wàèìòù ]{3,25})\??/i) || t.match(/c.è.{0,10}([\wàèìòù ]{3,25})\??/i));
-      if (dishMatch) {
-        const dish = dishMatch[1].trim().toLowerCase();
-        if (menuText.toLowerCase().includes(dish)) {
-          // Trova la riga esatta
-          const found = menuText.split('\n').find(l => l.toLowerCase().includes(dish));
-          const foundClean = found ? found.trim().replace(/^[-•]\s*/, '').split('€')[0].trim() : null;
-          return foundClean ? `Sì, abbiamo ${foundClean}` : `Sì, abbiamo ${dish} nel nostro menu`;
-        } else if (dish.length > 3) {
-          return `No, purtroppo non abbiamo ${dish} nel nostro menu`;
+      const _hasInquiry = /avete|fate|fann[oa]|fatt[ei]|dico|chiedevo|vorrei|c.è|c.era|avrebbe|offrite|servite|preparat|\?/i.test(t);
+      if (!_hasCategoryKeyword && _hasInquiry) {
+        const _stopWords = new Set(['alla','alle','allo','agli','della','dello','degli','delle','con','per','dal','del','nel','che','una','uno','dei','misti','misto','fresc','caso','cosa','tipo','forn','fritte','miste']);
+        const _menuLines = menuText.split('\n').filter(l => /^\s*-/.test(l));
+        for (const _mLine of _menuLines) {
+          const _cleanDish = _mLine.trim().replace(/^[-•]\s*/, '').split('€')[0].trim();
+          const _dishWords = _cleanDish.toLowerCase().split(/\s+/).filter(w => w.length >= 5 && !_stopWords.has(w));
+          if (_dishWords.length > 0 && _dishWords.some(w => t.includes(w))) {
+            console.log(`📋 Dish match: "${_cleanDish}"`);
+            return `Sì, abbiamo ${_cleanDish}`;
+          }
         }
       }
 
       // Domanda per categoria
-      if (/antipast/i.test(t)) { const s = getSection('ANTIPASTI'); console.log(`🔍 ANTIPASTI section: "${s.substring(0,50)}"`); if (s) return `I nostri antipasti: ${s}`; }
-      if (/prim[io]/i.test(t) && !/primo.{0,5}piano/i.test(t)) { const s = getSection('PRIMI'); console.log(`🔍 PRIMI section match=${/prim[io]/i.test(t)}, s="${s.substring(0,50)}"`); if (s) return `I nostri primi piatti: ${s}`; }
+      if (/antipast/i.test(t)) { const s = getSection('ANTIPASTI'); if (s) return `I nostri antipasti: ${s}`; }
+      if (/prim[io]/i.test(t) && !/primo.{0,5}piano/i.test(t)) { const s = getSection('PRIMI'); if (s) return `I nostri primi piatti: ${s}`; }
       if (/second[io]/i.test(t)) { const s = getSection('SECONDI'); if (s) return `I nostri secondi piatti: ${s}`; }
       if (/contorn/i.test(t)) { const s = getSection('CONTORNI'); if (s) return `I nostri contorni: ${s}`; }
       if (/dolc[ie]/i.test(t) && !/dolce.{0,10}vita/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dolci: ${s}`; }
