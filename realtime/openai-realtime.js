@@ -1061,10 +1061,21 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
       // Controlla se è una domanda sulle info ristorante — risposta deterministica
-      const _infoAnswer = this._checkInfoQuestion(this.lastTranscript || '');
-      if (_infoAnswer !== null) {
-        console.log(`📋 Info question rilevata → risposta deterministica`);
-        this._say(_infoAnswer);
+      // SKIP se siamo in fase di raccolta dati prenotazione (es: cliente dà nome + chiede info)
+      // In quel caso la prenotazione ha priorità — l'info può essere chiesta dopo.
+      const _skipInfoCheck = (this.phase === 'collecting' && newName && newName !== 'null');
+      if (!_skipInfoCheck) {
+        const _infoAnswer = this._checkInfoQuestion(this.lastTranscript || '');
+        if (_infoAnswer !== null) {
+          console.log(`📋 Info question rilevata → risposta deterministica`);
+          this._say(_infoAnswer);
+          return;
+        }
+      } else {
+        console.log(`📋 Info question skippata: fase collecting con nome=${newName} — rerouto a create`);
+        // Rerouta come intent=create per continuare la prenotazione
+        args.intent = 'create';
+        await this._processGPTData(args);
         return;
       }
 
