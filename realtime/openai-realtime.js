@@ -922,7 +922,36 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         if (lr && newDate === lr.date && newTime === lr.time &&
             String(newPeople) === String(lr.people) && newName === lr.name) {
           console.log('🛡️ Phase=done: create con dati identici a lastReservation → saluto senza reset');
-          this._say('Prego! A presto!');
+          // Fix: aggiorna note se rilevate PRIMA di rispondere, poi lascia GPT rispondere liberamente
+          // (prima forzava "Prego! A presto!" saltando le note e causando loop)
+          if (this.data.notes && this.data.notes !== lr.notes) {
+            const updatedNotes = this.data.notes;
+            console.log(`📝 Guard identici: nuove note rilevate, aggiorno: "${updatedNotes}"`);
+            this._callAppsScript({
+              action: 'update_reservation',
+              eventId: lr.eventId,
+              nome: lr.name,
+              data: lr.date,
+              ora: lr.time,
+              persone: lr.people,
+              telefono: lr.phone,
+              notes: updatedNotes,
+            }).then(r => {
+              console.log(`✅ Note aggiornate (guard identici): ${r?.status}`);
+              if (this.lastReservation) this.lastReservation.notes = updatedNotes;
+            }).catch(err => console.error('❌ Errore aggiornamento note (guard):', err));
+          }
+          // Lascia GPT rispondere liberamente alle domande post-prenotazione
+          // senza resettare il contesto
+          const _gLang = this.language || 'it';
+          this._send({
+            type: 'response.create',
+            response: {
+              instructions: _gLang === 'it'
+                ? `La prenotazione è già confermata. Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se fa una domanda (es: seggiolone, parcheggio, menu) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". Max 2 frasi. Non reinventare la prenotazione.`
+                : `The reservation is already confirmed. The customer is asking a question or thanking. Reply warmly in ${_gLang}. If they ask about facilities (highchair, parking, menu) say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
+            },
+          });
           return;
         }
 
