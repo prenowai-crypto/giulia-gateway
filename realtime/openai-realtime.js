@@ -943,6 +943,13 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
               if (this.lastReservation) this.lastReservation.notes = updatedNotes;
             }).catch(err => console.error('❌ Errore aggiornamento note (guard):', err));
           }
+          // Controlla prima se è una domanda info — risposta deterministica
+          const _infoAnswerGuard = this._checkInfoQuestion(this.lastTranscript || '');
+          if (_infoAnswerGuard !== null) {
+            console.log('📋 Info question (guard identico) → risposta deterministica');
+            this._say(_infoAnswerGuard);
+            return;
+          }
           // Lascia GPT rispondere liberamente alle domande post-prenotazione
           // senza resettare il contesto
           const _gLang = this.language || 'it';
@@ -1009,6 +1016,13 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
 
+      // Controlla prima se è una domanda info — risposta deterministica
+      const _infoAnswerDone = this._checkInfoQuestion(this.lastTranscript || '');
+      if (_infoAnswerDone !== null) {
+        console.log('📋 Info question (phase=done) → risposta deterministica');
+        this._say(_infoAnswerDone);
+        return;
+      }
       const _lang = this.language || 'it';
       this._send({
         type: 'response.create',
