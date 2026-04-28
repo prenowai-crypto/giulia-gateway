@@ -2215,7 +2215,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     const checks = [
       {
-        patterns: [/sedia.{0,20}rotel|disabil|carrozzin|accessibil|mobilit.{0,10}ridott|handicap/i],
+        patterns: [/sedia.{0,20}rotel|sed[ae]r[ae].{0,10}rotel|rot[ae]ll[ae]|disabil|carrozzin|accessibil|mobilit.{0,10}ridott|handicap|wheelchair|entr[ae].{0,20}rotel/i],
         key: 'accessibility'
       },
       {
@@ -2256,7 +2256,16 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (check.patterns.some(p => p.test(t))) {
         const val = ri[check.key];
         console.log(`📋 Info match: key=${check.key}, value=${val || '(vuoto)'}`);
-        return val ? val : noInfo;
+        if (!val) return noInfo;
+        // Se il valore è molto corto (es: "No", "Sì"), costruisci risposta più naturale
+        const trimmed = val.trim();
+        if (trimmed.length <= 3) {
+          const isYes = /^(s[iì]|yes|oui|si)$/i.test(trimmed);
+          const isNo  = /^(no|non|nein|nope)$/i.test(trimmed);
+          if (isNo)  return lang === 'it' ? `No, mi dispiace, non abbiamo questa possibilità.` : `No, unfortunately we don't have this option.`;
+          if (isYes) return lang === 'it' ? `Sì, certamente.` : `Yes, certainly.`;
+        }
+        return trimmed;
       }
     }
     return null; // non è una domanda info
