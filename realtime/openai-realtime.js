@@ -2352,6 +2352,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (ri.prices)     lines.push(`Prezzi: ${ri.prices}`);
     if (ri.menuUrl)    lines.push(`Menu online: ${ri.menuUrl}`);
     if (ri.menuText)   lines.push(`Menu: ${ri.menuText}`);
+    if (ri.menuDetails) lines.push(`=== MENU COMPLETO ===\n${ri.menuDetails}`);
 
     if (lines.length === 0) return '';
 
