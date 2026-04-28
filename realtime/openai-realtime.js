@@ -2246,7 +2246,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       : 'Non ho questa informazione. Per dettagli pu\u00f2 contattare direttamente il ristorante.';
 
     // Se la domanda riguarda la prenotazione stessa (note, conferma, ecc.) non intercettare
-    if (/hai.{0,15}segna|l.hai.{0,15}segna|nelle.{0,10}note|lo.{0,5}sai|hai.{0,10}nota|hai.{0,10}registr|conferma.{0,10}prenot|la.{0,10}prenot/i.test(t)) {
+    if (/ha[i]?.{0,15}segna|l.ha[i]?.{0,15}segna|nelle.{0,10}note|lo.{0,5}sai|ha[i]?.{0,10}nota|ha[i]?.{0,10}registr|segni.{0,20}(amica|amico|ospite|bambino)|conferma.{0,10}prenot|la.{0,10}prenot/i.test(t)) {
       return null;
     }
 
