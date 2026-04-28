@@ -2265,13 +2265,19 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             inSection = true; continue;
           }
           if (inSection && line.match(/^[A-Z]{3,}[:\s]/)) break; // nuova categoria
-          if (inSection && line.trim()) result.push(line.trim());
+          if (inSection && line.trim()) {
+            // Solo nome piatto, senza prezzo e descrizione
+            const cleanLine = line.trim().replace(/^[-•]\s*/, '').split('€')[0].trim();
+            result.push(cleanLine);
+          }
         }
         return result.join(', ');
       };
 
       // Domanda su piatto specifico: "avete la carbonara?"
-      const dishMatch = t.match(/avete.{0,20}([\wàèìòù ]{3,30})\??/i) || t.match(/fate.{0,10}([\wàèìòù ]{3,25})\??/i) || t.match(/c.è.{0,10}([\wàèìòù ]{3,25})\??/i);
+      // Skip dishMatch se il transcript contiene keyword di categoria (es: "primi piatti", "antipasto")
+      const _hasCategoryKeyword = /antipast|prim[io].{0,10}piatt|second[io]|contorn|dolc|dessert/i.test(t);
+      const dishMatch = !_hasCategoryKeyword && (t.match(/avete.{0,20}([\wàèìòù ]{3,30})\??/i) || t.match(/fate.{0,10}([\wàèìòù ]{3,25})\??/i) || t.match(/c.è.{0,10}([\wàèìòù ]{3,25})\??/i));
       if (dishMatch) {
         const dish = dishMatch[1].trim().toLowerCase();
         if (menuText.toLowerCase().includes(dish)) {
