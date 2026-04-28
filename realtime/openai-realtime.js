@@ -2217,20 +2217,13 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     if (lines.length === 0) return '';
 
-    return `
-
-════════════════════════════════════════════════════════════════════════════════
-📋 INFORMAZIONI RISTORANTE
-════════════════════════════════════════════════════════════════════════════════
-REGOLA CRITICA: Rispondi SOLO con le informazioni elencate qui sotto.
-NON inventare mai informazioni non presenti. Se una domanda riguarda qualcosa
-non elencato (es: un piatto specifico, un'allergia non menzionata, orari diversi),
-di' ESATTAMENTE: "Non ho questa informazione, le consiglio di verificare
-direttamente con il ristorante."
-
-${lines.join('
-')}
-════════════════════════════════════════════════════════════════════════════════`;
+    const sep = '\u2550'.repeat(80);
+    return '\n\n' + sep + '\n📋 INFORMAZIONI RISTORANTE\n' + sep + '\n' +
+      'REGOLA CRITICA: Rispondi SOLO con le informazioni elencate qui sotto.\n' +
+      'NON inventare mai informazioni non presenti. Se una domanda riguarda qualcosa\n' +
+      'non elencato (es: un piatto specifico, allergie non menzionate, orari diversi),\n' +
+      'di\' ESATTAMENTE: "Non ho questa informazione, verifichi direttamente col ristorante."\n\n' +
+      lines.join('\n') + '\n' + sep;
   }
 
   // mandare function_call_output con errore prima di _say.
