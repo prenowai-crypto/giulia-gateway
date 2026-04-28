@@ -953,12 +953,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           // Lascia GPT rispondere liberamente alle domande post-prenotazione
           // senza resettare il contesto
           const _gLang = this.language || 'it';
+          const _lr = this.lastReservation;
+          const _notesInfo = _lr?.notes ? `Note salvate sulla prenotazione: "${_lr.notes}".` : 'Nessuna nota salvata.';
           this._send({
             type: 'response.create',
             response: {
               instructions: _gLang === 'it'
-                ? `La prenotazione è già confermata. Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se fa una domanda (es: seggiolone, parcheggio, menu) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". Max 2 frasi. Non reinventare la prenotazione.`
-                : `The reservation is already confirmed. The customer is asking a question or thanking. Reply warmly in ${_gLang}. If they ask about facilities (highchair, parking, menu) say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
+                ? `La prenotazione è già confermata. ${_notesInfo} Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se chiede delle note conferma quelle salvate. Se fa una domanda su strutture (seggiolone, parcheggio) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". Max 2 frasi. Non reinventare la prenotazione.`
+                : `The reservation is already confirmed. ${_notesInfo} Reply warmly in ${_gLang}. If asked about notes confirm what was saved. If asked about facilities say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
             },
           });
           return;
@@ -2237,6 +2239,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       : lang === 'fr' ? 'Je n\u2019ai pas cette information. Veuillez contacter le restaurant directement.'
       : lang === 'es' ? 'No tengo esta informaci\u00f3n. Por favor contacte el restaurante directamente.'
       : 'Non ho questa informazione. Per dettagli pu\u00f2 contattare direttamente il ristorante.';
+
+    // Se la domanda riguarda la prenotazione stessa (note, conferma, ecc.) non intercettare
+    if (/hai.{0,15}segna|l.hai.{0,15}segna|nelle.{0,10}note|lo.{0,5}sai|hai.{0,10}nota|hai.{0,10}registr|conferma.{0,10}prenot|la.{0,10}prenot/i.test(t)) {
+      return null;
+    }
 
     const checks = [
       {
