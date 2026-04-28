@@ -1008,7 +1008,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // ricordagli che la prenotazione originale è ancora attiva prima di congedarsi.
       // Evita che riattacchi convinto che la modifica sia andata a buon fine.
       const _modifyReminderRes = this.foundReservation || this.lastReservation;
-      if (this.intent === 'modify' && _modifyReminderRes?.eventId) {
+      if (this.intent === 'modify' && this.modifyState !== 'done' && _modifyReminderRes?.eventId) {
         const r = _modifyReminderRes;
         const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
         const dateDisplay = DateManager.formatForDisplay(r.date);
@@ -1026,12 +1026,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return;
       }
       const _lang = this.language || 'it';
+      const _lrNotes = this.lastReservation?.notes;
+      const _notesCtx = _lrNotes ? `Note salvate sulla prenotazione: "${_lrNotes}".` : '';
       this._send({
         type: 'response.create',
         response: {
           instructions: _lang === 'it'
-            ? `Il cliente ha appena completato una prenotazione o operazione con successo. Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!" oppure "Prego, è stato un piacere!"; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
-            : `The customer has just successfully completed a reservation or operation. Reply warmly in ${_lang}: if they thank you say "Thank you!" or "You're welcome!"; then ask if there is anything else you can help with. Max 2 sentences. Do not invent information about the restaurant.`,
+            ? `Il cliente ha appena completato una prenotazione o operazione con successo. ${_notesCtx} Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!"; se chiede delle note conferma quelle salvate; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
+            : `The customer has just successfully completed a reservation or operation. ${_notesCtx} Reply warmly in ${_lang}: if they thank say "Thank you!"; if they ask about notes confirm what was saved. Max 2 sentences. Do not invent information.`,
         },
       });
       return;
@@ -1786,6 +1788,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           notes: this.data.notes || r.notes || '',
         };
         console.log(`💾 lastReservation aggiornato dopo MODIFY: eventId=${r.eventId}`);
+        // Reset intent a 'done' dopo MODIFY completato — evita che il MODIFY reminder
+        // si attivi quando l'utente fa domande post-modifica (es: "hai segnato le note?")
+        this.intent = 'done_modify';
         this._say(`Perfetto ${firstName}! Ho aggiornato la prenotazione: ${dateDisplay} alle ${timeDisplay} per ${updPeople} persone. Ti aspettiamo!`);
       } else {
         this._say(`Mi dispiace, c'è stato un problema nell'aggiornamento. Può richiamare?`);
