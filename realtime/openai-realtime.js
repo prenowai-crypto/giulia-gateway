@@ -568,7 +568,7 @@ export class OpenAIRealtimeClient {
       session: {
         modalities: ['audio', 'text'],
         voice: 'alloy',
-        instructions: this.systemPrompt,
+        instructions: this.systemPrompt + this._buildInfoSection(),
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
         input_audio_transcription: { model: 'whisper-1', language: 'it' }, // solo per log
@@ -2182,6 +2182,57 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
   // Dice una frase: cerca prima nel dizionario pre-tradotto, poi usa GPT
   // Quando GPT usa function_call e la validazione fallisce, dobbiamo
+  // ════════════════════════════════════════════════════════════════════════
+  // 📋 SEZIONE INFO RISTORANTE — iniettata nel system prompt a ogni sessione
+  // Usa i dati dalla Config sheet via restaurantConfig.
+  // Se un campo è vuoto → Giulia risponde "non ho questa informazione".
+  // ════════════════════════════════════════════════════════════════════════
+  _buildInfoSection() {
+    const rc = this.restaurantConfig || {};
+    const ri = rc.info || {};
+    const rm = rc.menu || {};
+    const rr = rc.rules || {};
+    const rrs = rc.restaurant || {};
+
+    const lines = [];
+
+    // Indirizzo e telefono
+    if (rrs.address) lines.push(`Indirizzo: ${rrs.address}`);
+    if (rrs.phone) lines.push(`Telefono ristorante: ${rrs.phone}`);
+
+    // Info operative
+    if (ri.accessibility)  lines.push(`Accessibilità sedia a rotelle: ${ri.accessibility}`);
+    if (ri.parking)        lines.push(`Parcheggio: ${ri.parking}`);
+    if (ri.paymentMethods) lines.push(`Metodi di pagamento: ${ri.paymentMethods}`);
+    if (ri.highchair)      lines.push(`Seggiolone: ${ri.highchair}`);
+    if (rr.outdoorSeatingText) lines.push(`Zona esterna: ${rr.outdoorSeatingText}`);
+
+    // Menu e cucina
+    if (rm.cuisineText)    lines.push(`Tipo di cucina: ${rm.cuisineText}`);
+    if (rm.vegetarianText) lines.push(`Opzioni vegetariane/vegan: ${rm.vegetarianText}`);
+    if (rm.glutenFreeText) lines.push(`Senza glutine: ${rm.glutenFreeText}`);
+    if (rm.priceRangeText) lines.push(`Prezzi: ${rm.priceRangeText}`);
+    if (rm.menuUrl)        lines.push(`Menu online: ${rm.menuUrl}`);
+    if (rm.summaryText)    lines.push(`Menu: ${rm.summaryText}`);
+
+    if (lines.length === 0) return '';
+
+    return `
+
+════════════════════════════════════════════════════════════════════════════════
+📋 INFORMAZIONI RISTORANTE
+════════════════════════════════════════════════════════════════════════════════
+REGOLA CRITICA: Rispondi SOLO con le informazioni elencate qui sotto.
+NON inventare mai informazioni non presenti. Se una domanda riguarda qualcosa
+non elencato (es: un piatto specifico, un'allergia non menzionata, orari diversi),
+di' ESATTAMENTE: "Non ho questa informazione, le consiglio di verificare
+direttamente con il ristorante."
+
+${lines.join('
+')}
+════════════════════════════════════════════════════════════════════════════════`;
+  }
+
   // mandare function_call_output con errore prima di _say.
   // Senza questo, GPT ignora l'istruzione di _say e genera la sua risposta (es: conferma falsa).
   _resolveFailedFunctionCall(reason) {
