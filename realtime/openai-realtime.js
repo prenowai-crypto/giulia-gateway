@@ -2268,7 +2268,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         key: 'outdoorSeating'
       },
       {
-        patterns: [/vegan|vegetarian/i],
+        // Solo domande sul menu del ristorante, non dichiarazioni personali tipo "sono vegano"
+        patterns: [/avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|vegan.{0,20}nel.{0,10}menu|si.{0,10}mangia.{0,20}vegan|cibo.{0,15}vegan/i],
         key: 'vegan'
       },
       {
