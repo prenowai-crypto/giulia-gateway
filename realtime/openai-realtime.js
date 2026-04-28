@@ -548,6 +548,8 @@ export class OpenAIRealtimeClient {
   }
 
   _configureSession() {
+    // Fetch restaurant info async, poi ri-aggiorna la sessione con le info reali
+    this._fetchAndInjectRestaurantInfo();
     const now = DateManager.getNow();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todayISO = DateManager.toISO(today);
@@ -2187,33 +2189,49 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   // Usa i dati dalla Config sheet via restaurantConfig.
   // Se un campo è vuoto → Giulia risponde "non ho questa informazione".
   // ════════════════════════════════════════════════════════════════════════
+  // Carica le info ristorante da Apps Script e aggiorna il session prompt
+  async _fetchAndInjectRestaurantInfo() {
+    try {
+      const result = await this._callAppsScript({ action: 'get_restaurant_info' });
+      if (result?.success && result.info) {
+        this._restaurantInfo = result.info;
+        console.log('📋 Restaurant info caricata da Config sheet');
+        // Aggiorna la sessione con le info reali
+        this._send({
+          type: 'session.update',
+          session: {
+            instructions: this.systemPrompt + this._buildInfoSection(),
+          }
+        });
+      }
+    } catch(err) {
+      console.error('❌ Errore fetch restaurant info:', err);
+    }
+  }
+
   _buildInfoSection() {
-    const rc = this.restaurantConfig || {};
-    const ri = rc.info || {};
-    const rm = rc.menu || {};
-    const rr = rc.rules || {};
-    const rrs = rc.restaurant || {};
+    const ri = this._restaurantInfo || {};
 
     const lines = [];
 
     // Indirizzo e telefono
-    if (rrs.address) lines.push(`Indirizzo: ${rrs.address}`);
-    if (rrs.phone) lines.push(`Telefono ristorante: ${rrs.phone}`);
+    if (ri.address) lines.push(`Indirizzo: ${ri.address}`);
+    if (ri.phone)   lines.push(`Telefono ristorante: ${ri.phone}`);
 
     // Info operative
     if (ri.accessibility)  lines.push(`Accessibilità sedia a rotelle: ${ri.accessibility}`);
     if (ri.parking)        lines.push(`Parcheggio: ${ri.parking}`);
     if (ri.paymentMethods) lines.push(`Metodi di pagamento: ${ri.paymentMethods}`);
     if (ri.highchair)      lines.push(`Seggiolone: ${ri.highchair}`);
-    if (rr.outdoorSeatingText) lines.push(`Zona esterna: ${rr.outdoorSeatingText}`);
+    if (ri.outdoorSeating) lines.push(`Zona esterna: ${ri.outdoorSeating}`);
 
     // Menu e cucina
-    if (rm.cuisineText)    lines.push(`Tipo di cucina: ${rm.cuisineText}`);
-    if (rm.vegetarianText) lines.push(`Opzioni vegetariane/vegan: ${rm.vegetarianText}`);
-    if (rm.glutenFreeText) lines.push(`Senza glutine: ${rm.glutenFreeText}`);
-    if (rm.priceRangeText) lines.push(`Prezzi: ${rm.priceRangeText}`);
-    if (rm.menuUrl)        lines.push(`Menu online: ${rm.menuUrl}`);
-    if (rm.summaryText)    lines.push(`Menu: ${rm.summaryText}`);
+    if (ri.cuisine)    lines.push(`Tipo di cucina: ${ri.cuisine}`);
+    if (ri.vegan)      lines.push(`Opzioni vegane/vegetariane: ${ri.vegan}`);
+    if (ri.glutenFree) lines.push(`Senza glutine: ${ri.glutenFree}`);
+    if (ri.prices)     lines.push(`Prezzi: ${ri.prices}`);
+    if (ri.menuUrl)    lines.push(`Menu online: ${ri.menuUrl}`);
+    if (ri.menuText)   lines.push(`Menu: ${ri.menuText}`);
 
     if (lines.length === 0) return '';
 
