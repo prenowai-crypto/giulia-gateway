@@ -1297,6 +1297,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this.data.notes = this.data.notes
         ? `${this.data.notes}; ${toAdd}`
         : toAdd;
+
+      // BUG 2 FIX: se prenotazione già confermata, aggiorna le note sul Calendar (fire-and-forget)
+      if (this.phase === 'done' && this.lastReservation?.eventId) {
+        const _evId = this.lastReservation.eventId;
+        const _notes = this.data.notes;
+        this.lastReservation.notes = _notes; // aggiorna anche in memoria
+        console.log(`📝 Note post-conferma → update_notes su Calendar: "${_notes}"`);
+        this._callAppsScript({ action: 'update_notes', eventId: _evId, notes: _notes })
+          .then(r => console.log(`📝 update_notes: ${r?.success ? 'OK' : 'FAIL'}`))
+          .catch(e => console.error('❌ update_notes error:', e));
+      }
     }
 
     // ── Telefono alternativo ─────────────────────────────────────────────────
