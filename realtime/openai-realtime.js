@@ -1068,9 +1068,22 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (args.intent === 'cancel') {
         console.log('🔄 Intent-switch MODIFY → cancel rilevato fuori phase=done');
         this.intent = 'cancel';
-        this.cancelState = null;
-        this.foundReservation = null;
-        await this._handleCancelFlow(newDate, newName);
+        this._resolveFunctionCallPending('switching to cancel');
+        // Se abbiamo già la prenotazione trovata (es. MODIFY slot_full), vai diretto alla conferma
+        if (this.foundReservation?.eventId) {
+          const r = this.foundReservation;
+          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+          const dateDisplay = DateManager.formatForDisplay(r.date);
+          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+          this.cancelState = 'awaiting_confirm';
+          console.log(`🗑️ CANCEL diretto su foundReservation: ${r.name}, ${r.date}`);
+          this._injectContext(r);
+          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
+        } else {
+          this.cancelState = null;
+          this.foundReservation = null;
+          await this._handleCancelFlow(newDate, newName);
+        }
         return;
       }
       await this._handleModifyFlow(newDate, newTime, newPeople, newName);
