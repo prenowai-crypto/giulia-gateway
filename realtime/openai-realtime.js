@@ -2274,6 +2274,15 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         return result.join(', ');
       };
 
+      // Check coperto (INFO categoria)
+      if (/coperto/i.test(t)) {
+        const copertLine = menuText.split('\n').find(l => /coperto/i.test(l));
+        if (copertLine) {
+          const price = copertLine.match(/[€£]?\s*(\d+[.,]?\d*)/);
+          if (price) return `Sì, applichiamo un coperto di €${price[1].replace('.', ',')} a persona.`;
+        }
+      }
+
       // Domanda su piatto specifico: "avete la carbonara?"
       // Skip dishMatch se il transcript contiene keyword di categoria (es: "primi piatti", "antipasto")
       const _hasCategoryKeyword = /antipast|prim[io].{0,10}piatt|second[io]|contorn|dolc|dessert/i.test(t);
@@ -2283,7 +2292,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         if (menuText.toLowerCase().includes(dish)) {
           // Trova la riga esatta
           const found = menuText.split('\n').find(l => l.toLowerCase().includes(dish));
-          return found ? `Sì, abbiamo ${found.trim().replace(/^[-•]\s*/, '')}` : `Sì, abbiamo ${dish} nel nostro menu`;
+          const foundClean = found ? found.trim().replace(/^[-•]\s*/, '').split('€')[0].trim() : null;
+          return foundClean ? `Sì, abbiamo ${foundClean}` : `Sì, abbiamo ${dish} nel nostro menu`;
         } else if (dish.length > 3) {
           return `No, purtroppo non abbiamo ${dish} nel nostro menu`;
         }
