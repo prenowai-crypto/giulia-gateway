@@ -2248,7 +2248,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         key: 'parking'
       },
       {
-        patterns: [/pagar|pagamento|carta.{0,15}credit|bancomat|pos|contant|cash|visa|mastercard|bonifico/i],
+        patterns: [/pagar|pagamento|cart[ae].{0,20}credit|credit.{0,15}card|bancomat|pos|contant|cash|visa|mastercard|bonifico|accetta.{0,15}cart|pagate.{0,10}cart|pagare.{0,10}cart/i],
         key: 'paymentMethods'
       },
       {
