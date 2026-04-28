@@ -2207,11 +2207,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const lang = this.language || 'it';
 
     const noInfo = lang === 'it'
-      ? 'Non ho questa informazione. Per dettagli può contattare direttamente il ristorante.'
-      : lang === 'en' ? 'I don't have this information. Please contact the restaurant directly.'
-      : lang === 'fr' ? 'Je n'ai pas cette information. Veuillez contacter le restaurant directement.'
-      : lang === 'es' ? 'No tengo esta información. Por favor contacte el restaurante directamente.'
-      : 'Non ho questa informazione. Per dettagli può contattare direttamente il ristorante.';
+      ? 'Non ho questa informazione. Per dettagli pu\u00f2 contattare direttamente il ristorante.'
+      : lang === 'en' ? 'I don\u2019t have this information. Please contact the restaurant directly.'
+      : lang === 'fr' ? 'Je n\u2019ai pas cette information. Veuillez contacter le restaurant directement.'
+      : lang === 'es' ? 'No tengo esta informaci\u00f3n. Por favor contacte el restaurante directamente.'
+      : 'Non ho questa informazione. Per dettagli pu\u00f2 contattare direttamente il ristorante.';
 
     const checks = [
       {
