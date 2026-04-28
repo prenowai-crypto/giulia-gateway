@@ -2250,6 +2250,61 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       return null;
     }
 
+    // ── MENU deterministico ──────────────────────────────────────────────────
+    const _riMenu = this._restaurantInfo || {};
+    console.log(`🔍 Menu check: menuDetails=${_riMenu.menuDetails ? _riMenu.menuDetails.length + ' chars' : 'NULL'}, t="${t.substring(0, 60)}"`);
+    if (_riMenu.menuDetails) {
+      const menuText = _riMenu.menuDetails;
+
+      // Helper: filtra sezione categoria
+      const getSection = (cat) => {
+        const lines = menuText.split('\n');
+        let inSection = false, result = [];
+        for (const line of lines) {
+          if (line.trim().toUpperCase().startsWith(cat.toUpperCase() + ':') || line.trim().toUpperCase() === cat.toUpperCase()) {
+            inSection = true; continue;
+          }
+          if (inSection && line.match(/^[A-Z]{3,}[:\s]/)) break; // nuova categoria
+          if (inSection && line.trim()) result.push(line.trim());
+        }
+        return result.join(', ');
+      };
+
+      // Domanda su piatto specifico: "avete la carbonara?"
+      const dishMatch = t.match(/avete.{0,20}([\wàèìòù ]{3,30})\??/i) || t.match(/fate.{0,10}([\wàèìòù ]{3,25})\??/i) || t.match(/c.è.{0,10}([\wàèìòù ]{3,25})\??/i);
+      if (dishMatch) {
+        const dish = dishMatch[1].trim().toLowerCase();
+        if (menuText.toLowerCase().includes(dish)) {
+          // Trova la riga esatta
+          const found = menuText.split('\n').find(l => l.toLowerCase().includes(dish));
+          return found ? `Sì, abbiamo ${found.trim().replace(/^[-•]\s*/, '')}` : `Sì, abbiamo ${dish} nel nostro menu`;
+        } else if (dish.length > 3) {
+          return `No, purtroppo non abbiamo ${dish} nel nostro menu`;
+        }
+      }
+
+      // Domanda per categoria
+      if (/antipast/i.test(t)) { const s = getSection('ANTIPASTI'); console.log(`🔍 ANTIPASTI section: "${s.substring(0,50)}"`); if (s) return `I nostri antipasti: ${s}`; }
+      if (/prim[io]/i.test(t) && !/primo.{0,5}piano/i.test(t)) { const s = getSection('PRIMI'); console.log(`🔍 PRIMI section match=${/prim[io]/i.test(t)}, s="${s.substring(0,50)}"`); if (s) return `I nostri primi piatti: ${s}`; }
+      if (/second[io]/i.test(t)) { const s = getSection('SECONDI'); if (s) return `I nostri secondi piatti: ${s}`; }
+      if (/contorn/i.test(t)) { const s = getSection('CONTORNI'); if (s) return `I nostri contorni: ${s}`; }
+      if (/dolc[ie]/i.test(t) && !/dolce.{0,10}vita/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dolci: ${s}`; }
+      if (/dessert/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dessert: ${s}`; }
+
+      // Domanda generica sul menu
+      if (/men[uù]|cosa.{0,15}avete|cosa.{0,15}mangiate|cosa.{0,15}si.{0,10}mang|che.{0,15}piatt/i.test(t)) {
+        // Riassunto categorie disponibili
+        const cats = [];
+        if (menuText.match(/ANTIPASTI/i)) cats.push('antipasti');
+        if (menuText.match(/PRIMI/i)) cats.push('primi');
+        if (menuText.match(/SECONDI/i)) cats.push('secondi');
+        if (menuText.match(/CONTORNI/i)) cats.push('contorni');
+        if (menuText.match(/DOLCI/i)) cats.push('dolci');
+        if (cats.length > 0) return `Il nostro menu comprende: ${cats.join(', ')}. Vuole sapere i dettagli di una categoria specifica?`;
+      }
+    }
+    // ── fine MENU ────────────────────────────────────────────────────────────
+
     const checks = [
       {
         patterns: [/sedia.{0,20}rotel|sed[ae]r[ae].{0,10}rotel|rot[ae]ll[ae]|disabil|carrozzin|accessibil|mobilit.{0,10}ridott|handicap|wheelchair|entr[ae].{0,20}rotel/i],
@@ -2353,9 +2408,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (ri.prices)     lines.push(`Prezzi: ${ri.prices}`);
     if (ri.menuUrl)    lines.push(`Menu online: ${ri.menuUrl}`);
     if (ri.menuText)   lines.push(`Menu: ${ri.menuText}`);
-    if (ri.menuDetails) {
-      lines.push(`=== MENU COMPLETO (DATI REALI) ===\nQUESTI SONO I PIATTI EFFETTIVI DEL RISTORANTE. Quando il cliente chiede del menu, rispondi SOLO con i piatti elencati qui sotto. NON inventare piatti non presenti in questa lista.\n${ri.menuDetails}`);
-    }
+    if (ri.menuDetails) lines.push(`=== MENU COMPLETO ===\n${ri.menuDetails}`);
 
     if (lines.length === 0) return '';
 
