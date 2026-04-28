@@ -1046,6 +1046,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this._say(`La sua prenotazione originale per ${r.people} persone ${dateDisplay} alle ${timeDisplay} è ancora attiva. Vuole mantenerla o cancellarla?`);
         return;
       }
+      // Controlla se è una domanda sulle info ristorante — risposta deterministica
+      const _infoAnswer = this._checkInfoQuestion(this.lastTranscript || '');
+      if (_infoAnswer !== null) {
+        console.log(`📋 Info question rilevata → risposta deterministica`);
+        this._say(_infoAnswer);
+        return;
+      }
+
       const rc = this.restaurantConfig;
       const ls = rc?.lunch_start  || '12:00';
       const le = rc?.lunch_end    || '14:30';
@@ -2189,6 +2197,71 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   // Usa i dati dalla Config sheet via restaurantConfig.
   // Se un campo è vuoto → Giulia risponde "non ho questa informazione".
   // ════════════════════════════════════════════════════════════════════════
+  // Controlla se il testo è una domanda su info ristorante.
+  // Ritorna la risposta esatta dal Config sheet, o stringa "non ho questa informazione",
+  // oppure null se non è una domanda info.
+  _checkInfoQuestion(text) {
+    if (!text) return null;
+    const t = text.toLowerCase();
+    const ri = this._restaurantInfo || {};
+    const lang = this.language || 'it';
+
+    const noInfo = lang === 'it'
+      ? 'Non ho questa informazione. Per dettagli può contattare direttamente il ristorante.'
+      : lang === 'en' ? 'I don't have this information. Please contact the restaurant directly.'
+      : lang === 'fr' ? 'Je n'ai pas cette information. Veuillez contacter le restaurant directement.'
+      : lang === 'es' ? 'No tengo esta información. Por favor contacte el restaurante directamente.'
+      : 'Non ho questa informazione. Per dettagli può contattare direttamente il ristorante.';
+
+    const checks = [
+      {
+        patterns: [/sedia.{0,20}rotel|disabil|carrozzin|accessibil|mobilit.{0,10}ridott|handicap/i],
+        key: 'accessibility'
+      },
+      {
+        patterns: [/parcheggi|posteggi|park|dove parcheg/i],
+        key: 'parking'
+      },
+      {
+        patterns: [/pagar|pagamento|carta.{0,15}credit|bancomat|pos|contant|cash|visa|mastercard|bonifico/i],
+        key: 'paymentMethods'
+      },
+      {
+        patterns: [/esterno|all.aperto|terrazza|dehor|giardino|fuori/i],
+        key: 'outdoorSeating'
+      },
+      {
+        patterns: [/vegan|vegetarian/i],
+        key: 'vegan'
+      },
+      {
+        patterns: [/gluten|celiac|celiach|senza glutine/i],
+        key: 'glutenFree'
+      },
+      {
+        patterns: [/seggiol|bambini.{0,15}segg|segg.{0,15}bambin|highchair|sediolin/i],
+        key: 'highchair'
+      },
+      {
+        patterns: [/quanto.{0,20}cost|prezz|menu.{0,20}cost|spende|tariffa|listino/i],
+        key: 'prices'
+      },
+      {
+        patterns: [/che tipo.{0,15}cucin|che cucin|tipo di cibo|specialit|che si mang|cosa si mang/i],
+        key: 'cuisine'
+      },
+    ];
+
+    for (const check of checks) {
+      if (check.patterns.some(p => p.test(t))) {
+        const val = ri[check.key];
+        console.log(`📋 Info match: key=${check.key}, value=${val || '(vuoto)'}`);
+        return val ? val : noInfo;
+      }
+    }
+    return null; // non è una domanda info
+  }
+
   // Carica le info ristorante da Apps Script e aggiorna il session prompt
   async _fetchAndInjectRestaurantInfo() {
     try {
