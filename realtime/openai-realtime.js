@@ -882,7 +882,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         }
 
         // Se abbiamo la prenotazione appena gestita, usala direttamente
-        if (this.lastReservation?.eventId) {
+        // Nota: funziona anche con eventId=null (es. timeout AS)
+        if (this.lastReservation?.name && this.lastReservation?.date) {
           this.foundReservation = this.lastReservation;
           this.modifyState = 'awaiting_changes';
 
@@ -2576,7 +2577,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // Timeout di 15 secondi — Apps Script può essere lento su cold start
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 25000);
 
     try {
       const response = await fetch(url, {
