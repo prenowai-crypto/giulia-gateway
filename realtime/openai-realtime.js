@@ -657,7 +657,7 @@ export class OpenAIRealtimeClient {
 
           // 🛡️ Filtro durata: primo turno < 2s = rumore di fondo, ignora silenziosamente
           const _speechDuration = this._speechStartedAt ? (Date.now() - this._speechStartedAt) : 9999;
-          const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name && this.phase === 'collecting';
+          const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name;
           if (_isFirstTurn && _speechDuration < 2000) {
             console.log(`🛡️ Primo turno troppo breve (${_speechDuration}ms < 2000ms) → ignorato: "${t}"`);
             return;
@@ -1018,6 +1018,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
 
       // Intent unknown (saluti, ringraziamenti, note aggiuntive, "posso aiutarti con altro?")
+
+      // Fix A: controlla unclear PRIMA di tutto — anche in phase=done
+      if (args.unclear === true || args.unclear === 'true') {
+        console.log('🔁 Phase=done: frase incomprensibile → chiedo di ripetere');
+        this._say('Non ho capito bene, può ripetere?');
+        return;
+      }
+
       console.log('💬 Phase=done: intent unknown — risposta cortese');
 
       // Se ci sono nuove note rilevate dalla trascrizione e abbiamo lastReservation, aggiorna
