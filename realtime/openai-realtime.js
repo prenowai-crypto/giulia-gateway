@@ -814,7 +814,7 @@ REGOLE INTENT:
 - cancel = vuole cancellare ("cancellare", "annullare", "disdire")
 - unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
 
-REGOLA CRITICA — FRASE INCOMPRENSIBILE: se il messaggio contiene parole inesistenti in italiano, è storpiato o incomprensibile (es: "carabinare", "al prossimo episodio", "in sé sé per sò", parole senza senso) → restituisci intent=unknown E unclear:true. Il sistema chiederà al cliente di ripetere invece di inventare una risposta.
+REGOLA CRITICA — FRASE INCOMPRENSIBILE: restituisci unclear:true SOLO se la frase contiene parole che non esistono nella lingua italiana (es: "carabinare", "vaglo", "scala bonara", "prevocazione"). Se la frase ha senso compiuto in italiano — anche se non riguarda una prenotazione — restituisci unclear:false. Esempi di unclear:false: "fate la carbonara", "pronto", "grazie mille", "buongiorno", "avete il parcheggio". Esempi di unclear:true: "fatele carabinare", "vaglo", "scala bonara".
 
 REGOLA CRITICA: se il cliente dice "vorrei prenotare" o simili → create SEMPRE, anche se nella chiamata si è già parlato di prenotazioni. Se il cliente dice "spostala", "cambiala", "modificala" riferendosi a una prenotazione appena confermata → modify.
 
