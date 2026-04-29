@@ -824,18 +824,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
     const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
-    let   newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
-
-    // ── Name cross-check: se transcript ha "mi chiamo X" / "sono X" → usa transcript ──
-    if (this.lastTranscript) {
-      const nameFromTranscript = this._extractName(this.lastTranscript);
-      if (nameFromTranscript && newName && nameFromTranscript.toLowerCase() !== newName.toLowerCase()) {
-        console.log(`⚠️ Name mismatch: GPT="${newName}", transcript="${nameFromTranscript}" → uso transcript`);
-        newName = nameFromTranscript;
-      } else if (nameFromTranscript && !newName) {
-        newName = nameFromTranscript;
-      }
-    }
+    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
@@ -2097,6 +2086,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const firstName    = name || ''; // usa nome completo (supporta nomi composti: De Luca, Di Maio, ecc.)
 
     this.phase = 'done';
+
+    // Setta lastReservation SUBITO (prima dell'async) per bloccare double-booking
+    this.lastReservation = {
+      eventId: null, // verrà aggiornato dopo Apps Script
+      name, date, time, people,
+      phone: this.callerPhone || '',
+      notes: this.data.notes || '',
+    };
 
     this._say(
       `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`
