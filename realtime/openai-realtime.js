@@ -655,6 +655,14 @@ export class OpenAIRealtimeClient {
           const t = msg.transcript.trim();
           if (!t || t.length < 2) return;
 
+          // 🛡️ Filtro durata: primo turno < 2s = rumore di fondo, ignora silenziosamente
+          const _speechDuration = this._speechStartedAt ? (Date.now() - this._speechStartedAt) : 9999;
+          const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name && this.phase === 'collecting';
+          if (_isFirstTurn && _speechDuration < 2000) {
+            console.log(`🛡️ Primo turno troppo breve (${_speechDuration}ms < 2000ms) → ignorato: "${t}"`);
+            return;
+          }
+
           // 🛡️ Whisper hallucination filter — frasi allucinatorie note sul silenzio
           const WHISPER_HALLUCINATIONS = [
             'sottotitoli creati dalla comunità amara.org',
@@ -691,6 +699,7 @@ export class OpenAIRealtimeClient {
         break;
       case 'input_audio_buffer.speech_started':
         console.log('🎤 Parla...');
+        this._speechStartedAt = Date.now();
         break;
       case 'input_audio_buffer.speech_stopped':
         console.log('🎤 Fine');
@@ -797,13 +806,15 @@ export class OpenAIRealtimeClient {
         instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
 
 Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
-{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
+{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown","unclear":true/false}
 
 REGOLE INTENT:
 - create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato". ATTENZIONE: "vorrei prenotare" e "voglio prenotare" sono SEMPRE create, MAI modify, anche se nella conversazione si è già parlato di prenotazioni.
 - modify = il cliente usa parole di modifica ESPLICITE: "modificare", "spostare", "cambiare", "aggiornare", "anticipare", "posticipare" OPPURE sta correggendo qualcosa detto nella STESSA chiamata con "no intendevo", "aspetta", "ho sbagliato", "anzi", "fai una cosa spostala".
 - cancel = vuole cancellare ("cancellare", "annullare", "disdire")
 - unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
+
+REGOLA CRITICA — FRASE INCOMPRENSIBILE: se il messaggio contiene parole inesistenti in italiano, è storpiato o incomprensibile (es: "carabinare", "al prossimo episodio", "in sé sé per sò", parole senza senso) → restituisci intent=unknown E unclear:true. Il sistema chiederà al cliente di ripetere invece di inventare una risposta.
 
 REGOLA CRITICA: se il cliente dice "vorrei prenotare" o simili → create SEMPRE, anche se nella chiamata si è già parlato di prenotazioni. Se il cliente dice "spostala", "cambiala", "modificala" riferendosi a una prenotazione appena confermata → modify.
 
@@ -1077,6 +1088,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
     if (!args.intent || args.intent === 'unknown') {
+
+      // Se GPT ha segnalato che la frase era incomprensibile → chiedi di ripetere
+      if (args.unclear === true || args.unclear === 'true') {
+        console.log('🔁 Frase incomprensibile rilevata da GPT → chiedo di ripetere');
+        this._say('Non ho capito bene, può ripetere?');
+        return;
+      }
+
       console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
 
       // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
