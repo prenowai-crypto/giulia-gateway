@@ -792,13 +792,16 @@ REGOLE DATE/ORA:
 - "sabato" → data sabato dal calendario sopra
 - "venerdì" → data venerdì dal calendario sopra
 - "alla stessa ora" → time: null (non inventare)
+- "sera" / "di sera" / "stasera" / "a cena" senza numero ora esplicito → time: null (NON inventare 21:00 o altri valori)
+- "mattina" / "pranzo" senza numero → time: null
+- REGOLA ASSOLUTA ORARIO: se il cliente NON ha detto un numero specifico di ora (es: "alle 21", "alle 20:30", "alle otto"), restituisci time: null. MAI inferire l'ora dal contesto.
 - "stasera" / "questa sera" / "stanotte" → date: ${todayISO} (SEMPRE oggi, mai altra data)
 - "oggi" → date: ${todayISO}
 - "domani" → date: ${tomorrowISO} SEMPRE. È il giorno successivo a oggi. MAI il prossimo giorno con lo stesso nome della settimana.
 - "dopodomani" → date: ${dayAfterISO} SEMPRE. È due giorni dopo oggi.
 - REGOLA CRITICA ANCORE TEMPORALI: "domani" e "dopodomani" sono calcolati da OGGI (${todayISO}), MAI da date precedenti nella conversazione.
 
-REGOLA CRITICA NOME: estrai il nome ESATTAMENTE come pronunciato nel messaggio corrente, ignorando qualsiasi nome presente nel contesto precedente della conversazione. Se il cliente corregge il nome ("mi chiamo X non Y", "sono X", "il mio nome è X") → usa SEMPRE X esattamente come detto, non modificarlo.
+REGOLA CRITICA NOME: estrai il nome ESATTAMENTE come pronunciato nel messaggio ATTUALE (quello che stai analizzando ora), ignorando COMPLETAMENTE qualsiasi nome presente nel contesto precedente. Se il cliente dice "mi chiamo Marchetti" → name: "Marchetti" (non "Marchi"). Se il cliente corregge il nome ("mi chiamo X", "sono X", "il mio nome è X", "no mi chiamo X") → usa SEMPRE e SOLO X esattamente come pronunciato, senza troncarlo né modificarlo.
 
 REGOLE NOME+DATA insieme:
 - "a nome Rossi per sabato" → name: "Rossi", date: data sabato
@@ -821,7 +824,18 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
     const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
-    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+    let   newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    // ── Name cross-check: se transcript ha "mi chiamo X" / "sono X" → usa transcript ──
+    if (this.lastTranscript) {
+      const nameFromTranscript = this._extractName(this.lastTranscript);
+      if (nameFromTranscript && newName && nameFromTranscript.toLowerCase() !== newName.toLowerCase()) {
+        console.log(`⚠️ Name mismatch: GPT="${newName}", transcript="${nameFromTranscript}" → uso transcript`);
+        newName = nameFromTranscript;
+      } else if (nameFromTranscript && !newName) {
+        newName = nameFromTranscript;
+      }
+    }
 
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
