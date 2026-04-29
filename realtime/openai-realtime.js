@@ -1298,7 +1298,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         ? `${this.data.notes}; ${toAdd}`
         : toAdd;
 
-      // BUG 2 FIX: se prenotazione già confermata, aggiorna le note sul Calendar
+      // Note post-conferma → aggiorna Calendar in background
       if (this.phase === 'done' && this.lastReservation?.eventId) {
         const _evId = this.lastReservation.eventId;
         const _notes = this.data.notes;
@@ -1973,29 +1973,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (people > largeGroupThreshold) {
       console.log(`👥 Gruppo grande: ${people} persone (soglia: ${largeGroupThreshold})`);
       this.checkingSlot = false;
+      this.phase = 'naming';
       this.availDone = true;
-      if (this.data.name) {
-        // Nome già disponibile → crea PENDING direttamente
-        console.log(`👥 PENDING con nome già disponibile: ${this.data.name}`);
-        this.phase = 'done';
-        const _dateD = DateManager.formatForDisplay(this.data.date);
-        const _timeD = TimeManager.formatForDisplay(this.data.time);
-        this._say(`Perfetto ${this.data.name}! La prenotazione per ${people} persone ${_dateD} alle ${_timeD} è in attesa di conferma dal ristorante. La contatteremo presto!`);
-        this._callAppsScript({
-          source: 'telnyx',
-          nome: this.data.name,
-          persone: people,
-          data: this.data.date,
-          ora: this.data.time,
-          telefono: this.callerPhone || '',
-          notes: this.data.notes || '',
-          forceNew: true,
-        }).then(r => console.log('📅 PENDING creato:', r?.success ? '✅' : '❌', r))
-          .catch(e => console.error('❌ Errore PENDING:', e));
-      } else {
-        this.phase = 'naming';
-        this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
-      }
+      this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
       return;
     }
 
@@ -2440,7 +2420,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // Indirizzo e telefono
     if (ri.address) lines.push(`Indirizzo: ${ri.address}`);
-    else            lines.push(`Indirizzo: non disponibile — non fornirlo mai, non inventarlo`);
     if (ri.phone)   lines.push(`Telefono ristorante: ${ri.phone}`);
 
     // Info operative
