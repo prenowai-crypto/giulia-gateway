@@ -825,6 +825,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
+    // ── Time cross-check: GPT non deve inventare orari ──────────────────────
+    // Se GPT estrae un orario ma il transcript non contiene riferimenti espliciti
+    // all'ora (numeri + keyword temporali), si null-ifica — il sistema chiederà
+    if (newTime && this.lastTranscript) {
+      const _hasExplicitTime = /alle\s+\d|ore\s+\d|\d{1,2}:\d{2}|\b\d{1,2}\s+e\s+(mezza|trenta|un\s+quarto|quindici|venti|cinque|dieci|quaranta|quarantacinque)|e\s+mezzo/i.test(this.lastTranscript);
+      if (!_hasExplicitTime) {
+        console.log(`🔒 Time cross-check: GPT ha estratto ${newTime} ma nessun orario esplicito nel transcript → null`);
+        newTime = null;
+      }
+    }
+
     // Guard: scatta solo se il transcript contiene keyword legate alle persone,
     // evita falsi positivi da numeri casuali nel testo (es: "una cosa", "alle 21")
     if (newPeople && this.lastTranscript) {
@@ -1973,9 +1984,29 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (people > largeGroupThreshold) {
       console.log(`👥 Gruppo grande: ${people} persone (soglia: ${largeGroupThreshold})`);
       this.checkingSlot = false;
-      this.phase = 'naming';
       this.availDone = true;
-      this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
+      if (this.data.name) {
+        // Nome già disponibile → crea PENDING direttamente senza chiedere di nuovo
+        console.log(`👥 PENDING con nome già disponibile: ${this.data.name}`);
+        this.phase = 'done';
+        const _dateD = DateManager.formatForDisplay(this.data.date);
+        const _timeD = TimeManager.formatForDisplay(this.data.time);
+        this._say(`Perfetto ${this.data.name}! La prenotazione per ${people} persone ${_dateD} alle ${_timeD} è in attesa di conferma dal ristorante. La contatteremo presto!`);
+        this._callAppsScript({
+          source: 'telnyx',
+          nome: this.data.name,
+          persone: people,
+          data: this.data.date,
+          ora: this.data.time,
+          telefono: this.callerPhone || '',
+          notes: this.data.notes || '',
+          forceNew: true,
+        }).then(r => console.log('📅 PENDING creato:', r?.success ? '✅' : '❌', r))
+          .catch(e => console.error('❌ Errore PENDING:', e));
+      } else {
+        this.phase = 'naming';
+        this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
+      }
       return;
     }
 
