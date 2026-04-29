@@ -654,6 +654,29 @@ export class OpenAIRealtimeClient {
         if (msg.transcript) {
           const t = msg.transcript.trim();
           if (!t || t.length < 2) return;
+
+          // 🛡️ Whisper hallucination filter — frasi allucinatorie note sul silenzio
+          const WHISPER_HALLUCINATIONS = [
+            'sottotitoli creati dalla comunità amara.org',
+            'sottotitoli e composizione',
+            'amara.org',
+            'grazie per aver visto il video',
+            'iscriviti al canale',
+            'metti mi piace',
+            'sottotitoli a cura di',
+            'sottotitolato da',
+            'transcript by',
+            'transcribed by',
+            'subtitles by',
+            'www.youtube.com',
+            'copyright',
+          ];
+          const tLower = t.toLowerCase();
+          if (WHISPER_HALLUCINATIONS.some(h => tLower.includes(h))) {
+            console.log(`🛡️ Whisper hallucination scartata: "${t}"`);
+            return;
+          }
+
           console.log(`💬 [user]: ${t}`);
           this.lastTranscript = t;   // 🆕 salva per cross-check people
           this.onTranscript(t, 'user');
@@ -777,7 +800,7 @@ Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente
 {"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown"}
 
 REGOLE INTENT:
-- create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato".
+- create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato". ATTENZIONE: "vorrei prenotare" e "voglio prenotare" sono SEMPRE create, MAI modify, anche se nella conversazione si è già parlato di prenotazioni.
 - modify = il cliente usa parole di modifica ESPLICITE: "modificare", "spostare", "cambiare", "aggiornare", "anticipare", "posticipare" OPPURE sta correggendo qualcosa detto nella STESSA chiamata con "no intendevo", "aspetta", "ho sbagliato", "anzi", "fai una cosa spostala".
 - cancel = vuole cancellare ("cancellare", "annullare", "disdire")
 - unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
@@ -1960,9 +1983,10 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const { date, time, people } = this.data;
     const rc = this.restaurantConfig;
     console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
-    this._say('Un attimo che verifico la disponibilità...');
 
-    // ── TEST 9: Gruppi grandi ─────────────────────────────────────────────────
+    // ── Gruppi grandi / eventi: gestiti PRIMA di "Un attimo" ─────────────────
+    // Se non diciamo "Un attimo" e subito dopo un altro _say, evita la race condition
+    // dove il secondo messaggio sovrascrive il primo e va perso
     const eventThreshold = Number(rc?.event_threshold) || 45;
     const largeGroupThreshold = Number(rc?.large_group_threshold) || 10;
     const ownerEmail = rc?.owner_email || '';
@@ -1977,11 +2001,28 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (people > largeGroupThreshold) {
       console.log(`👥 Gruppo grande: ${people} persone (soglia: ${largeGroupThreshold})`);
       this.checkingSlot = false;
-      this.phase = 'naming';
       this.availDone = true;
-      this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
+      if (this.data.name) {
+        // Nome già disponibile → PENDING diretto
+        console.log(`👥 PENDING con nome già disponibile: ${this.data.name}`);
+        this.phase = 'done';
+        const _dateD = DateManager.formatForDisplay(this.data.date);
+        const _timeD = TimeManager.formatForDisplay(this.data.time);
+        this._say(`Perfetto ${this.data.name}! La prenotazione per ${people} persone ${_dateD} alle ${_timeD} è in attesa di conferma dal ristorante. La contatteremo presto!`);
+        this._callAppsScript({
+          source: 'telnyx', nome: this.data.name, persone: people,
+          data: this.data.date, ora: this.data.time,
+          telefono: this.callerPhone || '', notes: this.data.notes || '', forceNew: true,
+        }).then(r => console.log('📅 PENDING creato:', r?.success ? '✅' : '❌'))
+          .catch(e => console.error('❌ Errore PENDING:', e));
+      } else {
+        this.phase = 'naming';
+        this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
+      }
       return;
     }
+
+    this._say('Un attimo che verifico la disponibilità...');
 
     // Silenzio durante il check — GPT non parla fino al risultato
 
@@ -2302,7 +2343,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const copertLine = menuText.split('\n').find(l => /coperto/i.test(l));
         if (copertLine) {
           const price = copertLine.match(/[€£]?\s*(\d+[.,]?\d*)/);
-          if (price) { const pStr = parseFloat(price[1]).toFixed(2).replace('.', ','); return `Sì, applichiamo un coperto di €${pStr} a persona.`; }
+          if (price) { const pStr = parseFloat(price[1]).toFixed(2).replace('.', ','); return `Sì, applichiamo un coperto di ${pStr} euro a persona.`; }
         }
       }
 
