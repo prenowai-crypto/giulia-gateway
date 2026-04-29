@@ -826,9 +826,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
     // ── Time cross-check: GPT non deve inventare orari ──────────────────────
-    // Se GPT estrae un orario ma il transcript non contiene riferimenti espliciti
-    // all'ora (numeri + keyword temporali), si null-ifica — il sistema chiederà
-    if (newTime && this.lastTranscript) {
+    // Scatta SOLO se non abbiamo già un orario salvato (evita di resettare in phase=done)
+    if (newTime && this.lastTranscript && !this.data.time) {
       const _hasExplicitTime = /alle\s+\d|ore\s+\d|\d{1,2}:\d{2}|\b\d{1,2}\s+e\s+(mezza|trenta|un\s+quarto|quindici|venti|cinque|dieci|quaranta|quarantacinque)|e\s+mezzo/i.test(this.lastTranscript);
       if (!_hasExplicitTime) {
         console.log(`🔒 Time cross-check: GPT ha estratto ${newTime} ma nessun orario esplicito nel transcript → null`);
