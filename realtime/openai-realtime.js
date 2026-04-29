@@ -819,22 +819,12 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const rc = this.restaurantConfig;
 
     const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
-    let   newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
+    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
-    // ── Time cross-check: GPT non deve inventare orari ──────────────────────
-    // Scatta SOLO se non abbiamo già un orario salvato (evita di resettare in phase=done)
-    if (newTime && this.lastTranscript && !this.data.time) {
-      const _hasExplicitTime = /alle\s+\d|ore\s+\d|\d{1,2}:\d{2}|\b\d{1,2}\s+e\s+(mezza|trenta|un\s+quarto|quindici|venti|cinque|dieci|quaranta|quarantacinque)|e\s+mezzo/i.test(this.lastTranscript);
-      if (!_hasExplicitTime) {
-        console.log(`🔒 Time cross-check: GPT ha estratto ${newTime} ma nessun orario esplicito nel transcript → null`);
-        newTime = null;
-      }
-    }
-
     // Guard: scatta solo se il transcript contiene keyword legate alle persone,
     // evita falsi positivi da numeri casuali nel testo (es: "una cosa", "alle 21")
     if (newPeople && this.lastTranscript) {
@@ -1308,11 +1298,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         ? `${this.data.notes}; ${toAdd}`
         : toAdd;
 
-      // BUG 2 FIX: se prenotazione già confermata, aggiorna le note sul Calendar (fire-and-forget)
+      // BUG 2 FIX: se prenotazione già confermata, aggiorna le note sul Calendar
       if (this.phase === 'done' && this.lastReservation?.eventId) {
         const _evId = this.lastReservation.eventId;
         const _notes = this.data.notes;
-        this.lastReservation.notes = _notes; // aggiorna anche in memoria
+        this.lastReservation.notes = _notes;
         console.log(`📝 Note post-conferma → update_notes su Calendar: "${_notes}"`);
         this._callAppsScript({ action: 'update_notes', eventId: _evId, notes: _notes })
           .then(r => console.log(`📝 update_notes: ${r?.success ? 'OK' : 'FAIL'}`))
@@ -1985,7 +1975,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this.checkingSlot = false;
       this.availDone = true;
       if (this.data.name) {
-        // Nome già disponibile → crea PENDING direttamente senza chiedere di nuovo
+        // Nome già disponibile → crea PENDING direttamente
         console.log(`👥 PENDING con nome già disponibile: ${this.data.name}`);
         this.phase = 'done';
         const _dateD = DateManager.formatForDisplay(this.data.date);
