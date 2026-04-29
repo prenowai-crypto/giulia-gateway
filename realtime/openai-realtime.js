@@ -2450,6 +2450,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // Indirizzo e telefono
     if (ri.address) lines.push(`Indirizzo: ${ri.address}`);
+    else            lines.push(`Indirizzo: non disponibile — non fornirlo mai, non inventarlo`);
     if (ri.phone)   lines.push(`Telefono ristorante: ${ri.phone}`);
 
     // Info operative
