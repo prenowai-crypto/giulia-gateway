@@ -819,7 +819,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const rc = this.restaurantConfig;
 
     const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
-    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
+    let   newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
