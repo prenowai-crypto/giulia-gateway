@@ -921,6 +921,15 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           this.foundReservation = this.lastReservation;
           this.modifyState = 'awaiting_changes';
 
+          // Fix 4: se solo le note cambiano (stessi data/ora/pax/nome), non fare MODIFY
+          // Le note sono già state gestite da _detectNotesAndPhone → update_notes
+          const _lr2 = this.lastReservation;
+          const _onlyNoteChange = !newName && !newDate && !newTime && !newPeople;
+          if (_onlyNoteChange) {
+            console.log('📝 Phase=done MODIFY: solo nota cambiata, già gestita da update_notes → skip MODIFY');
+            return;
+          }
+
           // Se il messaggio contiene già la modifica esplicita, applicala subito
           if (newName || newDate || newTime || newPeople) {
             console.log(`💾 Phase=done MODIFY: applico cambio diretto su lastReservation`);
@@ -1003,7 +1012,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             type: 'response.create',
             response: {
               instructions: _gLang === 'it'
-                ? `La prenotazione è già confermata. ${_notesInfo} Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se chiede delle note conferma quelle salvate. Se fa una domanda su strutture (seggiolone, parcheggio) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". Max 2 frasi. Non reinventare la prenotazione.`
+                ? `La prenotazione è già confermata. ${_notesInfo} Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se chiede delle note conferma quelle salvate. Se fa una domanda su strutture (seggiolone, parcheggio) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". IMPORTANTE: non dire mai "ho annotato" o "ho preso nota" di qualcosa a meno che non sia già presente nelle note salvate. Non inventare ingredienti o dettagli del menu non esplicitamente indicati. Max 2 frasi. Non reinventare la prenotazione.`
                 : `The reservation is already confirmed. ${_notesInfo} Reply warmly in ${_gLang}. If asked about notes confirm what was saved. If asked about facilities say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
             },
           });
@@ -1328,7 +1337,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
       { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
       { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
-      { pattern: /seggiol[eo]n[eo]|seggiolino|highchair/i,          note: 'Richiesto seggiolone' },
+      { pattern: /seggiol[eo]n[eo]|seggiolino|seggialone|seggilon[ei]|seggialino|highchair/i, note: 'Richiesto seggiolone' },
       { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
       { pattern: /anniversario/i,                                   note: 'Anniversario' },
       { pattern: /compleanno|birthday/i,                            note: 'Compleanno' },
@@ -2185,13 +2194,16 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const _largeThresh = Number(_rc2?.large_group_threshold) || 10;
     const _willBePending = people > _largeThresh;
 
+    // Fix: includi note nel messaggio di conferma se presenti
+    const _notesConfirmStr = this.data.notes ? ` Ho annotato: ${this.data.notes}.` : '';
+
     if (_willBePending) {
       this._say(
-        `Perfetto ${firstName}! Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. La prenotazione è in attesa di conferma dal ristorante, ti contatteranno a breve!`
+        `Perfetto ${firstName}! Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}.${_notesConfirmStr} La prenotazione è in attesa di conferma dal ristorante, ti contatteranno a breve!`
       );
     } else {
       this._say(
-        `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`
+        `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}.${_notesConfirmStr} Ti aspettiamo!`
       );
     }
 
