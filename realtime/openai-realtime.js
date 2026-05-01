@@ -1035,6 +1035,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           return;
         }
 
+        // Fix: se l'unica differenza con lastReservation è il nome → MODIFY del nome, non nuova prenotazione
+        // Caso: "Mi chiamo Russo, non Rossi" → GPT estrae create+nome corretto+stessi dati
+        const _lrFix = this.lastReservation;
+        if (_lrFix?.eventId && newName && newName !== _lrFix.name &&
+            newDate === _lrFix.date && newTime === _lrFix.time &&
+            String(newPeople) === String(_lrFix.people)) {
+          console.log(`🔄 Phase=done CREATE: solo nome cambiato (${_lrFix.name} → ${newName}) → MODIFY nome`);
+          await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+          return;
+        }
+
         this.intent = 'create';
         this.phase = 'collecting';
         this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
