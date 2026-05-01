@@ -961,6 +961,12 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const lr = this.lastReservation;
         if (lr && newDate === lr.date && newTime === lr.time &&
             String(newPeople) === String(lr.people) && newName === lr.name) {
+          // Se la prenotazione è PENDING, lo diciamo esplicitamente al cliente
+          if (lr.status === 'PENDING_OWNER') {
+            console.log('⏳ Phase=done: prenotazione PENDING_OWNER → informo cliente');
+            this._say('La tua prenotazione è in attesa di conferma dal ristorante. Ti contatteranno a breve per confermarla.');
+            return;
+          }
           console.log('🛡️ Phase=done: create con dati identici a lastReservation → saluto senza reset');
           // Fix: aggiorna note se rilevate PRIMA di rispondere, poi lascia GPT rispondere liberamente
           // (prima forzava "Prego! A presto!" saltando le note e causando loop)
@@ -1766,6 +1772,16 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       // Se data/ora/persone cambiano → check disponibilità
       if (dateChanged || timeChanged || (peopleChanged && updPeople > Number(r.people))) {
+        // Fix T2-B: valida l'orario PRIMA di fare il check disponibilità
+        if (updTime && !ValidationPipeline.isValidTime(updTime, this.restaurantConfig)) {
+          console.log(`🚫 MODIFY: orario non valido: ${updTime}`);
+          const rc = this.restaurantConfig;
+          const lunch = rc?.lunch_hours || '12:00-14:30';
+          const dinner = rc?.dinner_hours || '21:00-22:30';
+          this._processingModify = false;
+          this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
+          return;
+        }
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
         // Fix: usa pending (success:true) per evitare rogue response di GPT durante il check
         this._resolveFunctionCallPending('checking availability');
@@ -2164,9 +2180,20 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       notes: this.data.notes || '',
     };
 
-    this._say(
-      `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`
-    );
+    // Determina se sarà PENDING in base alla soglia gruppo grande
+    const _rc2 = this.restaurantConfig;
+    const _largeThresh = Number(_rc2?.large_group_threshold) || 10;
+    const _willBePending = people > _largeThresh;
+
+    if (_willBePending) {
+      this._say(
+        `Perfetto ${firstName}! Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}. La prenotazione è in attesa di conferma dal ristorante, ti contatteranno a breve!`
+      );
+    } else {
+      this._say(
+        `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}. Ti aspettiamo!`
+      );
+    }
 
     // Crea prenotazione in background
     this._callAppsScript({
@@ -2191,8 +2218,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           people: people,
           phone: this.callerPhone || '',
           notes: this.data.notes || '',
+          status: result.status || 'CONFIRMED',
         };
-        console.log(`💾 lastReservation salvato: eventId=${result.eventId}`);
+        console.log(`💾 lastReservation salvato: eventId=${result.eventId} status=${result.status}`);
       }
     }).catch(err => {
       console.error('❌ Errore creazione prenotazione:', err);
