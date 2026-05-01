@@ -1188,7 +1188,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         type: 'response.create',
         response: {
           instructions: _langFree === 'it'
-            ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}\nMax 2 frasi. Non inventare nulla.`
+            ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}\nMax 2 frasi. Non inventare nulla. Non suggerire mai prenotazioni proattivamente. Non proporre mai di venire al ristorante per degustare piatti.`
             : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
         },
       });
@@ -2460,12 +2460,12 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             // Fix: fatt[ao] copre sia "fatto" (maschile) che "fatta" (femminile)
             const _askingDescription = /come.{0,15}(fat|prepar|cucinat|composto|fatt[ao])|ingredienti|cosa.{0,5}(c.è|hanno|ha|contiene|mett)|com.è.{0,15}(fatt[ao]|preparata?)|di cosa/i.test(t);
             if (_askingDescription) {
-              // Cerca la descrizione nel menu: formato "- Nome Piatto €prezzo Descrizione"
-              const _descMatch = _mLine.match(/[-•]\s*.+?(?:€\s*[\d,.]+)?\s+(.+)$/);
+              // Fix: cerca la descrizione DOPO il prezzo (€XX) — ancora affidabile
+              const _descMatch = _mLine.match(/€\s*[\d,.]+\s+(.+)$/);
               const _desc = _descMatch ? _descMatch[1].trim() : null;
               if (_desc) {
                 console.log(`📋 Dish match con descrizione: "${_cleanDish}" → "${_desc}"`);
-                return `${_cleanDish}: ${_desc}`;
+                return `La ${_cleanDish} è preparata con ${_desc.toLowerCase().replace(/[()]/g, '')}.`;
               }
             }
             return `Sì, abbiamo ${_cleanDish}`;
