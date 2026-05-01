@@ -902,6 +902,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (this.phase === 'done') {
       const intent = args.intent;
 
+      // Fix 3A: "Pronto?" = segnale telefonico (cliente non sentiva risposta)
+      // Risposta deterministica, skip di tutto il resto
+      if (this.lastTranscript) {
+        const _prontoPat = /^(pronto|pronto\?|ci sei|mi senti|sei li|sei l[ìi]|sento|hello\?|are you there)[?!.\s]*$/i;
+        if (_prontoPat.test(this.lastTranscript.trim())) {
+          console.log('📞 "Pronto?" rilevato → risposta deterministica');
+          this._say('Sì, sono qui! Posso aiutarla con altro?');
+          return;
+        }
+      }
+
       // Nuovo intent modify → usa lastReservation se disponibile, altrimenti cerca
       if (intent === 'modify') {
         this.intent = 'modify';
@@ -927,6 +938,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const _onlyNoteChange = !newName && !newDate && !newTime && !newPeople;
           if (_onlyNoteChange) {
             console.log('📝 Phase=done MODIFY: solo nota cambiata, già gestita da update_notes → skip MODIFY');
+            // Fix 4: conferma verbale della nota al cliente
+            if (this.data.notes) {
+              const _lastNote = this.data.notes.split(';').pop().trim();
+              this._say(`Ho annotato: ${_lastNote}. C'è altro che posso fare per lei?`);
+            }
             return;
           }
 
@@ -2175,6 +2191,19 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
   _confirmReservation() {
     const { date, time, people, name } = this.data;
+
+    // Fix 1: valida orario SEMPRE prima di confermare (evita bypass da turno multi-campo)
+    if (time && !ValidationPipeline.isValidTime(time, this.restaurantConfig)) {
+      console.log(`🚫 _confirmReservation: orario non valido ${time} → blocco`);
+      const rc = this.restaurantConfig;
+      const lunch = rc?.lunch_hours || '12:00-14:30';
+      const dinner = rc?.dinner_hours || '21:00-22:30';
+      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
+      this.phase = 'collecting';
+      this.data.time = null;
+      return;
+    }
+
     const dateDisplay  = DateManager.formatForDisplay(date);
     const timeDisplay  = TimeManager.formatForDisplay(time);
     const firstName    = name || ''; // usa nome completo (supporta nomi composti: De Luca, Di Maio, ecc.)
@@ -2198,8 +2227,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const _notesConfirmStr = this.data.notes ? ` Ho annotato: ${this.data.notes}.` : '';
 
     if (_willBePending) {
+      const _callerNum = this.callerPhone ? ` Ti contatteremo al numero da cui stai chiamando.` : '';
       this._say(
-        `Perfetto ${firstName}! Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}.${_notesConfirmStr} La prenotazione è in attesa di conferma dal ristorante, ti contatteranno a breve!`
+        `Perfetto ${firstName}! Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}.${_notesConfirmStr}${_callerNum} La prenotazione è in attesa di conferma dal ristorante. Se preferisci essere contattato su un altro numero, dimmelo ora!`
       );
     } else {
       this._say(
@@ -2426,6 +2456,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const _dishWords = _cleanDish.toLowerCase().split(/\s+/).filter(w => w.length >= 5 && !_stopWords.has(w));
           if (_dishWords.length > 0 && _dishWords.some(w => t.includes(w))) {
             console.log(`📋 Dish match: "${_cleanDish}"`);
+            // Fix 5: se il cliente chiede "come/ingredienti/cosa c'è", includi la descrizione
+            const _askingDescription = /come.{0,15}(fat|prepar|cucinat|composto|fatto)|ingredienti|cosa.{0,5}(c.è|hanno|ha|contiene|mett)|com.è.{0,15}(fatto|preparato)|di cosa/i.test(t);
+            if (_askingDescription) {
+              // Cerca la descrizione nel menu: formato "- Nome Piatto €prezzo Descrizione"
+              const _descMatch = _mLine.match(/[-•]\s*.+?(?:€\s*[\d,.]+)?\s+(.+)$/);
+              const _desc = _descMatch ? _descMatch[1].trim() : null;
+              if (_desc) {
+                console.log(`📋 Dish match con descrizione: "${_cleanDish}" → "${_desc}"`);
+                return `${_cleanDish}: ${_desc}`;
+              }
+            }
             return `Sì, abbiamo ${_cleanDish}`;
           }
         }
