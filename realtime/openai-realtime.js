@@ -660,6 +660,8 @@ export class OpenAIRealtimeClient {
           const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name;
           if (_isFirstTurn && _speechDuration < 2000) {
             console.log(`🛡️ Primo turno troppo breve (${_speechDuration}ms < 2000ms) → ignorato: "${t}"`);
+            // GPT potrebbe aver già generato una risposta in flight → cancella
+            this._send({ type: 'response.cancel' });
             return;
           }
 
@@ -682,6 +684,8 @@ export class OpenAIRealtimeClient {
           const tLower = t.toLowerCase();
           if (WHISPER_HALLUCINATIONS.some(h => tLower.includes(h))) {
             console.log(`🛡️ Whisper hallucination scartata: "${t}"`);
+            // GPT potrebbe aver già generato una risposta in flight → cancella
+            this._send({ type: 'response.cancel' });
             return;
           }
 
