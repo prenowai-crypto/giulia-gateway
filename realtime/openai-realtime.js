@@ -2457,7 +2457,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           if (_dishWords.length > 0 && _dishWords.some(w => t.includes(w))) {
             console.log(`📋 Dish match: "${_cleanDish}"`);
             // Fix 5: se il cliente chiede "come/ingredienti/cosa c'è", includi la descrizione
-            const _askingDescription = /come.{0,15}(fat|prepar|cucinat|composto|fatto)|ingredienti|cosa.{0,5}(c.è|hanno|ha|contiene|mett)|com.è.{0,15}(fatto|preparato)|di cosa/i.test(t);
+            // Fix: fatt[ao] copre sia "fatto" (maschile) che "fatta" (femminile)
+            const _askingDescription = /come.{0,15}(fat|prepar|cucinat|composto|fatt[ao])|ingredienti|cosa.{0,5}(c.è|hanno|ha|contiene|mett)|com.è.{0,15}(fatt[ao]|preparata?)|di cosa/i.test(t);
             if (_askingDescription) {
               // Cerca la descrizione nel menu: formato "- Nome Piatto €prezzo Descrizione"
               const _descMatch = _mLine.match(/[-•]\s*.+?(?:€\s*[\d,.]+)?\s+(.+)$/);
