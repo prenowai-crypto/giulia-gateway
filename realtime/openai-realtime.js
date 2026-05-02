@@ -1176,9 +1176,21 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           return;
         }
       } else {
-        console.log(`📋 Info question skippata: fase collecting con nome=${newName} — lascio GPT rispondere`);
-        // Non forziamo create: lasciamo che il flusso continui normalmente
-        // Se GPT dice modify o cancel, lo gestiremo nei blocchi sottostanti
+        // Fix M07: se intent=unknown + nome presente in phase=collecting,
+        // e NON abbiamo ancora nessun dato di prenotazione raccolto (no data/ora/pax),
+        // il cliente probabilmente ha già una prenotazione → cerca automaticamente.
+        // Se invece abbiamo già dei dati (siamo a metà del flusso CREATE), lascia GPT rispondere.
+        const _noDataYet = !this.data.date && !this.data.time && !this.data.people;
+        if (_noDataYet) {
+          console.log(`📋 Fix M07: intent=unknown + nome=${newName} senza dati → cerco prenotazione automaticamente`);
+          this.intent = 'modify';
+          this.modifyState = null;
+          this.foundReservation = null;
+          await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+          return;
+        } else {
+          console.log(`📋 Info question skippata: fase collecting con nome=${newName} e dati parziali → lascio GPT rispondere`);
+        }
       }
 
       const rc = this.restaurantConfig;
