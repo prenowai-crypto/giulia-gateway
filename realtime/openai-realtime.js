@@ -921,6 +921,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (intent === 'modify') {
         this.intent = 'modify';
         this.modifyState = null;
+        // Fix X04: salva foundReservation prima del reset — potrebbe contenere la prenotazione
+        // trovata durante un CANCEL abortito (es: "No anzi spostala a sabato")
+        const _cancelFoundReservation = this.foundReservation;
         this.foundReservation = null;
         console.log('🔄 Phase=done: nuovo intent modify rilevato');
 
@@ -932,13 +935,20 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
         // Se abbiamo la prenotazione appena gestita, usala direttamente
         // Nota: funziona anche con eventId=null (es. timeout AS)
-        if (this.lastReservation?.name && this.lastReservation?.date) {
-          this.foundReservation = this.lastReservation;
+        // Fix X04: usa anche _cancelFoundReservation (da CANCEL abortito) se lastReservation è null
+        const _refRes = (this.lastReservation?.name && this.lastReservation?.date)
+          ? this.lastReservation
+          : (_cancelFoundReservation?.name && _cancelFoundReservation?.date ? _cancelFoundReservation : null);
+
+        if (_refRes) {
+          if (!this.lastReservation?.name) {
+            console.log(`🔄 Fix X04: uso foundReservation da CANCEL abortito (${_refRes.name}, ${_refRes.date}) come base MODIFY`);
+          }
+          this.foundReservation = _refRes;
           this.modifyState = 'awaiting_changes';
 
           // Fix 4: se solo le note cambiano (stessi data/ora/pax/nome), non fare MODIFY
           // Le note sono già state gestite da _detectNotesAndPhone → update_notes
-          const _lr2 = this.lastReservation;
           const _onlyNoteChange = !newName && !newDate && !newTime && !newPeople;
           if (_onlyNoteChange) {
             console.log('📝 Phase=done MODIFY: solo nota cambiata, già gestita da update_notes → skip MODIFY');
@@ -952,17 +962,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
           // Se il messaggio contiene già la modifica esplicita, applicala subito
           if (newName || newDate || newTime || newPeople) {
-            console.log(`💾 Phase=done MODIFY: applico cambio diretto su lastReservation`);
+            console.log(`💾 Phase=done MODIFY: applico cambio diretto su _refRes (${_refRes.name}, ${_refRes.date})`);
             await this._handleModifyFlow(newDate, newTime, newPeople, newName);
             return;
           }
 
           // Altrimenti mostra la prenotazione trovata e chiedi cosa modificare
-          const r = this.lastReservation;
+          const r = _refRes;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          console.log(`💾 Phase=done MODIFY: uso lastReservation direttamente (${r.name}, ${r.date})`);
+          console.log(`💾 Phase=done MODIFY: uso _refRes direttamente (${r.name}, ${r.date})`);
           this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
           return;
@@ -2053,7 +2063,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     if (isNo) {
       this.phase = 'done';
       this.cancelState = null;        // 🆕 reset: utente ha rifiutato, uscire dalla confirm loop
-      this.foundReservation = null;
+      // Fix X04: NON azzerare foundReservation — se il cliente dice "No anzi spostala a sabato"
+      // GPT ritornerà intent=modify e il blocco phase=done MODIFY userà foundReservation come base
+      // this.foundReservation = null;
       this._say('Nessun problema, la prenotazione rimane invariata. Arrivederci!');
       return;
     }
