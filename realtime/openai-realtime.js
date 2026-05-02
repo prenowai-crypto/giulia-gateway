@@ -1826,12 +1826,21 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         // Fix: usa pending (success:true) per evitare rogue response di GPT durante il check
         this._resolveFunctionCallPending('checking availability');
         this._say('Un attimo che verifico la disponibilità...');
+        // Fix E3/E9: existingPeople va passato SOLO se il nuovo slot coincide con quello originale.
+        // Se si sposta su data/ora diversa, i pax esistenti NON sono nel nuovo slot → existingPeople=0.
+        const _sameSlot = (updDate === r.date && updTime === r.time);
+        const _existingPeopleForCheck = _sameSlot ? Number(r.people) : 0;
+        if (_existingPeopleForCheck > 0) {
+          console.log(`🔍 MODIFY stesso slot → existingPeople=${_existingPeopleForCheck} (offset corretto)`);
+        } else if (!_sameSlot) {
+          console.log(`🔍 MODIFY slot diverso (${r.date} ${r.time} → ${updDate} ${updTime}) → existingPeople=0`);
+        }
         const checkResult = await this._callAppsScript({
           action: 'check_availability',
           data: updDate,
           ora: updTime,
           persone: updPeople,
-          existingPeople: Number(r.people),
+          existingPeople: _existingPeopleForCheck,
         });
 
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
