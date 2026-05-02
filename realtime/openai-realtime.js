@@ -1176,11 +1176,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           return;
         }
       } else {
-        console.log(`📋 Info question skippata: fase collecting con nome=${newName} — rerouto a create`);
-        // Rerouta come intent=create per continuare la prenotazione
-        args.intent = 'create';
-        await this._processGPTData(args);
-        return;
+        console.log(`📋 Info question skippata: fase collecting con nome=${newName} — lascio GPT rispondere`);
+        // Non forziamo create: lasciamo che il flusso continui normalmente
+        // Se GPT dice modify o cancel, lo gestiremo nei blocchi sottostanti
       }
 
       const rc = this.restaurantConfig;
@@ -1207,6 +1205,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
         },
       });
+      return;
+    }
+
+    // 🆕 Intent-switch create→modify in phase=collecting
+    // Es: utente dice "ho una prenotazione, vorrei modificarla" → GPT dice modify ma this.intent='create'
+    if (this.intent === 'create' && this.phase === 'collecting' && args.intent === 'modify') {
+      console.log(`🔄 Intent-switch collecting: create → modify, avvio MODIFY flow`);
+      this.intent = 'modify';
+      this.modifyState = null;
+      this.foundReservation = null;
+      await this._handleModifyFlow(newDate, newTime, newPeople, newName);
       return;
     }
 
