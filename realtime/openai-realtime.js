@@ -517,7 +517,6 @@ export class OpenAIRealtimeClient {
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
     this._processingModify = false;   // evita double MODIFY (doppio function call GPT)
-    this._modifyPhaseActive = false;  // evita double trigger in phase=done MODIFY
 
     // ── Lingua rilevata da GPT ───────────────────────────────────────────────
     this.language = 'it';  // default italiano, aggiornato al primo messaggio
@@ -922,44 +921,24 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (intent === 'modify') {
         this.intent = 'modify';
         this.modifyState = null;
-        // Fix X04: salva foundReservation PRIMA del reset — potrebbe essere stata settata
-        // dal CANCEL search nella stessa sessione (es: "No anzi la sposti a sabato")
-        // In quel caso lastReservation è null (nuova sessione) ma foundReservation è valido.
-        const _prevFoundReservation = this.foundReservation;
         this.foundReservation = null;
         console.log('🔄 Phase=done: nuovo intent modify rilevato');
-
-        // Guard anti-double fase=done: blocca immediatamente il secondo trigger
-        // (testo + function call arrivano quasi in contemporanea)
-        if (this._modifyPhaseActive) {
-          console.log('🔒 Double MODIFY phase=done ignorato: _modifyPhaseActive=true');
-          return;
-        }
-        this._modifyPhaseActive = true;
 
         // Guard anti-double: se stiamo già processando un MODIFY, ignora il secondo trigger
         if (this._processingModify) {
           console.log('🔒 Double MODIFY ignorato: _processingModify=true');
-          this._modifyPhaseActive = false;
           return;
         }
 
-        // Determina la prenotazione di riferimento:
-        // 1) lastReservation (sessione con CREATE/MODIFY precedente)
-        // 2) _prevFoundReservation (sessione CANCEL dove lastReservation è null)
-        const _refReservation = (this.lastReservation?.name && this.lastReservation?.date)
-          ? this.lastReservation
-          : (_prevFoundReservation?.name && _prevFoundReservation?.date ? _prevFoundReservation : null);
-
-        if (_refReservation) {
-          if (!this.lastReservation?.name) {
-            console.log(`🔄 Fix X04: uso foundReservation da CANCEL search (${_refReservation.name}, ${_refReservation.date}) come base MODIFY`);
-          }
-          this.foundReservation = _refReservation;
+        // Se abbiamo la prenotazione appena gestita, usala direttamente
+        // Nota: funziona anche con eventId=null (es. timeout AS)
+        if (this.lastReservation?.name && this.lastReservation?.date) {
+          this.foundReservation = this.lastReservation;
           this.modifyState = 'awaiting_changes';
 
           // Fix 4: se solo le note cambiano (stessi data/ora/pax/nome), non fare MODIFY
           // Le note sono già state gestite da _detectNotesAndPhone → update_notes
+          const _lr2 = this.lastReservation;
           const _onlyNoteChange = !newName && !newDate && !newTime && !newPeople;
           if (_onlyNoteChange) {
             console.log('📝 Phase=done MODIFY: solo nota cambiata, già gestita da update_notes → skip MODIFY');
@@ -973,17 +952,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
           // Se il messaggio contiene già la modifica esplicita, applicala subito
           if (newName || newDate || newTime || newPeople) {
-            console.log(`💾 Phase=done MODIFY: applico cambio diretto su _refReservation (${_refReservation.name}, ${_refReservation.date})`);
+            console.log(`💾 Phase=done MODIFY: applico cambio diretto su lastReservation`);
             await this._handleModifyFlow(newDate, newTime, newPeople, newName);
             return;
           }
 
           // Altrimenti mostra la prenotazione trovata e chiedi cosa modificare
-          const r = _refReservation;
+          const r = this.lastReservation;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          console.log(`💾 Phase=done MODIFY: uso _refReservation direttamente (${r.name}, ${r.date})`);
+          console.log(`💾 Phase=done MODIFY: uso lastReservation direttamente (${r.name}, ${r.date})`);
           this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
           return;
@@ -1302,6 +1281,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // ── CANCEL flow ──────────────────────────────────────────────────────────
     if (this.intent === 'cancel') {
+      // Fix X04: intent-switch cancel→modify — cliente cambia idea durante CANCEL
+      // (es: "No anzi la sposto a sabato"). Riutilizza foundReservation già trovata.
+      // Condizione tripla: siamo in cancel + GPT dice modify + prenotazione già trovata
+      if (args.intent === 'modify' && this.foundReservation?.eventId) {
+        console.log(`🔄 Intent-switch CANCEL → modify: uso foundReservation (${this.foundReservation.name}, ${this.foundReservation.date})`);
+        this.intent = 'modify';
+        this.cancelState = null;
+        this.modifyState = 'awaiting_changes';
+        await this._handleModifyFlow(newDate, newTime, newPeople, newName);
+        return;
+      }
       // confirm phase gestita direttamente via testo in _onUserText
       if (this.cancelState !== 'awaiting_confirm') {
         await this._handleCancelFlow(newDate, newName);
@@ -1861,7 +1851,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const lunch = rc?.lunch_hours || '12:00-14:30';
           const dinner = rc?.dinner_hours || '21:00-22:30';
           this._processingModify = false;
-          this._modifyPhaseActive = false;
           this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
           return;
         }
@@ -1889,7 +1878,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
           // Fix: cerca slot alternativi come fa il CREATE invece di rifiutare e basta
           this._processingModify = false;
-          this._modifyPhaseActive = false;
           try {
             const alts = await this._callAppsScript({
               action: 'find_available_slots',
@@ -1947,7 +1935,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       this.phase = 'done';
       this._processingModify = false;  // reset: MODIFY completato
-      this._modifyPhaseActive = false;
       if (updateResult?.success) {
         const dateDisplay = DateManager.formatForDisplay(updDate);
         const timeDisplay = TimeManager.formatForDisplay(updTime);
