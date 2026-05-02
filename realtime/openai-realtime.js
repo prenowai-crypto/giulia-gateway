@@ -517,6 +517,7 @@ export class OpenAIRealtimeClient {
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
     this._processingModify = false;   // evita double MODIFY (doppio function call GPT)
+    this._modifyPhaseActive = false;  // evita double trigger in phase=done MODIFY
 
     // ── Lingua rilevata da GPT ───────────────────────────────────────────────
     this.language = 'it';  // default italiano, aggiornato al primo messaggio
@@ -928,9 +929,18 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this.foundReservation = null;
         console.log('🔄 Phase=done: nuovo intent modify rilevato');
 
+        // Guard anti-double fase=done: blocca immediatamente il secondo trigger
+        // (testo + function call arrivano quasi in contemporanea)
+        if (this._modifyPhaseActive) {
+          console.log('🔒 Double MODIFY phase=done ignorato: _modifyPhaseActive=true');
+          return;
+        }
+        this._modifyPhaseActive = true;
+
         // Guard anti-double: se stiamo già processando un MODIFY, ignora il secondo trigger
         if (this._processingModify) {
           console.log('🔒 Double MODIFY ignorato: _processingModify=true');
+          this._modifyPhaseActive = false;
           return;
         }
 
@@ -1851,6 +1861,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const lunch = rc?.lunch_hours || '12:00-14:30';
           const dinner = rc?.dinner_hours || '21:00-22:30';
           this._processingModify = false;
+          this._modifyPhaseActive = false;
           this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
           return;
         }
@@ -1878,6 +1889,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
           // Fix: cerca slot alternativi come fa il CREATE invece di rifiutare e basta
           this._processingModify = false;
+          this._modifyPhaseActive = false;
           try {
             const alts = await this._callAppsScript({
               action: 'find_available_slots',
@@ -1935,6 +1947,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       this.phase = 'done';
       this._processingModify = false;  // reset: MODIFY completato
+      this._modifyPhaseActive = false;
       if (updateResult?.success) {
         const dateDisplay = DateManager.formatForDisplay(updDate);
         const timeDisplay = TimeManager.formatForDisplay(updTime);
