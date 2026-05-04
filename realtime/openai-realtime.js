@@ -496,7 +496,9 @@ export class OpenAIRealtimeClient {
     this.onClose      = opts.onClose      || (() => {});
 
     this.ws = null;
-    this.callerPhone   = opts.callerPhone || '';
+    // Normalizza callerPhone: aggiunge '+' se mancante (Telnyx a volte lo omette)
+    const _rawPhone = opts.callerPhone || '';
+    this.callerPhone = _rawPhone && !_rawPhone.startsWith('+') ? '+' + _rawPhone : _rawPhone;
 
     // ── State (dalla logica del vecchio index) ──────────────────────────────
     this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
