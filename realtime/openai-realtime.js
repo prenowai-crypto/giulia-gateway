@@ -1162,6 +1162,19 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
 
+      // Fix: controlla PRIMA se è una domanda info ristorante — risposta deterministica
+      // Questo ha priorità anche sul reminder MODIFY, per evitare che il reminder
+      // soffochi domande legittime come "avete piatti vegani?"
+      const _skipInfoCheck = (this.phase === 'collecting' && newName && newName !== 'null');
+      if (!_skipInfoCheck) {
+        const _infoAnswer = this._checkInfoQuestion(this.lastTranscript || '');
+        if (_infoAnswer !== null) {
+          console.log(`📋 Info question rilevata → risposta deterministica`);
+          this._say(_infoAnswer);
+          return;
+        }
+      }
+
       // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
       // ricordagli che la prenotazione originale è ancora attiva.
       const _modifyReminderRes2 = this.foundReservation || this.lastReservation;
@@ -1173,18 +1186,6 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         console.log(`ℹ️ Intent-unknown MODIFY incomplete: ricorda prenotazione originale (${r.name}, ${r.date})`);
         this._say(`La sua prenotazione originale per ${r.people} persone ${dateDisplay} alle ${timeDisplay} è ancora attiva. Vuole mantenerla o cancellarla?`);
         return;
-      }
-      // Controlla se è una domanda sulle info ristorante — risposta deterministica
-      // SKIP se siamo in fase di raccolta dati prenotazione (es: cliente dà nome + chiede info)
-      // In quel caso la prenotazione ha priorità — l'info può essere chiesta dopo.
-      const _skipInfoCheck = (this.phase === 'collecting' && newName && newName !== 'null');
-      if (!_skipInfoCheck) {
-        const _infoAnswer = this._checkInfoQuestion(this.lastTranscript || '');
-        if (_infoAnswer !== null) {
-          console.log(`📋 Info question rilevata → risposta deterministica`);
-          this._say(_infoAnswer);
-          return;
-        }
       } else {
         // Fix M07: se intent=unknown + nome presente in phase=collecting,
         // e NON abbiamo ancora nessun dato di prenotazione raccolto (no data/ora/pax),
