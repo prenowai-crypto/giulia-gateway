@@ -1240,8 +1240,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // GPT dice modify solo perché sta correggendo un campo → NON avviare MODIFY flow,
       // semplicemente aggiornare i dati e restare in CREATE.
       // Il MODIFY flow ha senso solo se il cliente non ha ancora dati raccolti.
-      const _allDataPresent = this.data.date && this.data.time && this.data.people;
-      if (_allDataPresent) {
+      // _anyDataCollected: se il cliente ha già dato ALMENO UN dato in questa sessione,
+      // GPT sta interpretando una correzione come modify → resta in CREATE.
+      // Se invece non c'è nessun dato (nuova chiamata), il MODIFY flow è legittimo.
+      const _anyDataCollected = this.data.date || this.data.name || this.data.people;
+      if (_anyDataCollected) {
         console.log(`🔄 Intent-switch collecting: create → modify IGNORATO (dati già presenti, è correzione CREATE)`);
         // Fix B2: reset foundReservation residuo da MODIFY fallback
         this.foundReservation = null;
