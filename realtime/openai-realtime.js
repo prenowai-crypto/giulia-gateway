@@ -1194,7 +1194,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         // il cliente probabilmente ha già una prenotazione → cerca automaticamente.
         // Se invece abbiamo già dei dati (siamo a metà del flusso CREATE), lascia GPT rispondere.
         const _noDataYet = !this.data.date && !this.data.time && !this.data.people;
-        if (_noDataYet) {
+        if (_noDataYet && newName && newName !== 'null') {
           console.log(`📋 Fix M07: intent=unknown + nome=${newName} senza dati → cerco prenotazione automaticamente`);
           this.intent = 'modify';
           this.modifyState = null;
@@ -1236,10 +1236,26 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // 🆕 Intent-switch create→modify in phase=collecting
     // Es: utente dice "ho una prenotazione, vorrei modificarla" → GPT dice modify ma this.intent='create'
     if (this.intent === 'create' && this.phase === 'collecting' && args.intent === 'modify') {
+      // Fix B1: se il cliente ha già dato tutti i dati di prenotazione (date+time+people),
+      // GPT dice modify solo perché sta correggendo un campo → NON avviare MODIFY flow,
+      // semplicemente aggiornare i dati e restare in CREATE.
+      // Il MODIFY flow ha senso solo se il cliente non ha ancora dati raccolti.
+      const _allDataPresent = this.data.date && this.data.time && this.data.people;
+      if (_allDataPresent) {
+        console.log(`🔄 Intent-switch collecting: create → modify IGNORATO (dati già presenti, è correzione CREATE)`);
+        // Fix B2: reset foundReservation residuo da MODIFY fallback
+        this.foundReservation = null;
+        // Aggiorna solo i campi nuovi arrivati e resta in CREATE
+        if (newDate   && newDate   !== this.data.date)   { this.data.date   = newDate; }
+        if (newTime   && newTime   !== this.data.time)   { this.data.time   = newTime; }
+        if (newPeople && newPeople !== this.data.people) { this.data.people = newPeople; }
+        if (newName   && newName   !== this.data.name)   { this.data.name   = newName; }
+        return;
+      }
       console.log(`🔄 Intent-switch collecting: create → modify, avvio MODIFY flow`);
       this.intent = 'modify';
       this.modifyState = null;
-      this.foundReservation = null;
+      this.foundReservation = null;  // Fix B2: reset esplicito
       await this._handleModifyFlow(newDate, newTime, newPeople, newName);
       return;
     }
@@ -1361,6 +1377,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this.data.time = null;
         this._resolveFailedFunctionCall(`orario non valido: 20:30`);
         this._say(msg);
+        // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
+        this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + '\n\nATTENZIONE CRITICA: L'orario appena indicato NON è valido e la prenotazione NON è stata effettuata. DEVI chiedere un orario diverso. VIETATO dire "prenotato" o "confermato".' } });
         return;
       }
 
@@ -2284,6 +2302,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       this.phase = 'collecting';
       this.data.time = null;
+      // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
+      this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + '\n\nATTENZIONE CRITICA: L'orario appena indicato NON è valido e la prenotazione NON è stata effettuata. DEVI chiedere un orario diverso. VIETATO dire "prenotato" o "confermato".' } });
       return;
     }
 
