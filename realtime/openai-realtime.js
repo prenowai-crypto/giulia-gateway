@@ -1423,8 +1423,20 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
     ];
 
+    // Pattern domanda info vegan/vegetariano: "avete piatti vegani?" → NON è nota
+    const _isVeganInfoQuestion = /avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|c.è.{0,15}vegan|ci sono.{0,15}vegan|offrite.{0,15}vegan|servite.{0,15}vegan/i.test(text);
+
     const newNotes = [];
     for (const { pattern, note } of noteKeywords) {
+      // Guard: "vegano" come domanda info non va annotato come nota
+      if (note === 'Vegano' && _isVeganInfoQuestion) {
+        console.log(`📋 Vegan rilevato come domanda info → skip nota`);
+        continue;
+      }
+      if (note === 'Vegetariano' && _isVeganInfoQuestion) {
+        console.log(`📋 Vegetariano rilevato come domanda info → skip nota`);
+        continue;
+      }
       if (pattern.test(text)) {
         // Evita duplicati
         if (!this.data.notes || !this.data.notes.includes(note)) {
