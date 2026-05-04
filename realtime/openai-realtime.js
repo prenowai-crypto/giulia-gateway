@@ -1378,7 +1378,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this._resolveFailedFunctionCall(`orario non valido: 20:30`);
         this._say(msg);
         // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-        this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + '\n\nATTENZIONE CRITICA: L'orario appena indicato NON è valido e la prenotazione NON è stata effettuata. DEVI chiedere un orario diverso. VIETATO dire "prenotato" o "confermato".' } });
+        this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
         return;
       }
 
@@ -2303,7 +2303,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this.phase = 'collecting';
       this.data.time = null;
       // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-      this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + '\n\nATTENZIONE CRITICA: L'orario appena indicato NON è valido e la prenotazione NON è stata effettuata. DEVI chiedere un orario diverso. VIETATO dire "prenotato" o "confermato".' } });
+        this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
       return;
     }
 
