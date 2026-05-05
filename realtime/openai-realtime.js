@@ -1010,6 +1010,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const _onlyNoteChange = !newName && !newDate && !newTime && !newPeople;
           if (_onlyNoteChange) {
             console.log('📝 Phase=done MODIFY: solo nota cambiata, già gestita da update_notes → skip MODIFY');
+            // Fix: resetta intent e modifyState per evitare il MODIFY reminder sul saluto finale
+            this.intent = 'done_modify';
+            this.modifyState = 'done';
             // Fix 4: conferma verbale della nota al cliente
             if (this.data.notes) {
               const _lastNote = this.data.notes.split(';').pop().trim();
@@ -1299,7 +1302,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       // _anyDataCollected: se il cliente ha già dato ALMENO UN dato in questa sessione,
       // GPT sta interpretando una correzione come modify → resta in CREATE.
       // Se invece non c'è nessun dato (nuova chiamata), il MODIFY flow è legittimo.
-      const _anyDataCollected = this.data.date || this.data.name || this.data.people;
+      const _anyDataCollected = this.data.date || this.data.name || this.data.people || this.data.time;
       if (_anyDataCollected) {
         console.log(`🔄 Intent-switch collecting: create → modify IGNORATO (dati già presenti, è correzione CREATE)`);
         // Fix B2: reset foundReservation residuo da MODIFY fallback
@@ -1400,7 +1403,16 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this.data.people = newPeople;
       }
     }
-    if (newName   && !this.data.name)                { console.log(`👤 name:   ${newName}`);                         this.data.name   = newName; }
+    if (newName) {
+      if (!this.data.name) {
+        console.log(`👤 name:   ${newName}`);
+        this.data.name = newName;
+      } else if (newName !== this.data.name && this.lastTranscript &&
+                 /\bmi chiamo\b|\bsono\b|\bil mio nome\b|\bno.*mi chiamo\b|\bfai a nome\b|\ba nome\b/i.test(this.lastTranscript)) {
+        console.log(`👤 name update (correzione): ${this.data.name} → ${newName}`);
+        this.data.name = newName;
+      }
+    }
 
     console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people} name=${this.data.name}`);
 
@@ -1952,6 +1964,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const dinner = rc?.dinner_hours || '21:00-22:30';
           this._processingModify = false;
           this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
+          // Fix B4 MODIFY: forza GPT a NON confermare dopo orario invalido
+          this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. DEVI chiedere orario diverso. VIETATO dire confermato o aggiornato.` } });
           return;
         }
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
