@@ -902,10 +902,25 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
     }
 
-    const newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
+    let   newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
     const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    // Cross-check data: se transcript contiene "domani"/"oggi"/"stasera" forza data corretta
+    if (this.lastTranscript) {
+      const _tz = rc?.timezone || 'Europe/Rome';
+      const _now = new Date();
+      const _todayISO    = _now.toLocaleDateString('sv-SE', { timeZone: _tz });
+      const _tomorrowISO = new Date(_now.getTime() + 86400000).toLocaleDateString('sv-SE', { timeZone: _tz });
+      if (/\bdomani\b/i.test(this.lastTranscript) && newDate && newDate !== _tomorrowISO) {
+        console.log(`📅 Date cross-check: "domani" → forzo ${_tomorrowISO} (GPT aveva ${newDate})`);
+        newDate = _tomorrowISO;
+      } else if (/\b(oggi|stasera|questa sera)\b/i.test(this.lastTranscript) && newDate && newDate !== _todayISO) {
+        console.log(`📅 Date cross-check: "oggi/stasera" → forzo ${_todayISO} (GPT aveva ${newDate})`);
+        newDate = _todayISO;
+      }
+    }
 
     // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
     // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
