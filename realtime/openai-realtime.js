@@ -829,6 +829,7 @@ REGOLE DATE/ORA:
 - "all'una" / "all'uno" → time: "13:00:00"
 - "alle nove di sera" / "alle 9 di sera" → time: "21:00:00"
 - "alle nove" senza contesto → time: "09:00:00"
+- REGOLA SERA: in contesto ristorante, ore 7/8/9/10 senza specificazione sono SEMPRE sera: "alle 7"→19:00, "alle 8"→20:00, "alle 9"→21:00, "alle 10"→22:00. Eccezione SOLO se il cliente dice esplicitamente "di mattina", "a pranzo", "AM".
 - "sabato" → data sabato dal calendario sopra
 - "venerdì" → data venerdì dal calendario sopra
 - "alla stessa ora" → time: null (non inventare)
