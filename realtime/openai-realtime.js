@@ -2626,7 +2626,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         key: 'glutenFree'
       },
       {
-        patterns: [/seggiol|bambini.{0,15}segg|segg.{0,15}bambin|highchair|sediolin/i],
+        patterns: [/seggiol|seggialo|seggior|seggial|bambini.{0,15}segg|segg.{0,15}bambin|highchair|sediolin/i],
         key: 'highchair'
       },
       {
