@@ -868,7 +868,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       const _t = this.lastTranscript;
       const _walkInPat = /tra\s+(?:un[ao]?\s+)?(\w+)\s*(minuti?|quarti?\s+d['']?ora|mezz['']?ora|ora[e]?|quarto)/i;
       const _mWalk = _t.match(_walkInPat);
-      if (_mWalk) {
+      if (_mWalk && !args._walkInHandled) {
         // Calcola offset in minuti
         const _numStr = _mWalk[1].toLowerCase();
         const _unit   = _mWalk[2].toLowerCase();
@@ -891,9 +891,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const _calcTime = `${_hh}:${_mm}:00`;
           const _todayISO = _now.toLocaleDateString('sv-SE', { timeZone: _tz });
           console.log(`🚶 Walk-in rilevato: "${_t}" → +${_mins}min → ${_calcTime}`);
+          // Resetta lastTranscript per evitare loop infinito al rientro
+          this.lastTranscript = null;
           // Re-entra come CREATE con data=oggi e time calcolato
           await this._processGPTData({ ...args, intent: 'create', date: _todayISO, time: _calcTime,
-                                        people: args.people || null, name: args.name || null });
+                                        people: args.people || null, name: args.name || null, _walkInHandled: true });
           return;
         }
       }
