@@ -1248,11 +1248,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         console.log(`🔄 Intent-switch collecting: create → modify IGNORATO (dati già presenti, è correzione CREATE)`);
         // Fix B2: reset foundReservation residuo da MODIFY fallback
         this.foundReservation = null;
-        // Aggiorna solo i campi nuovi arrivati e resta in CREATE
-        if (newDate   && newDate   !== this.data.date)   { this.data.date   = newDate; }
-        if (newTime   && newTime   !== this.data.time)   { this.data.time   = newTime; }
-        if (newPeople && newPeople !== this.data.people) { this.data.people = newPeople; }
-        if (newName   && newName   !== this.data.name)   { this.data.name   = newName; }
+        // Rientra in _processGPTData con intent=create corretto
+        // così il flow normale (validazione orario, check slot, ecc.) viene eseguito
+        await this._processGPTData({ ...args, intent: 'create' });
         return;
       }
       console.log(`🔄 Intent-switch collecting: create → modify, avvio MODIFY flow`);
