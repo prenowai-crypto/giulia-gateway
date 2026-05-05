@@ -866,7 +866,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // e tratta come CREATE con data=oggi e time=adesso+offset
     if (this.lastTranscript && this.phase !== 'done') {
       const _t = this.lastTranscript;
-      const _walkInPat = /tra\s+(?:un[ao]?\s+)?(\w+)\s*(minuti?|quarti?\s+d['']?ora|mezz['']?ora|ora[e]?|quarto)/i;
+      const _walkInPat = /(?:tra|fra)\s+(?:un[ao]?\s+)?(\w+)\s*(minuti?|quarti?\s+d['']?ora|mezz['']?ora|ora[e]?|quarto)/i;
       const _mWalk = _t.match(_walkInPat);
       if (_mWalk && !args._walkInHandled) {
         // Calcola offset in minuti
