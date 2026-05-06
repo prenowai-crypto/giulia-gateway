@@ -2068,7 +2068,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         data: updDate,
         ora: updTime,
         persone: updPeople,
-        telefono: r.phone || this.callerPhone || '',
+        telefono: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
         notes: this.data.notes || r.notes || '',
       });
 
@@ -2085,7 +2085,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           date: updDate,
           time: updTime,
           people: updPeople,
-          phone: r.phone || this.callerPhone || '',
+          phone: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
           notes: this.data.notes || r.notes || '',
         };
         console.log(`💾 lastReservation aggiornato dopo MODIFY: eventId=${r.eventId}`);
@@ -2211,7 +2211,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         nome: r.name,
         data: r.date,
         ora: timeNorm,
-        telefono: r.phone || this.callerPhone || '',
+        telefono: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
       });
 
       this.phase = 'done';
