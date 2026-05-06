@@ -2015,6 +2015,13 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         });
 
         if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
+          // 🆕 FIX day_closed: se il giorno è chiuso, dillo esplicitamente
+          if (checkResult?.reason === 'day_closed') {
+            const dayName = DateManager.getDayName(updDate) || 'quel giorno';
+            this._processingModify = false;
+            this._say(`Mi dispiace, il ${dayName} siamo chiusi. Vuole provare un altro giorno?`);
+            return;
+          }
           // Fix: cerca slot alternativi come fa il CREATE invece di rifiutare e basta
           this._processingModify = false;
           try {
