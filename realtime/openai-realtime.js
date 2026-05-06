@@ -1835,6 +1835,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         if (newDate) this.data.date = newDate;
         this._say('Un momento, cerco la prenotazione...');
         const r = await this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg');
+        if (this.intent !== 'modify') { console.log('🚫 MODIFY search abortita: intent cambiato durante ricerca'); return; }
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1855,6 +1856,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         console.log(`🔍 MODIFY primo msg: solo nome=${newName}, cerco senza data`);
         this._say('Un momento, cerco la prenotazione...');
         const r = await this._findReservationWithFallback(newName, null, 'MODIFY solo nome');
+        if (this.intent !== 'modify') { console.log('🚫 MODIFY search abortita: intent cambiato durante ricerca'); return; }
         if (r) {
           this.foundReservation = r;
           const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
