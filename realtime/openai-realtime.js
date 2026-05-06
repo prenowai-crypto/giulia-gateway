@@ -903,7 +903,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     }
 
     let   newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
-    const newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
+    let   newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
@@ -919,6 +919,25 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       } else if (/\b(oggi|stasera|questa sera)\b/i.test(this.lastTranscript) && newDate && newDate !== _todayISO) {
         console.log(`📅 Date cross-check: "oggi/stasera" → forzo ${_todayISO} (GPT aveva ${newDate})`);
         newDate = _todayISO;
+      }
+    }
+
+    // Cross-check orario server-side: corregge GPT quando ignora la regola sera
+    // Regola: ore 1-10 senza qualificatore mattina/pranzo → forza PM (es: "alle 9" → 21:00)
+    if (newTime && this.lastTranscript) {
+      const _tr = this.lastTranscript;
+      const _tParts = newTime.split(':').map(Number);
+      const _h = _tParts[0];
+      const _m = _tParts[1] || 0;
+      const _isSmallHour = _h >= 1 && _h <= 10;
+      const _hasMattina = /\b(di mattina|mattina|colazione|a pranzo|pranzo|stamattina|stamani)\b/i.test(_tr);
+      const _hasExplicitLargeHour = /\b(21|22|23|20|19|18|17|16|15|14|13)[:h]|alle\s+2[0-3]\b|alle\s+1[3-9]\b/i.test(_tr);
+      if (_isSmallHour && !_hasMattina && !_hasExplicitLargeHour) {
+        const _newH = _h + 12;
+        const _newTime = String(_newH).padStart(2,'0') + ':' + String(_m).padStart(2,'0') + ':00';
+        console.log(`⏰ Time cross-check: ${_h}:${String(_m).padStart(2,'0')} → ${_newTime} (regola sera server-side)`);
+        args = { ...args, time: _newTime };
+        newTime = _newTime; // aggiorna la variabile locale per tutti i check successivi
       }
     }
 
@@ -2370,11 +2389,13 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       const rc = this.restaurantConfig;
       const lunch = rc?.lunch_hours || '12:00-14:30';
       const dinner = rc?.dinner_hours || '21:00-22:30';
-      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
+      // CRITICO: risolve function_call pendente PRIMA di _say, altrimenti GPT genera risposta autonoma
+      this._resolveFailedFunctionCall('orario non valido');
       this.phase = 'collecting';
       this.data.time = null;
+      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-        this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
+      this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
       return;
     }
 
