@@ -865,21 +865,25 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     // ── Walk-in detection: "tra X minuti/ora" ────────────────────────────────
     // Se il cliente chiede disponibilità immediata, calcola l'orario reale
     // e tratta come CREATE con data=oggi e time=adesso+offset
+    // Scatta su qualsiasi intent, incluso unknown
     if (this.lastTranscript && this.phase !== 'done') {
       const _t = this.lastTranscript;
-      const _walkInPat = /(?:tra|fra)\s+(?:un[ao]?\s+)?(\w+)\s*(minuti?|quarti?\s+d['']?ora|mezz['']?ora|ora[e]?|quarto)/i;
+      // Pattern esteso: gestisce "mezz'ora" / "mezzora" come caso speciale
+      const _walkInPat = /(?:tra|fra)\s+(?:(?:un[ao]?\s+)?(\w+)\s*(minuti?|quarti?\s+d['']?ora|mezz['']?ora|ora[e]?|quarto)|mezz['']?ora)/i;
       const _mWalk = _t.match(_walkInPat);
       if (_mWalk && !args._walkInHandled) {
         // Calcola offset in minuti
-        const _numStr = _mWalk[1].toLowerCase();
-        const _unit   = _mWalk[2].toLowerCase();
+        const _numStr = (_mWalk[1] || '').toLowerCase();
+        const _unit   = (_mWalk[2] || '').toLowerCase();
+        // Caso speciale "tra mezz'ora" / "tra mezzora" senza gruppo catturato
+        const _isMezzOra = /tra\s+mezz['']?ora/i.test(_t) || /fra\s+mezz['']?ora/i.test(_t);
         const _numMap = { uno:1, una:1, due:2, tre:3, quattro:4, cinque:5, sei:6,
                           sette:7, otto:8, nove:9, dieci:10, quindici:15, venti:20,
                           trenta:30, quaranta:40, cinquanta:50, sessanta:60, un:1, mezz:30, mezzo:30 };
-        let _mins = _numMap[_numStr] || parseInt(_numStr) || 0;
-        if (/mezz/.test(_unit)) _mins = 30;
-        else if (/ora/.test(_unit) && !/mezz/.test(_numStr)) _mins = (_mins || 1) * 60;
-        else if (/quarto/.test(_unit)) _mins = 15;
+        let _mins = _isMezzOra ? 30 : (_numMap[_numStr] || parseInt(_numStr) || 0);
+        if (!_isMezzOra && /mezz/.test(_unit)) _mins = 30;
+        else if (!_isMezzOra && /ora/.test(_unit) && !/mezz/.test(_numStr)) _mins = (_mins || 1) * 60;
+        else if (!_isMezzOra && /quarto/.test(_unit)) _mins = 15;
 
         if (_mins > 0) {
           // Calcola orario adesso + offset nel fuso del ristorante
