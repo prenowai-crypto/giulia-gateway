@@ -571,7 +571,7 @@ export class OpenAIRealtimeClient {
       type: 'session.update',
       session: {
         modalities: ['audio', 'text'],
-        voice: 'alloy',
+        voice: 'coral',
         instructions: this.systemPrompt + this._buildInfoSection(),
         input_audio_format: 'g711_ulaw',
         output_audio_format: 'g711_ulaw',
