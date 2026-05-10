@@ -1516,6 +1516,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const t = text.toLowerCase();
 
     // ── Keyword note ─────────────────────────────────────────────────────────
+    // 🆕 FIX 4: campo `removes` per gestire note confliggenti (es. interno vs esterno)
     const noteKeywords = [
       { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
       { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
@@ -1531,30 +1532,58 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       { pattern: /occasion[ei]\s*speciale/i,                        note: 'Occasione speciale' },
       { pattern: /romantico|romantica/i,                            note: 'Cena romantica' },
       { pattern: /finestra|vista/i,                                 note: 'Tavolo vicino finestra' },
-      { pattern: /esterno|terrazza|giardino|dehor/i,                note: 'Tavolo esterno/terrazza' },
+      // 🆕 FIX 4: esterno negato da interno → non aggiungere
+      { pattern: /esterno|terrazza|giardino|dehor/i,                note: 'Tavolo esterno/terrazza',
+        negation: /\ball.interno\b|prefer[ei].{0,20}intern|non.{0,20}esterno|starei.{0,10}intern/i },
+      // 🆕 FIX 4: "interno" rimuove la nota esterno e non aggiunge niente (default)
+      { pattern: /\binterno\b|\bdentro\b|preferis[ce].{0,20}intern/i, note: null, removes: 'Tavolo esterno/terrazza' },
       { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,          note: 'Accessibilità disabili' },
       { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
     ];
 
+    // 🆕 FIX 3B: se il cliente sta CHIEDENDO di note già esistenti → non rilevare note
+    // Distingue "sono celiaco" (dichiarazione) da "avete segnato la celiachia?" (domanda)
+    const _isNoteQuestion = /(?:hai|avete|avevate|aveva|avevi)\s+(?:già\s+)?(?:segnato|annotato|scritto|indicato)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato/i.test(text);
+
     // Pattern domanda info vegan/vegetariano: "avete piatti vegani?" → NON è nota
     const _isVeganInfoQuestion = /avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|c.è.{0,15}vegan|ci sono.{0,15}vegan|offrite.{0,15}vegan|servite.{0,15}vegan/i.test(text);
 
+    if (_isNoteQuestion) {
+      console.log(`📋 Domanda su note esistenti → skip rilevamento nota: "${text.substring(0,60)}"`);
+      // Non rilevare nuove note ma non uscire — continuiamo per il telefono alternativo
+    }
+
     const newNotes = [];
-    for (const { pattern, note } of noteKeywords) {
-      // Guard: "vegano" come domanda info non va annotato come nota
-      if (note === 'Vegano' && _isVeganInfoQuestion) {
-        console.log(`📋 Vegan rilevato come domanda info → skip nota`);
-        continue;
-      }
-      if (note === 'Vegetariano' && _isVeganInfoQuestion) {
-        console.log(`📋 Vegetariano rilevato come domanda info → skip nota`);
-        continue;
-      }
-      if (pattern.test(text)) {
-        // Evita duplicati
-        if (!this.data.notes || !this.data.notes.includes(note)) {
-          newNotes.push(note);
-          console.log(`📝 Nota rilevata: "${note}"`);
+    if (!_isNoteQuestion) {
+      for (const { pattern, note, negation, removes } of noteKeywords) {
+        // Guard: "vegano" come domanda info non va annotato come nota
+        if (note === 'Vegano' && _isVeganInfoQuestion) {
+          console.log(`📋 Vegan rilevato come domanda info → skip nota`);
+          continue;
+        }
+        if (note === 'Vegetariano' && _isVeganInfoQuestion) {
+          console.log(`📋 Vegetariano rilevato come domanda info → skip nota`);
+          continue;
+        }
+        if (pattern.test(text)) {
+          // 🆕 FIX 4: controlla negazione (es. "non all'esterno" non aggiunge nota esterno)
+          if (negation && negation.test(text)) {
+            console.log(`📋 Nota "${note}" negata nel contesto → skip`);
+            continue;
+          }
+          // 🆕 FIX 4: rimuovi nota confliggente (es. "interno" rimuove "Tavolo esterno/terrazza")
+          if (removes && this.data.notes && this.data.notes.includes(removes)) {
+            this.data.notes = this.data.notes.split('; ').filter(n => n !== removes).join('; ') || null;
+            console.log(`📋 Nota confliggente "${removes}" rimossa`);
+          }
+          // Aggiungi la nota solo se non è null (es. "interno" ha note: null → serve solo per rimuovere)
+          if (note !== null) {
+            // Evita duplicati
+            if (!this.data.notes || !this.data.notes.includes(note)) {
+              newNotes.push(note);
+              console.log(`📝 Nota rilevata: "${note}"`);
+            }
+          }
         }
       }
     }
@@ -2904,7 +2933,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   // Evita che GPT "corregga" la risposta con dati estratti nel turno precedente
   _injectContext(r) {
     if (!r) return;
-    const text = `[Dati reali trovati: nome="${r.name}", data="${r.date}", ora="${r.time}", persone="${r.people}"]`;
+    // 🆕 FIX BUG-03A: includi note nel contesto iniettato così GPT le conosce
+    const notesStr = r.notes ? `, note_salvate="${r.notes}"` : '';
+    const text = `[Dati reali trovati: nome="${r.name}", data="${r.date}", ora="${r.time}", persone="${r.people}"${notesStr}]`;
     this._send({
       type: 'conversation.item.create',
       item: {
