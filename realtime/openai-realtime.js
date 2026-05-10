@@ -701,6 +701,14 @@ export class OpenAIRealtimeClient {
           }
           // Rileva note e telefono alternativo
           this._detectNotesAndPhone(t);
+          // 🆕 FIX-INTENT: IntentDetector deterministico qui (trascrizione),
+          // PRIMA che _processGPTData arrivi — così "vorrei prenotare" non può
+          // essere sovrascritto da GPT che restituisce "modify".
+          // _onUserText non veniva chiamata da nessuna parte → era dead code.
+          if (!this.intent && this.phase !== 'done') {
+            this.intent = IntentDetector.detect(t);
+            console.log(`🎯 Intent (deterministico): ${this.intent} — "${t.substring(0, 60)}"`);
+          }
         }
         break;
       case 'input_audio_buffer.speech_started':
