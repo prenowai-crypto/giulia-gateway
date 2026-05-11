@@ -699,16 +699,9 @@ export class OpenAIRealtimeClient {
             this._handleCancelConfirmText(t).catch(err => console.error('❌ _handleCancelConfirmText:', err));
             return;
           }
-          // Rileva note e telefono alternativo
-          this._detectNotesAndPhone(t);
-          // 🆕 FIX-INTENT: IntentDetector deterministico qui (trascrizione),
-          // PRIMA che _processGPTData arrivi — così "vorrei prenotare" non può
-          // essere sovrascritto da GPT che restituisce "modify".
-          // _onUserText non veniva chiamata da nessuna parte → era dead code.
-          if (!this.intent && this.phase !== 'done') {
-            this.intent = IntentDetector.detect(t);
-            console.log(`🎯 Intent (deterministico): ${this.intent} — "${t.substring(0, 60)}"`);
-          }
+          // 🆕 ARCHITETTURA GPT-ONLY: note e intent delegati a GPT
+          // _detectNotesAndPhone e IntentDetector rimossi — GPT estrae
+          // note, phone_alternative e intent direttamente dall'audio.
         }
         break;
       case 'input_audio_buffer.speech_started':
@@ -820,7 +813,7 @@ export class OpenAIRealtimeClient {
         instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
 
 Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
-{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown","unclear":true/false}
+{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown","notes":[],"phone_alternative":null,"unclear":true/false}
 
 REGOLE INTENT:
 - create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato". ATTENZIONE: "vorrei prenotare" e "voglio prenotare" sono SEMPRE create, MAI modify, anche se nella conversazione si è già parlato di prenotazioni.
@@ -856,6 +849,22 @@ REGOLE NOME+DATA insieme:
 - "a nome Rossi per sabato" → name: "Rossi", date: data sabato
 - "la prenotazione Ferrari per venerdì" → name: "Ferrari", date: data venerdì
 - "prenotazione Bianchi del 18" → name: "Bianchi", date: ${todayISO.substring(0,8)}18
+
+REGOLE NOTES — estrai TUTTE le note speciali menzionate dal cliente:
+- Intolleranze/allergie: "celiaco/celiaca" → "Intolleranza glutine", "lattosio/intollerante al latte" → "Intolleranza lattosio", "arachidi/frutta secca/noci" → "Allergia frutta secca", "uova" → "Allergia uova", "allergia a..." → "Allergia (verifica con cliente)"
+- Diete: "vegano/vegana" → "Vegano", "vegetariano/vegetariana" → "Vegetariano"
+- Bambini: "seggiolone/seggiolone per bambini" → "Richiesto seggiolone", "bambino piccolo/neonato" → "Neonato/bambino piccolo"
+- Occasioni: "compleanno" → "Compleanno", "anniversario" → "Anniversario", "proposta di matrimonio" → "Proposta di matrimonio", "occasione speciale" → "Occasione speciale", "cena romantica" → "Cena romantica"
+- Tavolo: "esterno/terrazza/dehor/giardino" → "Tavolo esterno/terrazza", "interno/dentro" → rimuovi "Tavolo esterno/terrazza" se presente, "vicino finestra/vista" → "Tavolo vicino finestra", "tranquillo/riservato" → "Tavolo tranquillo/riservato"
+- Accessibilità: "sedia a rotelle/disabile/carrozzina" → "Accessibilità disabili"
+- Se il cliente CHIEDE se una nota è già segnata ("avete segnato X?", "è annotato X?") → NON includerla nell'array, è una domanda non una dichiarazione
+- Se il cliente NEGA una preferenza ("non all'esterno", "preferisco stare dentro") → NON includere la nota negata
+- Restituisci array vuoto [] se nessuna nota nuova in questo messaggio
+
+REGOLE PHONE_ALTERNATIVE — se il cliente fornisce un numero di telefono ALTERNATIVO per essere contattato:
+- "chiamatemi al 333 123 4567" → phone_alternative: "3331234567"
+- "usate il 347-987-6543" → phone_alternative: "3479876543"
+- null se nessun numero alternativo menzionato
 
 Rispondi SOLO con il JSON, nessun'altra parola.`,
         max_output_tokens: 80,
@@ -919,20 +928,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
 
-    // Cross-check data: se transcript contiene "domani"/"oggi"/"stasera" forza data corretta
-    if (this.lastTranscript) {
-      const _tz = rc?.timezone || 'Europe/Rome';
-      const _now = new Date();
-      const _todayISO    = _now.toLocaleDateString('sv-SE', { timeZone: _tz });
-      const _tomorrowISO = new Date(_now.getTime() + 86400000).toLocaleDateString('sv-SE', { timeZone: _tz });
-      if (/\bdomani\b/i.test(this.lastTranscript) && newDate && newDate !== _tomorrowISO) {
-        console.log(`📅 Date cross-check: "domani" → forzo ${_tomorrowISO} (GPT aveva ${newDate})`);
-        newDate = _tomorrowISO;
-      } else if (/\b(oggi|stasera|questa sera)\b/i.test(this.lastTranscript) && newDate && newDate !== _todayISO) {
-        console.log(`📅 Date cross-check: "oggi/stasera" → forzo ${_todayISO} (GPT aveva ${newDate})`);
-        newDate = _todayISO;
-      }
-    }
+    // 🆕 GPT-ONLY: cross-check data rimosso — GPT gestisce domani/oggi/stasera
+    // con le regole esplicite nel prompt e il calendario iniettato.
 
     // Cross-check orario server-side: corregge GPT quando ignora la regola sera
     // Regola: ore 1-10 senza qualificatore mattina/pranzo → forza PM (es: "alle 9" → 21:00)
@@ -953,20 +950,41 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       }
     }
 
-    // 🆕 Cross-check: valida GPT people con PeopleManager sul transcript Whisper
-    // Evita che GPT estragga un numero sbagliato (es: "3 persone venerdì" → GPT dice 4)
-    // Guard: scatta solo se il transcript contiene keyword legate alle persone,
-    // evita falsi positivi da numeri casuali nel testo (es: "una cosa", "alle 21")
-    if (newPeople && this.lastTranscript) {
-      const hasPeopleKeyword = /(person[ae]|pax|coperti|siamo|saremo|in totale|tavolo per|per noi|ospiti|d+s*person|siamo in|saremo in)/i.test(this.lastTranscript);
-      if (hasPeopleKeyword) {
-        const parsedPeople = PeopleManager.parseFromText(this.lastTranscript);
-        if (parsedPeople && parsedPeople !== newPeople) {
-          console.log(`⚠️ People mismatch: GPT=${newPeople}, transcript="${this.lastTranscript}" → parsedPeople=${parsedPeople} — uso transcript`);
-          newPeople = parsedPeople;
+    // 🆕 GPT-ONLY: cross-check persone rimosso — GPT estrae il numero direttamente.
+
+    // ── Note estratte da GPT ──────────────────────────────────────────────────
+    // 🆕 ARCHITETTURA GPT-ONLY: GPT estrae le note direttamente dall'audio
+    if (args.notes && Array.isArray(args.notes) && args.notes.length > 0) {
+      args.notes.forEach(note => {
+        const noteStr = String(note).trim();
+        if (noteStr && (!this.data.notes || !this.data.notes.includes(noteStr))) {
+          this.data.notes = this.data.notes ? `${this.data.notes}; ${noteStr}` : noteStr;
+          console.log(`📝 Nota (GPT): "${noteStr}"`);
         }
-      } else {
-        console.log(`🔒 People cross-check skippato: nessuna keyword persone in transcript`);
+      });
+      // Se siamo in phase=done e abbiamo nuove note, aggiorna subito il Calendar
+      if (this.phase === 'done' && this.lastReservation?.eventId) {
+        const _mergedNotes = this._mergeNotesStr(this.lastReservation.notes || '', this.data.notes || '');
+        if (_mergedNotes !== this.lastReservation.notes) {
+          console.log(`📝 Phase=done: nuove note GPT, aggiorno Calendar: "${_mergedNotes}"`);
+          this._callAppsScript({
+            action: 'update_notes',
+            eventId: this.lastReservation.eventId,
+            notes: _mergedNotes,
+          }).then(() => {
+            if (this.lastReservation) this.lastReservation.notes = _mergedNotes;
+          }).catch(err => console.error('❌ update_notes GPT:', err));
+        }
+      }
+    }
+
+    // ── Telefono alternativo estratto da GPT ──────────────────────────────────
+    if (args.phone_alternative && args.phone_alternative !== 'null' && !this.data.alternativePhone) {
+      const _rawPhone = String(args.phone_alternative).replace(/\D/g, '');
+      if (_rawPhone.length >= 9) {
+        const _formattedPhone = _rawPhone.startsWith('39') ? `+${_rawPhone}` : `+39${_rawPhone}`;
+        this.data.alternativePhone = _formattedPhone;
+        console.log(`📞 Telefono alternativo (GPT): "${_formattedPhone}"`);
       }
     }
 
