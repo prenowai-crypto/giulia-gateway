@@ -1596,10 +1596,17 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
             console.log(`📋 Nota "${note}" negata nel contesto → skip`);
             continue;
           }
-          // 🆕 FIX 4: rimuovi nota confliggente (es. "interno" rimuove "Tavolo esterno/terrazza")
-          if (removes && this.data.notes && this.data.notes.includes(removes)) {
-            this.data.notes = this.data.notes.split('; ').filter(n => n !== removes).join('; ') || null;
-            console.log(`📋 Nota confliggente "${removes}" rimossa`);
+          // 🆕 FIX 4: rimuovi nota confliggente da sessione corrente
+          if (removes) {
+            if (this.data.notes && this.data.notes.includes(removes)) {
+              this.data.notes = this.data.notes.split('; ').filter(n => n !== removes).join('; ') || null;
+            }
+            // 🆕 FIX TEST7A: segna anche per rimozione dal Calendar (note di sessioni precedenti)
+            if (!this.data.notesToRemove) this.data.notesToRemove = [];
+            if (!this.data.notesToRemove.includes(removes)) {
+              this.data.notesToRemove.push(removes);
+              console.log(`📋 Nota "${removes}" marcata per rimozione da Calendar`);
+            }
           }
           // Aggiungi la nota solo se non è null (es. "interno" ha note: null → serve solo per rimuovere)
           if (note !== null) {
@@ -2130,8 +2137,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         ora: updTime,
         persone: updPeople,
         telefono: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
-        // 🆕 FIX TEST2: merge note esistenti (r.notes) con nuove (this.data.notes)
-        notes: this._mergeNotesStr(r.notes || '', this.data.notes || ''),
+        // 🆕 FIX TEST2+TEST7A: merge note + rimuovi quelle marcate per rimozione
+        notes: this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []),
       });
 
       this.phase = 'done';
@@ -2148,8 +2155,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           time: updTime,
           people: updPeople,
           phone: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
-          // 🆕 FIX TEST2: merge per lastReservation post-MODIFY
-          notes: this._mergeNotesStr(r.notes || '', this.data.notes || ''),
+          // 🆕 FIX TEST2+TEST7A: merge per lastReservation + rimozioni
+          notes: this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []),
         };
         console.log(`💾 lastReservation aggiornato dopo MODIFY: eventId=${r.eventId}`);
         // Reset intent a 'done' dopo MODIFY completato — evita che il MODIFY reminder
@@ -2959,9 +2966,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   // ── Inietta dati reali nel context di GPT prima di _say() ─────────────────
   // Evita che GPT "corregga" la risposta con dati estratti nel turno precedente
   // 🆕 Helper: merge note esistenti con nuove (deduplicato)
-  _mergeNotesStr(existing, newNotes) {
-    const eArr = existing ? existing.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
+  // notesToRemove: array di stringhe da escludere dal merge (es. ['Tavolo esterno/terrazza'])
+  _mergeNotesStr(existing, newNotes, notesToRemove) {
+    let eArr = existing ? existing.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
     const nArr = newNotes ? newNotes.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
+    // 🆕 FIX TEST7A: rimuovi note marcate per rimozione (es. "interno" → rimuove "Tavolo esterno/terrazza")
+    if (notesToRemove && notesToRemove.length > 0) {
+      eArr = eArr.filter(n => !notesToRemove.includes(n));
+    }
     nArr.forEach(n => { if (!eArr.includes(n)) eArr.push(n); });
     return eArr.join('; ');
   }
