@@ -1008,6 +1008,23 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
       // Nuovo intent modify → usa lastReservation se disponibile, altrimenti cerca
       if (intent === 'modify') {
+        // 🆕 FIX TEST1: se il cliente sta chiedendo delle note esistenti ("avete segnato X?"),
+        // GPT restituisce intent=modify per via della frase ma non va avviato il MODIFY flow.
+        // Lasciamo rispondere GPT normalmente con le note in contesto.
+        const _noteQuestionGuard = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(this.lastTranscript || '');
+        if (_noteQuestionGuard) {
+          console.log('📋 Phase=done MODIFY: domanda su note → skip MODIFY, lascio GPT rispondere');
+          // Costruisci contesto note per GPT
+          const _lrN = this.lastReservation;
+          const _notesCtxN = _lrN?.notes ? `Note salvate sulla prenotazione: "${_lrN.notes}".` : '';
+          this._send({
+            type: 'response.create',
+            response: {
+              instructions: `Il cliente chiede se una nota è stata annotata sulla sua prenotazione. ${_notesCtxN} Rispondi confermando le note effettivamente salvate. Se la nota richiesta è tra quelle salvate, confermala. Max 2 frasi.`,
+            },
+          });
+          return;
+        }
         this.intent = 'modify';
         this.modifyState = null;
         // Fix X04: salva foundReservation prima del reset — potrebbe contenere la prenotazione
@@ -1528,7 +1545,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     const noteKeywords = [
       { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
       { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
-      { pattern: /allergi[ao]/i,                                    note: 'Allergia (verifica con cliente)' },
+      { pattern: /allergi[aoci]|uova|uovo/i,                        note: 'Allergia (verifica con cliente)' },
       { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
       { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
       { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
@@ -1551,7 +1568,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // 🆕 FIX 3B: se il cliente sta CHIEDENDO di note già esistenti → non rilevare note
     // Distingue "sono celiaco" (dichiarazione) da "avete segnato la celiachia?" (domanda)
-    const _isNoteQuestion = /(?:hai|avete|avevate|aveva|avevi)\s+(?:già\s+)?(?:segnato|annotato|scritto|indicato)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato/i.test(text);
+    const _isNoteQuestion = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(text);
 
     // Pattern domanda info vegan/vegetariano: "avete piatti vegani?" → NON è nota
     const _isVeganInfoQuestion = /avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|c.è.{0,15}vegan|ci sono.{0,15}vegan|offrite.{0,15}vegan|servite.{0,15}vegan/i.test(text);
@@ -2113,7 +2130,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         ora: updTime,
         persone: updPeople,
         telefono: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
-        notes: this.data.notes || r.notes || '',
+        // 🆕 FIX TEST2: merge note esistenti (r.notes) con nuove (this.data.notes)
+        notes: this._mergeNotesStr(r.notes || '', this.data.notes || ''),
       });
 
       this.phase = 'done';
@@ -2130,7 +2148,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           time: updTime,
           people: updPeople,
           phone: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
-          notes: this.data.notes || r.notes || '',
+          // 🆕 FIX TEST2: merge per lastReservation post-MODIFY
+          notes: this._mergeNotesStr(r.notes || '', this.data.notes || ''),
         };
         console.log(`💾 lastReservation aggiornato dopo MODIFY: eventId=${r.eventId}`);
         // Reset intent a 'done' dopo MODIFY completato — evita che il MODIFY reminder
@@ -2939,6 +2958,14 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
   // ── Inietta dati reali nel context di GPT prima di _say() ─────────────────
   // Evita che GPT "corregga" la risposta con dati estratti nel turno precedente
+  // 🆕 Helper: merge note esistenti con nuove (deduplicato)
+  _mergeNotesStr(existing, newNotes) {
+    const eArr = existing ? existing.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
+    const nArr = newNotes ? newNotes.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
+    nArr.forEach(n => { if (!eArr.includes(n)) eArr.push(n); });
+    return eArr.join('; ');
+  }
+
   _injectContext(r) {
     if (!r) return;
     // 🆕 FIX BUG-03A: includi note nel contesto iniettato così GPT le conosce
