@@ -2392,7 +2392,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       console.log(`💾 lastReservation aggiornato dopo SMART MODIFY: eventId=${r.eventId}`);
       this._say(`Perfetto ${r.name}! Ho aggiornato la prenotazione: ${dateDisplay} alle ${timeDisplay} per ${updPeople} person${updPeople === 1 ? 'a' : 'e'}. Ti aspettiamo!`);
     } else {
-      this._say('Mi dispiace, errore durante l'aggiornamento. Riprovi più tardi.');
+      this._say(`Mi dispiace, errore durante l'aggiornamento. Riprovi più tardi.`);
     }
   }
 
