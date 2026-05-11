@@ -2127,7 +2127,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           existingPeople: _existingPeopleForCheck,
         });
 
-        if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
+        if (!checkResult?.success) {
           // 🆕 FIX day_closed: se il giorno è chiuso, dillo esplicitamente
           if (checkResult?.reason === 'day_closed') {
             const dayName = DateManager.getDayName(updDate) || 'quel giorno';
@@ -2309,7 +2309,10 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
    * Chiamato dal transcript handler quando modifyState === 'awaiting_smart_confirm'.
    */
   async _handleSmartModifyConfirm(text) {
-    const yes = /\b(s[ìi]|sì|certo|confermo|ok|okay|esatto|giusto|procedi|vai|perfetto|aggiorna|va bene|sì confermo)\b/i.test(text);
+    // ⚠️ \b non funziona con caratteri accentati (ì, è...) in JS — pattern espliciti per sì/si
+    const hasSi = /(^|[\s,!?])s[ìi]($|[\s,!?.,])/i.test(text) || /^s[ìi]$/i.test(text.trim());
+    const yes = hasSi
+             || /\b(certo|confermo|confermi|esatto|giusto|procedi|perfetto|aggiorna|va bene|ok|okay)\b/i.test(text);
     const no  = /\b(no|annulla|aspetta|fermati|stop|lascia perdere|cambia)\b/i.test(text);
 
     if (!yes && !no) {
