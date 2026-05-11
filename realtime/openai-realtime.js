@@ -820,7 +820,7 @@ export class OpenAIRealtimeClient {
         instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
 
 Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
-{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown","notes":[],"phone_alternative":null,"note_check":false,"unclear":true/false}
+{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown","notes":[],"phone_alternative":null,"note_check":false,"people_change":false,"unclear":true/false}
 
 REGOLE INTENT:
 - create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato". ATTENZIONE: "vorrei prenotare" e "voglio prenotare" sono SEMPRE create, MAI modify, anche se nella conversazione si è già parlato di prenotazioni.
@@ -872,6 +872,15 @@ REGOLE PHONE_ALTERNATIVE — se il cliente fornisce un numero di telefono ALTERN
 - "chiamatemi al 333 123 4567" → phone_alternative: "3331234567"
 - "usate il 347-987-6543" → phone_alternative: "3479876543"
 - null se nessun numero alternativo menzionato
+
+REGOLA PEOPLE_CHANGE — imposta a true SOLO se il cliente vuole CAMBIARE il numero di persone della prenotazione:
+- "siamo diventati 4" → people: "4", people_change: true
+- "aggiungo 2 persone" → people_change: true
+- "siamo in 6 ora" → people: "6", people_change: true
+- "siamo rimasti in 3" → people: "3", people_change: true
+- "a nome Rossi" → people: null, people_change: false (nome non è persone)
+- "per 2 persone sabato" (riferimento alla prenotazione esistente) → people: "2", people_change: false
+- Se il numero è solo un riferimento per trovare la prenotazione → people_change: false
 
 REGOLA NOTE_CHECK — imposta a true se il cliente sta CHIEDENDO se una nota è ancora presente:
 - "avete ancora segnato...?" → note_check: true
@@ -969,7 +978,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
     // ── Note estratte da GPT ──────────────────────────────────────────────────
     // 🆕 ARCHITETTURA GPT-ONLY: GPT estrae le note direttamente dall'audio
-    this._noteCheck = args.note_check === true; // 🆕 true se chiede di note esistenti
+    this._noteCheck    = args.note_check    === true; // 🆕 true se chiede di note esistenti
+    this._peopleChange = args.people_change === true; // 🆕 true se vuole CAMBIARE le persone
     if (args.notes && Array.isArray(args.notes) && args.notes.length > 0) {
       args.notes.forEach(note => {
         const noteStr = String(note).trim();
@@ -2261,7 +2271,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
   async _trySmartModify(r, newDate, newTime, newPeople) {
     const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || null);
 
-    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people);
+    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people) && this._peopleChange === true;
     const timeChanged   = newTime   && newTime !== timeOrig;
     const dateChanged   = newDate   && newDate !== r.date;
     const hasNewNotes   = !!(this.data.notes && this.data.notes.length > 0);
