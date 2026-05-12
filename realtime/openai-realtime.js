@@ -2116,9 +2116,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           const lunch = rc?.lunch_hours || '12:00-14:30';
           const dinner = rc?.dinner_hours || '21:00-22:30';
           this._processingModify = false;
+          // Fix B4 MODIFY v2: session.update + resolveFailedFunctionCall PRIMA di _say()
+          // GPT riceve istruzione critica prima di generare qualsiasi risposta
+          this._resolveFailedFunctionCall('orario non valido');
+          this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. DEVI dire ESATTAMENTE: "Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?" VIETATO dire confermato o aggiornato.` } });
           this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
-          // Fix B4 MODIFY: forza GPT a NON confermare dopo orario invalido
-          this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. DEVI chiedere orario diverso. VIETATO dire confermato o aggiornato.` } });
           return;
         }
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
