@@ -2299,6 +2299,10 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       const rc = this.restaurantConfig;
       const lunch  = rc?.lunch_hours  || '12:00-14:30';
       const dinner = rc?.dinner_hours || '21:00-22:30';
+      // Fix B4 _trySmartModify: session.update + resolveFailedFunctionCall PRIMA di _say()
+      // _injectContext ha già messo i dati reali nel contesto → GPT ignora _say() senza questo fix
+      this._resolveFailedFunctionCall('orario non valido');
+      this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. Di' ESATTAMENTE: "Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?" VIETATO dire confermato o aggiornato.` } });
       this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       this.modifyState = 'awaiting_changes';
       return true;
