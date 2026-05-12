@@ -2995,6 +2995,36 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       if (/dolc[ie]/i.test(t) && !/dolce.{0,10}vita/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dolci: ${s}`; }
       if (/dessert/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dessert: ${s}`; }
 
+      // ── Domanda su ingrediente/prodotto specifico (pesce, carne, pasta...) ──
+      // Cerca nel menuDetails: se trovato restituisce le righe; se non trovato → noInfo.
+      // Evita che GPT inventi piatti non presenti nel menu.
+      const _ingredientPatterns = [
+        { re: /pesce|frutt.{0,10}mare|seafood|salmone|tonno|branzino|orat[ae]|cozze|vongole|calamari|gamberi|aragosta|polpo|merluzzo|spigola/i, label: 'pesce' },
+        { re: /carne|bistecca|manzo|vitello|maiale|agnello|pollo|coniglio|anatra|cinghiale|selvaggina/i, label: 'carne' },
+        { re: /pasta\b|tagliat|pappardel|rigatoni|spaghett|linguine|fettuccin|lasagn|gnocch|tortellini|ravioli/i, label: 'pasta' },
+        { re: /risotto|ris[oa]\b/i, label: 'risotto' },
+        { re: /zuppa|minestra|vellutata|crema.{0,10}(zucca|pomodoro|piselli)/i, label: 'zuppa' },
+        { re: /pizza\b|focaccia/i, label: 'pizza' },
+        { re: /salumi|affett|prosciutto|bresaola|mortadella|salame/i, label: 'salumi' },
+        { re: /formagg|pecorino|parmigiano|burrata|mozzarella|gorgonzola/i, label: 'formaggio' },
+        { re: /tartufo\b|funghi\b|porcini|finferli/i, label: 'tartufo/funghi' },
+        { re: /fritto|frittura/i, label: 'fritto' },
+      ];
+      for (const { re, label } of _ingredientPatterns) {
+        if (re.test(t)) {
+          // Cerca righe del menu che contengono termini correlati
+          const _matchingLines = menuText.split('\n').filter(l => re.test(l)).map(l => l.trim()).filter(Boolean);
+          if (_matchingLines.length > 0) {
+            console.log(`📋 Menu search: trovati ${_matchingLines.length} piatti con "${label}"`);
+            return `Sì, abbiamo piatti a base di ${label}: ${_matchingLines.join('; ')}.`;
+          } else {
+            console.log(`📋 Menu search: "${label}" non trovato nel menu → noInfo`);
+            return noInfo;
+          }
+        }
+      }
+      // ── fine ricerca ingrediente ──────────────────────────────────────────
+
       // Domanda generica sul menu
       if (/men[uù]|cosa.{0,15}avete|cosa.{0,15}mangiate|cosa.{0,15}si.{0,10}mang|che.{0,15}piatt/i.test(t)) {
         // Riassunto categorie disponibili
