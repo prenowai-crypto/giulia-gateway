@@ -2335,8 +2335,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     this._smartModifyParams = null;
 
     if (no) {
-      this._say('Ok, la sua prenotazione rimane invariata.');
-      this.phase = 'done';
+      this.modifyState = 'awaiting_changes';
+      this._say('Capito. Cosa desidera modificare?');
       return;
     }
 
@@ -3273,4 +3273,3 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     }
   }
 }
-
