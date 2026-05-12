@@ -1011,6 +1011,11 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         const _formattedPhone = _rawPhone.startsWith('39') ? `+${_rawPhone}` : `+39${_rawPhone}`;
         this.data.alternativePhone = _formattedPhone;
         console.log(`📞 Telefono alternativo (GPT): "${_formattedPhone}"`);
+        // Appende alle note così arriva ad Apps Script (non esiste campo dedicato)
+        const _phoneNote = `Tel. alternativo: ${_formattedPhone}`;
+        if (!this.data.notes || !this.data.notes.includes('Tel. alternativo')) {
+          this.data.notes = this.data.notes ? `${this.data.notes}; ${_phoneNote}` : _phoneNote;
+        }
       }
     }
 
@@ -2335,8 +2340,8 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
     this._smartModifyParams = null;
 
     if (no) {
-      this.modifyState = 'awaiting_changes';
-      this._say('Capito. Cosa desidera modificare?');
+      this._say('Ok, la sua prenotazione rimane invariata.');
+      this.phase = 'done';
       return;
     }
 
