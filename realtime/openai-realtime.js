@@ -594,34 +594,55 @@ export class OpenAIRealtimeClient {
             properties: {
               date: {
                 type: 'string',
-                description: `Data ISO YYYY-MM-DD oppure "null". USA il calendario nel campo description della funzione. Esempi: "mercoledì"=data mercoledì dal calendario, "sabato"=data sabato dal calendario, "domani"=domani.`
+                description: `Data SEMPRE in formato ISO YYYY-MM-DD oppure null. Converti SEMPRE i nomi dei giorni in date ISO usando il calendario nella description della funzione. ESEMPI: "sabato"=2026-05-16, "domenica"=2026-05-17, "domani"=data di domani dal calendario. NON restituire mai il nome del giorno, restituire SEMPRE la data ISO.`
               },
               time: {
                 type: 'string',
-                description: 'Orario HH:MM:SS oppure "null". Esempi: "alle 21"=21:00:00, "all\'una"=13:00:00, "nove e mezza di sera"=21:30:00, "all\'una e mezza"=13:30:00, "ventuno"=21:00:00, "mezzogiorno"=12:00:00.'
+                description: 'Orario HH:MM:SS oppure null. Esempi: "alle 21"=21:00:00, "all\'una"=13:00:00, "nove e mezza di sera"=21:30:00, "all\'una e mezza"=13:30:00, "ventuno"=21:00:00, "mezzogiorno"=12:00:00.'
               },
               people: {
                 type: 'string',
-                description: 'Numero di persone come stringa oppure "null". Esempi: "per due"=2, "siamo in quattro"=4, "per me"=1.'
+                description: 'Numero di persone come stringa oppure null. Esempi: "per due"=2, "siamo in quattro"=4, "per me"=1.'
               },
               name: {
                 type: 'string',
-                description: 'Nome del cliente per la prenotazione oppure "null". Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
+                description: 'Nome del cliente per la prenotazione oppure null. Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
               },
               intent: {
                 type: 'string',
                 enum: ['create', 'modify', 'cancel', 'unknown'],
-                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro. USA create quando il cliente dice "vorrei prenotare", "un tavolo", "prenoto", "ho bisogno di un tavolo" anche se non ha detto "nuovo" o "separato". USA modify SOLO se il cliente usa parole come "modificare", "spostare", "cambiare", "aggiornare" O se sta correggendo una prenotazione appena confermata nella stessa chiamata con parole come "no intendevo", "aspetta", "ho sbagliato".'
+                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro o domanda informativa. USA create quando il cliente dice "vorrei prenotare", "un tavolo", "prenoto". USA modify SOLO se il cliente usa parole come "modificare", "spostare", "cambiare", "aggiornare".'
               },
               language: {
                 type: 'string',
                 description: 'ISO 639-1 language code of the customer message. Examples: "it"=Italian, "en"=English, "fr"=French, "de"=German, "es"=Spanish.'
+              },
+              notes: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Array di note speciali del cliente (es. allergie, occasioni speciali, richieste particolari). Array vuoto [] se nessuna nota.'
+              },
+              phone_alternative: {
+                type: 'string',
+                description: 'Numero di telefono alternativo fornito dal cliente oppure null. Estrai solo le cifre senza formattazione.'
+              },
+              note_check: {
+                type: 'boolean',
+                description: 'true se il cliente chiede informazioni sulle note già presenti nella prenotazione, false altrimenti.'
+              },
+              people_change: {
+                type: 'boolean',
+                description: 'true se il cliente sta cambiando il numero di persone in una prenotazione esistente, false altrimenti.'
+              },
+              unclear: {
+                type: 'boolean',
+                description: 'true SOLO se il messaggio è completamente incomprensibile o rumore di fondo senza parole riconoscibili. false in tutti gli altri casi incluse domande informative.'
               }
             },
-            required: ['date', 'time', 'people', 'name', 'intent', 'language']
+            required: ['date', 'time', 'people', 'name', 'intent', 'language', 'notes', 'phone_alternative', 'note_check', 'people_change', 'unclear']
           }
         }],
-        tool_choice: 'auto',
+        tool_choice: 'required',
       },
     });
     console.log('✅ Sessione configurata');
