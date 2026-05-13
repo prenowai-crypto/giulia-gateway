@@ -582,7 +582,7 @@ export class OpenAIRealtimeClient {
           },
           output: {
             format: 'g711_ulaw',
-            voice: 'coral',  // GA API: voice si sposta qui
+            // voice non supportato in session.update GA - usa default
           },
         },
         turn_detection: {
@@ -672,17 +672,18 @@ export class OpenAIRealtimeClient {
           this._onSessionReady();
         }
         break;
-      case 'response.audio_transcript.done':
+      case 'response.output_audio_transcript.done':
         if (msg.transcript) {
           console.log(`💬 [AI]: ${msg.transcript}`);
           this.onTranscript(msg.transcript, 'assistant');
         }
         break;
-      case 'response.audio.done':
+      case 'response.output_audio.done':
         // Audio finito di generare → aggiorna il timestamp per il deaf period
         this._lastSaidAt = Date.now();
         break;
       case 'conversation.item.input_audio_transcription.completed':
+      case 'conversation.item.input_audio_transcription.delta':
         if (msg.transcript) {
           const t = msg.transcript.trim();
           if (!t || t.length < 2) return;
