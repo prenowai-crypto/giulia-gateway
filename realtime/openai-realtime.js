@@ -864,87 +864,15 @@ export class OpenAIRealtimeClient {
     const calendarStr = nextDays.join(', ');
 
     this._awaitingExtraction = true;
+    // GA: forza SOLO la function call, senza istruzioni/audio
     this._send({
       type: 'response.create',
       response: {
-        // GA: forziamo solo extract_booking_data, niente testo/audio spontaneo
-        tool_choice: { type: 'function', name: 'extract_booking_data' },  // GA: formato corretto
-        output_modalities: ['text'],  // GA: era modalities
-        instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
-
-Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
-{"date":"YYYY-MM-DD o null","time":"HH:MM:SS o null","people":"numero o null","name":"nome o null","intent":"create/modify/cancel/unknown","notes":[],"phone_alternative":null,"note_check":false,"people_change":false,"unclear":true/false}
-
-REGOLE INTENT:
-- create = il cliente vuole prenotare un tavolo: "vorrei prenotare", "un tavolo per", "prenoto", "ho bisogno di un tavolo", "posso prenotare". USA create anche se non dice esplicitamente "nuovo" o "separato". ATTENZIONE: "vorrei prenotare" e "voglio prenotare" sono SEMPRE create, MAI modify, anche se nella conversazione si è già parlato di prenotazioni.
-- modify = il cliente usa parole di modifica ESPLICITE: "modificare", "spostare", "cambiare", "aggiornare", "anticipare", "posticipare" OPPURE sta correggendo qualcosa detto nella STESSA chiamata con "no intendevo", "aspetta", "ho sbagliato", "anzi", "fai una cosa spostala".
-- cancel = vuole cancellare ("cancellare", "annullare", "disdire")
-- unknown = saluto, ringraziamento, domanda informativa, niente di chiaro
-
-REGOLA CRITICA — FRASE INCOMPRENSIBILE: restituisci unclear:true SOLO se la frase contiene parole che non esistono nella lingua italiana (es: "carabinare", "vaglo", "scala bonara", "prevocazione"). Se la frase ha senso compiuto in italiano — anche se non riguarda una prenotazione — restituisci unclear:false. Esempi di unclear:false: "fate la carbonara", "pronto", "grazie mille", "buongiorno", "avete il parcheggio". Esempi di unclear:true: "fatele carabinare", "vaglo", "scala bonara".
-
-REGOLA CRITICA: se il cliente dice "vorrei prenotare" o simili → create SEMPRE, anche se nella chiamata si è già parlato di prenotazioni. Se il cliente dice "spostala", "cambiala", "modificala" riferendosi a una prenotazione appena confermata → modify.
-
-REGOLE DATE/ORA:
-- "alle 21" → time: "21:00:00"
-- "all'una" / "all'uno" → time: "13:00:00"
-- "alle nove di sera" / "alle 9 di sera" → time: "21:00:00"
-- "alle nove" senza contesto → time: "09:00:00"
-- REGOLA SERA: in contesto ristorante, ore 7/8/9/10 senza specificazione sono SEMPRE sera: "alle 7"→19:00, "alle 8"→20:00, "alle 9"→21:00, "alle 10"→22:00. Eccezione SOLO se il cliente dice esplicitamente "di mattina", "a pranzo", "AM".
-- "sabato" → data sabato dal calendario sopra
-- "venerdì" → data venerdì dal calendario sopra
-- "alla stessa ora" → time: null (non inventare)
-- "sera" / "di sera" / "stasera" / "a cena" senza numero ora esplicito → time: null (NON inventare 21:00 o altri valori)
-- "mattina" / "pranzo" senza numero → time: null
-- REGOLA ASSOLUTA ORARIO: se il cliente NON ha detto un numero specifico di ora (es: "alle 21", "alle 20:30", "alle otto"), restituisci time: null. MAI inferire l'ora dal contesto.
-- "stasera" / "questa sera" / "stanotte" → date: ${todayISO} (SEMPRE oggi, mai altra data)
-- "oggi" → date: ${todayISO}
-- "domani" → date: ${tomorrowISO} SEMPRE. È il giorno successivo a oggi. MAI il prossimo giorno con lo stesso nome della settimana.
-- "dopodomani" → date: ${dayAfterISO} SEMPRE. È due giorni dopo oggi.
-- REGOLA CRITICA ANCORE TEMPORALI: "domani" e "dopodomani" sono calcolati da OGGI (${todayISO}), MAI da date precedenti nella conversazione.
-
-REGOLA CRITICA NOME: estrai il nome ESATTAMENTE come pronunciato nel messaggio ATTUALE (quello che stai analizzando ora), ignorando COMPLETAMENTE qualsiasi nome presente nel contesto precedente. Se il cliente dice "mi chiamo Marchetti" → name: "Marchetti" (non "Marchi"). Se il cliente corregge il nome ("mi chiamo X", "sono X", "il mio nome è X", "no mi chiamo X") → usa SEMPRE e SOLO X esattamente come pronunciato, senza troncarlo né modificarlo.
-
-REGOLE NOME+DATA insieme:
-- "a nome Rossi per sabato" → name: "Rossi", date: data sabato
-- "la prenotazione Ferrari per venerdì" → name: "Ferrari", date: data venerdì
-- "prenotazione Bianchi del 18" → name: "Bianchi", date: ${todayISO.substring(0,8)}18
-
-REGOLE NOTES — estrai TUTTE le note speciali menzionate dal cliente:
-- Intolleranze/allergie: "celiaco/celiaca" → "Intolleranza glutine", "lattosio/intollerante al latte" → "Intolleranza lattosio", "arachidi/frutta secca/noci" → "Allergia frutta secca", "uova" → "Allergia uova", "allergia a..." → "Allergia (verifica con cliente)"
-- Diete: "vegano/vegana" → "Vegano", "vegetariano/vegetariana" → "Vegetariano"
-- Bambini: "seggiolone/seggiolone per bambini" → "Richiesto seggiolone", "bambino piccolo/neonato" → "Neonato/bambino piccolo"
-- Occasioni: "compleanno" → "Compleanno", "anniversario" → "Anniversario", "proposta di matrimonio" → "Proposta di matrimonio", "occasione speciale" → "Occasione speciale", "cena romantica" → "Cena romantica"
-- Tavolo: "esterno/terrazza/dehor/giardino" → "Tavolo esterno/terrazza", "interno/dentro" → rimuovi "Tavolo esterno/terrazza" se presente, "vicino finestra/vista" → "Tavolo vicino finestra", "tranquillo/riservato" → "Tavolo tranquillo/riservato"
-- Accessibilità: "sedia a rotelle/disabile/carrozzina" → "Accessibilità disabili"
-- Se il cliente CHIEDE se una nota è già segnata ("avete segnato X?", "è annotato X?") → NON includerla nell'array, è una domanda non una dichiarazione
-- Se il cliente NEGA una preferenza ("non all'esterno", "preferisco stare dentro") → NON includere la nota negata
-- Restituisci array vuoto [] se nessuna nota nuova in questo messaggio
-
-REGOLE PHONE_ALTERNATIVE — se il cliente fornisce un numero di telefono ALTERNATIVO per essere contattato:
-- "chiamatemi al 333 123 4567" → phone_alternative: "3331234567"
-- "usate il 347-987-6543" → phone_alternative: "3479876543"
-- null se nessun numero alternativo menzionato
-
-REGOLA PEOPLE_CHANGE — imposta a true SOLO se il cliente vuole CAMBIARE il numero di persone della prenotazione:
-- "siamo diventati 4" → people: "4", people_change: true
-- "aggiungo 2 persone" → people_change: true
-- "siamo in 6 ora" → people: "6", people_change: true
-- "siamo rimasti in 3" → people: "3", people_change: true
-- "a nome Rossi" → people: null, people_change: false (nome non è persone)
-- "per 2 persone sabato" (riferimento alla prenotazione esistente) → people: "2", people_change: false
-- Se il numero è solo un riferimento per trovare la prenotazione → people_change: false
-
-REGOLA NOTE_CHECK — imposta a true se il cliente sta CHIEDENDO se una nota è ancora presente:
-- "avete ancora segnato...?" → note_check: true
-- "è ancora annotato...?" → note_check: true
-- "avete la mia allergia?" → note_check: true
-- "avete segnato la celiachia?" → note_check: true
-- "avete ancora la prenotazione?" → note_check: false (non parla di note)
-- Se il cliente dichiara una nota nuova → note_check: false, metti la nota in notes[]
-
-Rispondi SOLO con il JSON, nessun'altra parola.`,
-        max_output_tokens: 500,  // era 80 — troppo poco per JSON 11 campi
+        output_modalities: ['text'],
+        tool_choice: {
+          type: 'function',
+          function: { name: 'extract_booking_data' }
+        },
       },
     });
   }
@@ -1128,7 +1056,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           this._send({
             type: 'response.create',
             response: {
-              instructions: `Il cliente chiede se una nota è stata annotata sulla sua prenotazione. ${_notesCtxN} Rispondi confermando le note effettivamente salvate. Se la nota richiesta è tra quelle salvate, confermala. Max 2 frasi.`,
+              output_modalities: ['audio'],
+              tool_choice: 'none',
+                           instructions: `Il cliente chiede se una nota è stata annotata sulla sua prenotazione. ${_notesCtxN} Rispondi confermando le note effettivamente salvate. Se la nota richiesta è tra quelle salvate, confermala. Max 2 frasi.`,
             },
           });
           return;
@@ -1258,7 +1188,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
           this._send({
             type: 'response.create',
             response: {
-              instructions: _gLang === 'it'
+              output_modalities: ['audio'],
+              tool_choice: 'none',
+                           instructions: _gLang === 'it'
                 ? `La prenotazione è già confermata. ${_notesInfo} Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se chiede delle note conferma quelle salvate. Se fa una domanda su strutture (seggiolone, parcheggio) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". IMPORTANTE: non dire mai "ho annotato" o "ho preso nota" di qualcosa a meno che non sia già presente nelle note salvate. Non inventare ingredienti o dettagli del menu non esplicitamente indicati. Max 2 frasi. Non reinventare la prenotazione.`
                 : `The reservation is already confirmed. ${_notesInfo} Reply warmly in ${_gLang}. If asked about notes confirm what was saved. If asked about facilities say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
             },
@@ -1350,7 +1282,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this._send({
         type: 'response.create',
         response: {
-          instructions: _lang === 'it'
+          output_modalities: ['audio'],
+          tool_choice: 'none',
+                   instructions: _lang === 'it'
             ? `Il cliente ha appena completato una prenotazione o operazione con successo. ${_notesCtx} Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!"; se chiede delle note conferma quelle salvate; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
             : `The customer has just successfully completed a reservation or operation. ${_notesCtx} Reply warmly in ${_lang}: if they thank say "Thank you!"; if they ask about notes confirm what was saved. Max 2 sentences. Do not invent information.`,
         },
@@ -1440,7 +1374,9 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       this._send({
         type: 'response.create',
         response: {
-          instructions: _langFree === 'it'
+          output_modalities: ['audio'],
+          tool_choice: 'none',
+                   instructions: _langFree === 'it'
             ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}\nMax 2 frasi. Non inventare nulla. Non suggerire mai prenotazioni proattivamente. Non proporre mai di venire al ristorante per degustare piatti.`
             : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
         },
@@ -3252,13 +3188,29 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
 
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    // GA: chiudi function call aperta prima di rispondere con audio
+    if (this._lastFunctionCallId) {
+      this._send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: this._lastFunctionCallId,
+          output: JSON.stringify({ success: true, action: 'responded' })
+        }
+      });
+      this._lastFunctionCallId = null;
+    }
     const lang = this.language || 'it';
 
     // Frase italiana → non serve traduzione
     if (lang === 'it') {
       this._send({
         type: 'response.create',
-        response: { instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"` },
+        response: {
+          output_modalities: ['audio'],  // GA: solo audio
+          tool_choice: 'none',           // GA: no function calls nella risposta
+          instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`,
+        },
       });
       return;
     }
@@ -3270,23 +3222,43 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
       return;
     }
 
-    // Frase dinamica → GPT traduce (TRANSLATION TASK ONLY evita di usare il context)
+    // Frase dinamica → GPT traduce
     this._send({
       type: 'response.create',
-      response: { instructions: `TRANSLATION TASK ONLY. Translate this Italian text to ${lang} and say ONLY the translation, nothing else. Do NOT use conversation context. Translate word for word: "${text}"` },
+      response: {
+        output_modalities: ['audio'],
+        tool_choice: 'none',
+        instructions: `TRANSLATION TASK ONLY. Translate this Italian text to ${lang} and say ONLY the translation, nothing else. Do NOT use conversation context. Translate word for word: "${text}"`,
+      },
     });
   }
 
   // Dice una frase già nella lingua giusta senza passare per traduzione GPT
   _sayDirect(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    // GA: chiudi function call aperta
+    if (this._lastFunctionCallId) {
+      this._send({
+        type: 'conversation.item.create',
+        item: {
+          type: 'function_call_output',
+          call_id: this._lastFunctionCallId,
+          output: JSON.stringify({ success: true, action: 'responded' })
+        }
+      });
+      this._lastFunctionCallId = null;
+    }
     const lang = this.language || 'it';
     const instruction = lang === 'it'
       ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
       : `Say EXACTLY and ONLY this phrase with correct ${lang} pronunciation, nothing else: "${text}"`;
     this._send({
       type: 'response.create',
-      response: { instructions: instruction },
+      response: {
+        output_modalities: ['audio'],
+        tool_choice: 'none',
+        instructions: instruction,
+      },
     });
   }
 
