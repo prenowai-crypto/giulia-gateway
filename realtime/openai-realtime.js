@@ -737,8 +737,11 @@ export class OpenAIRealtimeClient {
         if (this._awaitingExtraction && msg.text) {
           this._awaitingExtraction = false;
           try {
-            // Strip sia ```json/``` (function call text) sia il prefisso "json\n" (GPT text mode)
-            const json = msg.text.trim().replace(/^```json\s*|^```\s*|^json\s*/i, '').replace(/```\s*$/g, '').trim();
+            // Strip prefisso modello (es. "user to=functions.extract_booking_data ...") e markdown fences
+            let json = msg.text.trim().replace(/^```json\s*|^```\s*|^json\s*/i, '').replace(/```\s*$/g, '').trim();
+            // gpt-realtime-mini aggiunge prefisso prima del JSON — estrai solo la parte {...}
+            const jsonMatch = json.match(/\{[\s\S]*\}/);
+            if (jsonMatch) json = jsonMatch[0];
             const args = JSON.parse(json);
             console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
             this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
