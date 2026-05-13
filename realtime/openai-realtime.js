@@ -19,6 +19,9 @@
 
 import WebSocket from 'ws';
 
+// ─── VERSION MARKER (cerca nei log per confermare il deploy) ─────────────────
+console.log('🟢 openai-realtime.js v4.GA-2026-05-14 caricato');
+
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 
 function normalizeText(str) {
