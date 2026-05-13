@@ -573,7 +573,6 @@ export class OpenAIRealtimeClient {
       type: 'session.update',
       session: {
         type: 'realtime',  // GA API: campo obbligatorio
-        modalities: ['audio', 'text'],
         voice: 'coral',
         instructions: this.systemPrompt + this._buildInfoSection(),
         // GA API: audio format come oggetto annidato (non più stringhe piatte)
@@ -3151,6 +3150,7 @@ Rispondi SOLO con il JSON, nessun'altra parola.`,
         this._send({
           type: 'session.update',
           session: {
+            type: 'realtime',  // GA API: obbligatorio
             instructions: this.systemPrompt + this._buildInfoSection(),
           }
         });
