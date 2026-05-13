@@ -855,7 +855,7 @@ export class OpenAIRealtimeClient {
     this._send({
       type: 'response.create',
       response: {
-        modalities: ['text'],
+        output_modalities: ['text'],  // GA: era modalities
         instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
 
 Analizza l'audio appena ricevuto e rispondi SOLO con un oggetto JSON esattamente in questo formato, senza nessun altro testo:
