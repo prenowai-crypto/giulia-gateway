@@ -585,9 +585,9 @@ export class OpenAIRealtimeClient {
             transcription: { model: 'whisper-1', language: 'it' },
             turn_detection: {
               type: 'server_vad',
-              threshold: 0.4,
+              threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 1200,
+              silence_duration_ms: 500,   // era 1200 — abbassato per GA
               create_response: false,
               interrupt_response: true,
             },
