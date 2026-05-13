@@ -933,7 +933,7 @@ REGOLA NOTE_CHECK — imposta a true se il cliente sta CHIEDENDO se una nota è 
 - Se il cliente dichiara una nota nuova → note_check: false, metti la nota in notes[]
 
 Rispondi SOLO con il JSON, nessun'altra parola.`,
-        max_output_tokens: 80,
+        max_output_tokens: 500,  // era 80 — troppo poco per JSON 11 campi
       },
     });
   }
