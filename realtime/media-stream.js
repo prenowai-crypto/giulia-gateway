@@ -126,10 +126,6 @@ REGOLE ASSOLUTE:
 4. Per domande sugli orari, rispondi con i dati esatti qui sopra — non inventare.`;
 }
 
-// ─── CALL STATE ───────────────────────────────────────────────────────────────
-
-const callDataMap = new Map();
-
 // ─── SETUP ───────────────────────────────────────────────────────────────────
 
 export function setupMediaStreamHandler(server, callDataMapExternal) {
@@ -191,11 +187,11 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
           await openaiClient.connect();
 
           // Intercetta messaggi OpenAI per audio → Telnyx
-          // Lo facciamo DOPO connect() aggiungendo UN SOLO listener extra
+          // ✅ FIX GA: event name cambiato da response.audio.delta a response.output_audio.delta
           openaiClient.ws.on('message', (raw2) => {
             try {
               const m = JSON.parse(raw2);
-              if (m.type === 'response.audio.delta' && m.delta && isConnected) {
+              if (m.type === 'response.output_audio.delta' && m.delta && isConnected) {
                 if (telnyxWs.readyState === 1) {
                   telnyxWs.send(JSON.stringify({
                     event: 'media',
