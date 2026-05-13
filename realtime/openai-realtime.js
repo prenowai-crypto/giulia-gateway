@@ -18,9 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
-
-// ─── VERSION MARKER (cerca nei log per confermare il deploy) ─────────────────
-console.log('🟢 openai-realtime.js v4.GA-2026-05-14 caricato');
+console.log('🟢 openai-realtime.js v5.GA-CLEAN-2026-05-14 caricato');
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 
@@ -489,7 +487,7 @@ export const ValidationPipeline = {
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
     this.apiKey          = opts.apiKey;
-    this.model           = opts.model || 'gpt-realtime-mini';
+    this.model           = opts.model || 'gpt-realtime-mini';  // GA model
     this.systemPrompt    = opts.systemPrompt || '';
     this.restaurantConfig = opts.restaurantConfig || {};
 
@@ -537,7 +535,7 @@ export class OpenAIRealtimeClient {
       this.ws = new WebSocket(url, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          // GA API: OpenAI-Beta header rimosso (era richiesto solo dalla beta)
+          // GA: OpenAI-Beta header rimosso
         },
       });
 
@@ -575,25 +573,24 @@ export class OpenAIRealtimeClient {
     this._send({
       type: 'session.update',
       session: {
-        type: 'realtime',  // GA API: campo obbligatorio
+        type: 'realtime',          // GA: obbligatorio
         instructions: this.systemPrompt + this._buildInfoSection(),
-        // GA API: formato corretto (oggetti, non stringhe)
-        output_modalities: ['audio'],
+        tool_choice: 'none',       // GA: no function calls spontanee — forziamo solo in _triggerExtraction
         audio: {
           input: {
-            format: { type: 'audio/pcmu' },  // GA: oggetto, non stringa
+            format: { type: 'audio/pcmu' },
             transcription: { model: 'whisper-1', language: 'it' },
             turn_detection: {
               type: 'server_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 500,   // era 1200 — abbassato per GA
+              silence_duration_ms: 700,   // GA: 700ms consigliato per telefonia
               create_response: false,
               interrupt_response: true,
             },
           },
           output: {
-            format: { type: 'audio/pcmu' },  // GA: oggetto, non stringa
+            format: { type: 'audio/pcmu' },
             voice: 'coral',
           },
         },
@@ -606,55 +603,34 @@ export class OpenAIRealtimeClient {
             properties: {
               date: {
                 type: 'string',
-                description: `Data SEMPRE in formato ISO YYYY-MM-DD oppure null. Converti SEMPRE i nomi dei giorni in date ISO usando il calendario nella description della funzione. ESEMPI: "sabato"=2026-05-16, "domenica"=2026-05-17, "domani"=data di domani dal calendario. NON restituire mai il nome del giorno, restituire SEMPRE la data ISO.`
+                description: `Data ISO YYYY-MM-DD oppure "null". USA il calendario nel campo description della funzione. Esempi: "mercoledì"=data mercoledì dal calendario, "sabato"=data sabato dal calendario, "domani"=domani.`
               },
               time: {
                 type: 'string',
-                description: 'Orario HH:MM:SS oppure null. Esempi: "alle 21"=21:00:00, "all\'una"=13:00:00, "nove e mezza di sera"=21:30:00, "all\'una e mezza"=13:30:00, "ventuno"=21:00:00, "mezzogiorno"=12:00:00.'
+                description: 'Orario HH:MM:SS oppure "null". Esempi: "alle 21"=21:00:00, "all\'una"=13:00:00, "nove e mezza di sera"=21:30:00, "all\'una e mezza"=13:30:00, "ventuno"=21:00:00, "mezzogiorno"=12:00:00.'
               },
               people: {
                 type: 'string',
-                description: 'Numero di persone come stringa oppure null. Esempi: "per due"=2, "siamo in quattro"=4, "per me"=1.'
+                description: 'Numero di persone come stringa oppure "null". Esempi: "per due"=2, "siamo in quattro"=4, "per me"=1.'
               },
               name: {
                 type: 'string',
-                description: 'Nome del cliente per la prenotazione oppure null. Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
+                description: 'Nome del cliente per la prenotazione oppure "null". Esempi: "mi chiamo Luca"=Luca, "nome Rossi"=Rossi, "a nome di Giovanni"=Giovanni.'
               },
               intent: {
                 type: 'string',
                 enum: ['create', 'modify', 'cancel', 'unknown'],
-                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro o domanda informativa. USA create quando il cliente dice "vorrei prenotare", "un tavolo", "prenoto". USA modify SOLO se il cliente usa parole come "modificare", "spostare", "cambiare", "aggiornare".'
+                description: 'Intenzione del cliente: create=nuova prenotazione, modify=modifica prenotazione esistente, cancel=cancellazione, unknown=non chiaro. USA create quando il cliente dice "vorrei prenotare", "un tavolo", "prenoto", "ho bisogno di un tavolo" anche se non ha detto "nuovo" o "separato". USA modify SOLO se il cliente usa parole come "modificare", "spostare", "cambiare", "aggiornare" O se sta correggendo una prenotazione appena confermata nella stessa chiamata con parole come "no intendevo", "aspetta", "ho sbagliato".'
               },
               language: {
                 type: 'string',
                 description: 'ISO 639-1 language code of the customer message. Examples: "it"=Italian, "en"=English, "fr"=French, "de"=German, "es"=Spanish.'
-              },
-              notes: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array di note speciali del cliente (es. allergie, occasioni speciali, richieste particolari). Array vuoto [] se nessuna nota.'
-              },
-              phone_alternative: {
-                type: 'string',
-                description: 'Numero di telefono alternativo fornito dal cliente oppure null. Estrai solo le cifre senza formattazione.'
-              },
-              note_check: {
-                type: 'boolean',
-                description: 'true se il cliente chiede informazioni sulle note già presenti nella prenotazione, false altrimenti.'
-              },
-              people_change: {
-                type: 'boolean',
-                description: 'true se il cliente sta cambiando il numero di persone in una prenotazione esistente, false altrimenti.'
-              },
-              unclear: {
-                type: 'boolean',
-                description: 'true SOLO se il messaggio è completamente incomprensibile o rumore di fondo senza parole riconoscibili. false in tutti gli altri casi incluse domande informative.'
               }
             },
-            required: ['date', 'time', 'people', 'name', 'intent', 'language', 'notes', 'phone_alternative', 'note_check', 'people_change', 'unclear']
+            required: ['date', 'time', 'people', 'name', 'intent', 'language']
           }
         }],
-        tool_choice: 'none',  // GA: nessuna function call spontanea — forziamo solo in _triggerExtraction()
+        tool_choice: 'auto',
       },
     });
     console.log('✅ Sessione configurata');
@@ -688,7 +664,6 @@ export class OpenAIRealtimeClient {
         this._lastSaidAt = Date.now();
         break;
       case 'conversation.item.input_audio_transcription.completed':
-      case 'conversation.item.input_audio_transcription.delta':
         if (msg.transcript) {
           const t = msg.transcript.trim();
           if (!t || t.length < 2) return;
@@ -766,21 +741,14 @@ export class OpenAIRealtimeClient {
           this._triggerExtraction();
         }
         break;
-      case 'response.text.done':
+      case 'response.output_text.done':
+      case 'response.text.done':  // compat
         // Cattura il JSON di estrazione dati
         if (this._awaitingExtraction && msg.text) {
           this._awaitingExtraction = false;
           try {
-            // Strip prefisso modello (es. "user to=functions.extract_booking_data ...") e markdown fences
-            let json = msg.text.trim().replace(/^```json\s*|^```\s*|^json\s*/i, '').replace(/```\s*$/g, '').trim();
-            // gpt-realtime-mini manda il JSON via function_call_arguments.done, non via text.done
-            // In questo caso text.done contiene solo il prefisso "user to=functions.xxx" senza JSON
-            const jsonMatch = json.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
-              console.log(`⏭️ response.text.done senza JSON (gpt-realtime-mini usa function_call_arguments) — skip`);
-              break;
-            }
-            json = jsonMatch[0];
+            // Strip sia ```json/``` (function call text) sia il prefisso "json\n" (GPT text mode)
+            const json = msg.text.trim().replace(/^```json\s*|^```\s*|^json\s*/i, '').replace(/```\s*$/g, '').trim();
             const args = JSON.parse(json);
             console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
             this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
@@ -794,20 +762,14 @@ export class OpenAIRealtimeClient {
         }
         break;
       case 'response.function_call_arguments.done':
-        // GPT ha usato function calling
+        // GA: function calling nativo
         try {
-          // Log raw per debug — mostra i primi 300 chars
-          const _rawArgs = msg.arguments || '';
-          console.log(`🔧 Raw arguments (${_rawArgs.length} chars):`, _rawArgs.substring(0, 300));
-          // GA può includere testo extra o JSON malformato — estrai solo la parte {...}
-          const _jsonMatch = _rawArgs.match(/\{[\s\S]*\}/);
-          if (!_jsonMatch) {
-            console.error('❌ Nessun JSON trovato negli arguments:', _rawArgs.substring(0, 100));
-            break;
-          }
-          const args = JSON.parse(_jsonMatch[0]);
+          // Estrai solo il JSON valido (GA può includere testo extra)
+          const _rawFC = msg.arguments || '';
+          const _fcMatch = _rawFC.match(/\{[\s\S]*\}/);
+          if (!_fcMatch) { console.error('❌ Nessun JSON in arguments:', _rawFC.substring(0,100)); break; }
+          const args = JSON.parse(_fcMatch[0]);
           console.log(`🔧 GPT function call:`, JSON.stringify(args));
-          // Salva call_id per poter mandare function_call_output in caso di errore di validazione
           this._lastFunctionCallId = msg.call_id || null;
           this._awaitingExtraction = false;
           this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
@@ -864,15 +826,13 @@ export class OpenAIRealtimeClient {
     const calendarStr = nextDays.join(', ');
 
     this._awaitingExtraction = true;
-    // GA: forza SOLO la function call, senza istruzioni/audio
+    // GA: forza SOLO la function call extract_booking_data
     this._send({
       type: 'response.create',
       response: {
         output_modalities: ['text'],
-        tool_choice: {
-          type: 'function',
-          function: { name: 'extract_booking_data' }
-        },
+        tool_choice: { type: 'function', name: 'extract_booking_data' },
+        instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}. Analizza l'audio ricevuto ed estrai i dati chiamando extract_booking_data.`,
       },
     });
   }
@@ -1056,9 +1016,7 @@ export class OpenAIRealtimeClient {
           this._send({
             type: 'response.create',
             response: {
-              output_modalities: ['audio'],
-              tool_choice: 'none',
-                           instructions: `Il cliente chiede se una nota è stata annotata sulla sua prenotazione. ${_notesCtxN} Rispondi confermando le note effettivamente salvate. Se la nota richiesta è tra quelle salvate, confermala. Max 2 frasi.`,
+              instructions: `Il cliente chiede se una nota è stata annotata sulla sua prenotazione. ${_notesCtxN} Rispondi confermando le note effettivamente salvate. Se la nota richiesta è tra quelle salvate, confermala. Max 2 frasi.`,
             },
           });
           return;
@@ -1188,9 +1146,7 @@ export class OpenAIRealtimeClient {
           this._send({
             type: 'response.create',
             response: {
-              output_modalities: ['audio'],
-              tool_choice: 'none',
-                           instructions: _gLang === 'it'
+              instructions: _gLang === 'it'
                 ? `La prenotazione è già confermata. ${_notesInfo} Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se chiede delle note conferma quelle salvate. Se fa una domanda su strutture (seggiolone, parcheggio) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". IMPORTANTE: non dire mai "ho annotato" o "ho preso nota" di qualcosa a meno che non sia già presente nelle note salvate. Non inventare ingredienti o dettagli del menu non esplicitamente indicati. Max 2 frasi. Non reinventare la prenotazione.`
                 : `The reservation is already confirmed. ${_notesInfo} Reply warmly in ${_gLang}. If asked about notes confirm what was saved. If asked about facilities say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
             },
@@ -1282,9 +1238,7 @@ export class OpenAIRealtimeClient {
       this._send({
         type: 'response.create',
         response: {
-          output_modalities: ['audio'],
-          tool_choice: 'none',
-                   instructions: _lang === 'it'
+          instructions: _lang === 'it'
             ? `Il cliente ha appena completato una prenotazione o operazione con successo. ${_notesCtx} Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!"; se chiede delle note conferma quelle salvate; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
             : `The customer has just successfully completed a reservation or operation. ${_notesCtx} Reply warmly in ${_lang}: if they thank say "Thank you!"; if they ask about notes confirm what was saved. Max 2 sentences. Do not invent information.`,
         },
@@ -1374,9 +1328,7 @@ export class OpenAIRealtimeClient {
       this._send({
         type: 'response.create',
         response: {
-          output_modalities: ['audio'],
-          tool_choice: 'none',
-                   instructions: _langFree === 'it'
+          instructions: _langFree === 'it'
             ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}\nMax 2 frasi. Non inventare nulla. Non suggerire mai prenotazioni proattivamente. Non proporre mai di venire al ristorante per degustare piatti.`
             : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
         },
@@ -1539,7 +1491,7 @@ export class OpenAIRealtimeClient {
         this._resolveFailedFunctionCall(`orario non valido: 20:30`);
         this._say(msg);
         // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-        this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
+        this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
         return;
       }
 
@@ -2105,11 +2057,9 @@ export class OpenAIRealtimeClient {
           const lunch = rc?.lunch_hours || '12:00-14:30';
           const dinner = rc?.dinner_hours || '21:00-22:30';
           this._processingModify = false;
-          // Fix B4 MODIFY v2: session.update + resolveFailedFunctionCall PRIMA di _say()
-          // GPT riceve istruzione critica prima di generare qualsiasi risposta
-          this._resolveFailedFunctionCall('orario non valido');
-          this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. DEVI dire ESATTAMENTE: "Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?" VIETATO dire confermato o aggiornato.` } });
           this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
+          // Fix B4 MODIFY: forza GPT a NON confermare dopo orario invalido
+          this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. DEVI chiedere orario diverso. VIETATO dire confermato o aggiornato.` } });
           return;
         }
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
@@ -2288,10 +2238,6 @@ export class OpenAIRealtimeClient {
       const rc = this.restaurantConfig;
       const lunch  = rc?.lunch_hours  || '12:00-14:30';
       const dinner = rc?.dinner_hours || '21:00-22:30';
-      // Fix B4 _trySmartModify: session.update + resolveFailedFunctionCall PRIMA di _say()
-      // _injectContext ha già messo i dati reali nel contesto → GPT ignora _say() senza questo fix
-      this._resolveFailedFunctionCall('orario non valido');
-      this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. Di' ESATTAMENTE: "Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?" VIETATO dire confermato o aggiornato.` } });
       this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       this.modifyState = 'awaiting_changes';
       return true;
@@ -2709,7 +2655,7 @@ export class OpenAIRealtimeClient {
       this.data.time = null;
       this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-      this._send({ type: 'session.update', session: { instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
+      this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
       return;
     }
 
@@ -3105,7 +3051,8 @@ export class OpenAIRealtimeClient {
         this._send({
           type: 'session.update',
           session: {
-            type: 'realtime',  // GA API: obbligatorio
+            type: 'realtime',
+            tool_choice: 'none',
             instructions: this.systemPrompt + this._buildInfoSection(),
           }
         });
@@ -3188,27 +3135,20 @@ export class OpenAIRealtimeClient {
 
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
-    // GA: chiudi function call aperta prima di rispondere con audio
-    if (this._lastFunctionCallId) {
-      this._send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'function_call_output',
-          call_id: this._lastFunctionCallId,
-          output: JSON.stringify({ success: true, action: 'responded' })
-        }
-      });
-      this._lastFunctionCallId = null;
-    }
     const lang = this.language || 'it';
 
     // Frase italiana → non serve traduzione
     if (lang === 'it') {
+      // GA: chiudi function call aperta + audio-only + no tool calls
+      if (this._lastFunctionCallId) {
+        this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: this._lastFunctionCallId, output: JSON.stringify({ success: true }) } });
+        this._lastFunctionCallId = null;
+      }
       this._send({
         type: 'response.create',
         response: {
-          output_modalities: ['audio'],  // GA: solo audio
-          tool_choice: 'none',           // GA: no function calls nella risposta
+          output_modalities: ['audio'],
+          tool_choice: 'none',
           instructions: `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`,
         },
       });
@@ -3222,7 +3162,11 @@ export class OpenAIRealtimeClient {
       return;
     }
 
-    // Frase dinamica → GPT traduce
+    // Frase dinamica → GPT traduce (TRANSLATION TASK ONLY evita di usare il context)
+    if (this._lastFunctionCallId) {
+      this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: this._lastFunctionCallId, output: JSON.stringify({ success: true }) } });
+      this._lastFunctionCallId = null;
+    }
     this._send({
       type: 'response.create',
       response: {
@@ -3236,22 +3180,14 @@ export class OpenAIRealtimeClient {
   // Dice una frase già nella lingua giusta senza passare per traduzione GPT
   _sayDirect(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
-    // GA: chiudi function call aperta
-    if (this._lastFunctionCallId) {
-      this._send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'function_call_output',
-          call_id: this._lastFunctionCallId,
-          output: JSON.stringify({ success: true, action: 'responded' })
-        }
-      });
-      this._lastFunctionCallId = null;
-    }
     const lang = this.language || 'it';
     const instruction = lang === 'it'
       ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
       : `Say EXACTLY and ONLY this phrase with correct ${lang} pronunciation, nothing else: "${text}"`;
+    if (this._lastFunctionCallId) {
+      this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: this._lastFunctionCallId, output: JSON.stringify({ success: true }) } });
+      this._lastFunctionCallId = null;
+    }
     this._send({
       type: 'response.create',
       response: {
