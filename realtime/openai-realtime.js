@@ -868,7 +868,7 @@ export class OpenAIRealtimeClient {
       type: 'response.create',
       response: {
         // GA: forziamo solo extract_booking_data, niente testo/audio spontaneo
-        tool_choice: { type: 'function', function: { name: 'extract_booking_data' } },
+        tool_choice: { type: 'function', name: 'extract_booking_data' },  // GA: formato corretto
         output_modalities: ['text'],  // GA: era modalities
         instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
 
