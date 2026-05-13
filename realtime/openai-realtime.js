@@ -574,23 +574,22 @@ export class OpenAIRealtimeClient {
       session: {
         type: 'realtime',  // GA API: campo obbligatorio
         instructions: this.systemPrompt + this._buildInfoSection(),
-        // GA API: audio come oggetto annidato (voice dentro audio.output)
+        // GA API: tutto dentro audio (incluso turn_detection)
         audio: {
           input: {
             format: 'g711_ulaw',
             transcription: { model: 'whisper-1', language: 'it' },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.4,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 1200,
+              create_response: false,
+            },
           },
           output: {
             format: 'g711_ulaw',
-            // voice non supportato in session.update GA - usa default
           },
-        },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.4,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 1200,
-          create_response: false,
         },
         tools: [{
           type: 'function',
