@@ -739,9 +739,14 @@ export class OpenAIRealtimeClient {
           try {
             // Strip prefisso modello (es. "user to=functions.extract_booking_data ...") e markdown fences
             let json = msg.text.trim().replace(/^```json\s*|^```\s*|^json\s*/i, '').replace(/```\s*$/g, '').trim();
-            // gpt-realtime-mini aggiunge prefisso prima del JSON — estrai solo la parte {...}
+            // gpt-realtime-mini manda il JSON via function_call_arguments.done, non via text.done
+            // In questo caso text.done contiene solo il prefisso "user to=functions.xxx" senza JSON
             const jsonMatch = json.match(/\{[\s\S]*\}/);
-            if (jsonMatch) json = jsonMatch[0];
+            if (!jsonMatch) {
+              console.log(`⏭️ response.text.done senza JSON (gpt-realtime-mini usa function_call_arguments) — skip`);
+              break;
+            }
+            json = jsonMatch[0];
             const args = JSON.parse(json);
             console.log(`🔧 GPT ha estratto:`, JSON.stringify(args));
             this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
