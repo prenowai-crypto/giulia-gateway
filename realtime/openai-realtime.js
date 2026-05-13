@@ -534,7 +534,7 @@ export class OpenAIRealtimeClient {
       this.ws = new WebSocket(url, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta': 'realtime=v1',
+          // GA API: OpenAI-Beta header rimosso (era richiesto solo dalla beta)
         },
       });
 
@@ -572,12 +572,18 @@ export class OpenAIRealtimeClient {
     this._send({
       type: 'session.update',
       session: {
+        type: 'realtime',  // GA API: campo obbligatorio
         modalities: ['audio', 'text'],
         voice: 'coral',
         instructions: this.systemPrompt + this._buildInfoSection(),
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'whisper-1', language: 'it' }, // solo per log
+        // GA API: audio format come oggetto annidato (non più stringhe piatte)
+        audio: {
+          input: {
+            format: 'g711_ulaw',
+            transcription: { model: 'whisper-1', language: 'it' },
+          },
+          output: { format: 'g711_ulaw' },
+        },
         turn_detection: {
           type: 'server_vad',
           threshold: 0.4,
@@ -642,7 +648,7 @@ export class OpenAIRealtimeClient {
             required: ['date', 'time', 'people', 'name', 'intent', 'language', 'notes', 'phone_alternative', 'note_check', 'people_change', 'unclear']
           }
         }],
-        tool_choice: 'required',
+        tool_choice: 'auto',
       },
     });
     console.log('✅ Sessione configurata');
