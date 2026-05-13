@@ -573,15 +573,17 @@ export class OpenAIRealtimeClient {
       type: 'session.update',
       session: {
         type: 'realtime',  // GA API: campo obbligatorio
-        voice: 'coral',
         instructions: this.systemPrompt + this._buildInfoSection(),
-        // GA API: audio format come oggetto annidato (non più stringhe piatte)
+        // GA API: audio come oggetto annidato (voice dentro audio.output)
         audio: {
           input: {
             format: 'g711_ulaw',
             transcription: { model: 'whisper-1', language: 'it' },
           },
-          output: { format: 'g711_ulaw' },
+          output: {
+            format: 'g711_ulaw',
+            voice: 'coral',  // GA API: voice si sposta qui
+          },
         },
         turn_detection: {
           type: 'server_vad',
