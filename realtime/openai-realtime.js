@@ -486,7 +486,7 @@ export const ValidationPipeline = {
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
     this.apiKey          = opts.apiKey;
-    this.model           = opts.model || 'gpt-4o-mini-realtime-preview';
+    this.model           = opts.model || 'gpt-realtime-mini';
     this.systemPrompt    = opts.systemPrompt || '';
     this.restaurantConfig = opts.restaurantConfig || {};
 
