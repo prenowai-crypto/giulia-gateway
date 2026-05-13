@@ -654,7 +654,7 @@ export class OpenAIRealtimeClient {
             required: ['date', 'time', 'people', 'name', 'intent', 'language', 'notes', 'phone_alternative', 'note_check', 'people_change', 'unclear']
           }
         }],
-        tool_choice: 'auto',
+        tool_choice: 'none',  // GA: nessuna function call spontanea — forziamo solo in _triggerExtraction()
       },
     });
     console.log('✅ Sessione configurata');
@@ -867,6 +867,8 @@ export class OpenAIRealtimeClient {
     this._send({
       type: 'response.create',
       response: {
+        // GA: forziamo solo extract_booking_data, niente testo/audio spontaneo
+        tool_choice: { type: 'function', function: { name: 'extract_booking_data' } },
         output_modalities: ['text'],  // GA: era modalities
         instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}.
 
