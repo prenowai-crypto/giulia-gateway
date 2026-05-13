@@ -794,9 +794,18 @@ export class OpenAIRealtimeClient {
         }
         break;
       case 'response.function_call_arguments.done':
-        // GPT ha usato function calling — sia JSON text che function call sono validi
+        // GPT ha usato function calling
         try {
-          const args = JSON.parse(msg.arguments);
+          // Log raw per debug — mostra i primi 300 chars
+          const _rawArgs = msg.arguments || '';
+          console.log(`🔧 Raw arguments (${_rawArgs.length} chars):`, _rawArgs.substring(0, 300));
+          // GA può includere testo extra o JSON malformato — estrai solo la parte {...}
+          const _jsonMatch = _rawArgs.match(/\{[\s\S]*\}/);
+          if (!_jsonMatch) {
+            console.error('❌ Nessun JSON trovato negli arguments:', _rawArgs.substring(0, 100));
+            break;
+          }
+          const args = JSON.parse(_jsonMatch[0]);
           console.log(`🔧 GPT function call:`, JSON.stringify(args));
           // Salva call_id per poter mandare function_call_output in caso di errore di validazione
           this._lastFunctionCallId = msg.call_id || null;
