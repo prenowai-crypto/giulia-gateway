@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
-console.log('🟢 openai-realtime.js v5.GA-CLEAN-2026-05-14 caricato');
+console.log('🟢 openai-realtime.js v6.GA-2026-05-14 caricato');
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 
@@ -521,6 +521,8 @@ export class OpenAIRealtimeClient {
     this._checkingTime = false;
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
+    this._lastSpeechStoppedAt = 0;      // debounce GA speech_stopped
+    this._responseInFlight = false;       // GA: previene response concorrenti
     this._processingModify = false;   // evita double MODIFY (doppio function call GPT)
 
     // ── Lingua rilevata da GPT ───────────────────────────────────────────────
@@ -625,12 +627,33 @@ export class OpenAIRealtimeClient {
               language: {
                 type: 'string',
                 description: 'ISO 639-1 language code of the customer message. Examples: "it"=Italian, "en"=English, "fr"=French, "de"=German, "es"=Spanish.'
+              },
+              notes: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Note speciali del cliente (allergie, occasioni, richieste). Array vuoto [] se nessuna.'
+              },
+              phone_alternative: {
+                type: 'string',
+                description: 'Numero di telefono alternativo fornito dal cliente. null se non menzionato.'
+              },
+              note_check: {
+                type: 'boolean',
+                description: 'true se il cliente chiede se una nota è già presente nella prenotazione. false altrimenti.'
+              },
+              people_change: {
+                type: 'boolean',
+                description: 'true se il cliente vuole CAMBIARE il numero di persone di una prenotazione esistente. false altrimenti.'
+              },
+              unclear: {
+                type: 'boolean',
+                description: 'true SOLO se il messaggio è completamente incomprensibile o rumore di fondo. false in tutti gli altri casi incluse domande informative.'
               }
             },
-            required: ['date', 'time', 'people', 'name', 'intent', 'language']
+            required: ['date', 'time', 'people', 'name', 'intent', 'language', 'notes', 'phone_alternative', 'note_check', 'people_change', 'unclear']
           }
         }],
-        tool_choice: 'auto',
+        // tool_choice: 'auto' RIMOSSO — già impostato 'none' sopra
       },
     });
     console.log('✅ Sessione configurata');
@@ -724,7 +747,14 @@ export class OpenAIRealtimeClient {
         console.log('🎤 Parla...');
         this._speechStartedAt = Date.now();
         break;
-      case 'input_audio_buffer.speech_stopped':
+      case 'input_audio_buffer.speech_stopped': {
+        const _sstNow = Date.now();
+        // GA debounce: ignora speech_stopped se arriva entro 1200ms dal precedente
+        if (_sstNow - this._lastSpeechStoppedAt < 1200) {
+          console.log(`🔇 speech_stopped debounced (${_sstNow - this._lastSpeechStoppedAt}ms < 1200ms)`);
+          break;
+        }
+        this._lastSpeechStoppedAt = _sstNow;
         console.log('🎤 Fine');
         // Deaf period: ignora speech_stopped per 1500ms dopo la fine dell'audio
         // Parte da response.audio.done (momento corretto) non da _say()
@@ -741,6 +771,7 @@ export class OpenAIRealtimeClient {
           this._triggerExtraction();
         }
         break;
+      }
       case 'response.output_text.done':
       case 'response.text.done':  // compat
         // Cattura il JSON di estrazione dati
@@ -770,14 +801,29 @@ export class OpenAIRealtimeClient {
           if (!_fcMatch) { console.error('❌ Nessun JSON in arguments:', _rawFC.substring(0,100)); break; }
           const args = JSON.parse(_fcMatch[0]);
           console.log(`🔧 GPT function call:`, JSON.stringify(args));
-          this._lastFunctionCallId = msg.call_id || null;
           this._awaitingExtraction = false;
+          // GA CRITICO: chiudi il tool call SUBITO — il modello GA aspetta function_call_output
+          // prima di accettare qualsiasi response.create successiva
+          if (msg.call_id) {
+            this._send({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: msg.call_id,
+                output: JSON.stringify({ success: true, status: 'processing' })
+              }
+            });
+            console.log(`🔧 function_call_output inviato per call_id: ${msg.call_id}`);
+          }
+          // _lastFunctionCallId = null perché già chiuso sopra
+          this._lastFunctionCallId = null;
           this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
         } catch (err) {
           console.error('❌ Errore function call:', err);
         }
         break;
       case 'response.done':
+        this._responseInFlight = false;  // GA: libera il lock
         if (msg.response?.status === 'failed') console.error('❌ Response failed');
         break;
       case 'error':
@@ -832,7 +878,44 @@ export class OpenAIRealtimeClient {
       response: {
         output_modalities: ['text'],
         tool_choice: { type: 'function', name: 'extract_booking_data' },
-        instructions: `Oggi è ${dayName} ${todayISO}. Prossimi giorni: ${calendarStr}. Analizza l'audio ricevuto ed estrai i dati chiamando extract_booking_data.`,
+        instructions: `Oggi è ${dayName} ${todayISO}. Domani: ${tomorrowISO}. Dopodomani: ${dayAfterISO}. Prossimi 7 giorni: ${calendarStr}.
+
+Analizza SOLO l'ultimo messaggio dell'utente e chiama extract_booking_data con questi valori:
+
+DATE: formato ISO YYYY-MM-DD obbligatorio.
+- "domani"→${tomorrowISO}, "dopodomani"→${dayAfterISO}, "oggi"/"stasera"→${todayISO}
+- Nomi giorni: usa il calendario sopra. "sabato"→data sabato, "venerdì"→data venerdì
+- MAI restituire il nome del giorno, SEMPRE la data ISO
+
+TIME: formato HH:MM:SS obbligatorio. null se orario non menzionato.
+- "alle 21"→"21:00:00", "alle 20"→"20:00:00", "alle 19"→"19:00:00"
+- REGOLA SERA: in contesto ristorante, ore 7/8/9/10 senza "mattina"/"pranzo" = SEMPRE PM: "alle 7"→"19:00:00", "alle 8"→"20:00:00", "alle 9"→"21:00:00", "alle 10"→"22:00:00"
+- "all'una"/"all'uno"→"13:00:00", "mezzogiorno"→"12:00:00"
+- "e mezza"→aggiungi 30min, "e un quarto"→aggiungi 15min
+- "21.30"/"21:30"→"21:30:00"
+- Se il cliente NON ha detto un numero di ora → time: null
+
+PEOPLE: numero come stringa. "per due"→"2", "siamo in 4"→"4", "per me"→"1". null se non menzionato.
+
+NAME: nome esatto come pronunciato. null se non menzionato.
+
+INTENT: create/modify/cancel/unknown.
+- create: "vorrei prenotare", "un tavolo", "prenoto"
+- modify: "modificare", "spostare", "cambiare"
+- cancel: "cancellare", "annullare", "disdire"
+- unknown: saluto, domanda informativa, niente di chiaro
+
+LANGUAGE: it/en/fr/de/es
+
+NOTES: array di note speciali. [] se nessuna.
+
+PHONE_ALTERNATIVE: numero alternativo o null.
+
+NOTE_CHECK: true se chiede se una nota è già segnata. false altrimenti.
+
+PEOPLE_CHANGE: true se vuole cambiare numero persone prenotazione esistente. false altrimenti.
+
+UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
       },
     });
   }
@@ -892,6 +975,31 @@ export class OpenAIRealtimeClient {
     let   newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
     const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+
+    // FIX GA: il modello GA può restituire time in formato testo ("alle 21", "21:30")
+    // invece di HH:MM:SS — normalizziamo via TimeManager
+    if (newTime && !/^\d{2}:\d{2}(:\d{2})?$/.test(newTime)) {
+      const _parsedTime = TimeManager.parseFromText(newTime);
+      if (_parsedTime) {
+        console.log(`⏰ Time GA normalizzato: "${newTime}" → "${_parsedTime}"`);
+        newTime = _parsedTime;
+      } else {
+        console.log(`⚠️ Time GA non parsabile: "${newTime}" → null`);
+        newTime = null;
+      }
+    }
+
+    // FIX GA: normalizza anche date se arriva come nome giorno invece di ISO
+    if (newDate && !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      const _parsedDate = DateManager.parseFromText(newDate);
+      if (_parsedDate) {
+        console.log(`📅 Date GA normalizzata: "${newDate}" → "${_parsedDate}"`);
+        newDate = _parsedDate;
+      } else {
+        console.log(`⚠️ Date GA non parsabile: "${newDate}" → null`);
+        newDate = null;
+      }
+    }
 
     // 🆕 GPT-ONLY: cross-check data rimosso — GPT gestisce domani/oggi/stasera
     // con le regole esplicite nel prompt e il calendario iniettato.
