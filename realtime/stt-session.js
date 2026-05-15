@@ -102,14 +102,13 @@ class STTSession {
   }
 
   _configureSession() {
+    // gpt-realtime-whisper: il modello è implicito nel type:'transcription'.
+    // Parametri supportati: type, turn_detection, noise_reduction.
+    // input_audio_transcription e input_audio_format NON sono supportati.
     this._send({
       type: 'session.update',
       session: {
-        type: 'transcription',           // obbligatorio per sessioni transcription
-        input_audio_transcription: {
-          model: 'gpt-realtime-whisper',
-          language: this.language,
-        },
+        type: 'transcription',
         turn_detection: {
           type: 'server_vad',
           threshold: 0.55,
