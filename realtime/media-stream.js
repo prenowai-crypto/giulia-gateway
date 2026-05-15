@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// MEDIA STREAM HANDLER v3.0
-// Gestisce WebSocket Telnyx ↔ OpenAI Realtime
+// MEDIA STREAM HANDLER v4.0 — Dual Session Architecture
+// Gestisce WebSocket Telnyx ↔ OpenAI Realtime (STT + TTS separati)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { WebSocketServer } from 'ws';
@@ -81,7 +81,8 @@ async function getRestaurantConfig(telnyxNumber) {
 
 function buildSystemPrompt(rc) {
   const now    = DateManager.getNow();
-  const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+  const today  = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayISO = DateManager.toISO(today);
 
   const closedDays = rc?.closed_days
     ? String(rc.closed_days).split(',').map(Number)
@@ -94,21 +95,11 @@ function buildSystemPrompt(rc) {
   const ds = rc?.dinner_start || '19:00';
   const de = rc?.dinner_end   || '22:30';
 
-  // Giorni aperti a pranzo e cena
-  const lunchClosedDays = rc?.lunch_closed_days
-    ? String(rc.lunch_closed_days).split(',').map(Number)
-    : [];
-  const dinnerClosedDays = rc?.dinner_closed_days
-    ? String(rc.dinner_closed_days).split(',').map(Number)
-    : [];
-
   const allDays = [0,1,2,3,4,5,6];
-  const openForLunch = allDays
-    .filter(d => !closedDays.includes(d) && !lunchClosedDays.includes(d))
-    .map(d => dayNames[d]).join(', ');
-  const openForDinner = allDays
-    .filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d))
-    .map(d => dayNames[d]).join(', ');
+  const lunchClosedDays  = rc?.lunch_closed_days  ? String(rc.lunch_closed_days).split(',').map(Number)  : [];
+  const dinnerClosedDays = rc?.dinner_closed_days ? String(rc.dinner_closed_days).split(',').map(Number) : [];
+  const openForLunch  = allDays.filter(d => !closedDays.includes(d) && !lunchClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
+  const openForDinner = allDays.filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
 
   const recName = rc?.receptionist_name || 'Giulia';
   const rName   = rc?.restaurant_name   || 'ristorante';
@@ -118,12 +109,7 @@ Parla in italiano, frasi brevi (max 2 frasi), tono professionale e cordiale.
 Oggi è ${dayNames[now.getDay()]} ${todayISO}.
 Orari pranzo: ${ls}-${le} (aperti: ${openForLunch}).
 Orari cena: ${ds}-${de} (aperti: ${openForDinner}).
-Chiuso il: ${closedText}.
-REGOLE ASSOLUTE:
-1. Pronuncia ESATTAMENTE e SOLO la frase che ricevi nell'istruzione "Di' ESATTAMENTE e SOLO questa frase".
-2. Non aggiungere mai parole, saluti o informazioni non presenti nell'istruzione.
-3. Se non ricevi un'istruzione esplicita, di' solo: "Un momento prego."
-4. Per domande sugli orari, rispondi con i dati esatti qui sopra — non inventare.`;
+Chiuso il: ${closedText}.`;
 }
 
 // ─── SETUP ───────────────────────────────────────────────────────────────────
@@ -140,11 +126,11 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
   });
 
   wss.on('connection', (telnyxWs) => {
-    console.log('🔌 Nuova connessione');
+    console.log('🔌 Nuova connessione Telnyx');
 
     let openaiClient = null;
-    let callId = null;
-    let isConnected = false;
+    let streamSid    = null;
+    let isConnected  = false;
 
     telnyxWs.on('message', async (raw) => {
       let msg;
@@ -156,58 +142,57 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
           break;
 
         case 'start': {
-          callId = msg.start?.call_sid || msg.start?.callSid || `call-${Date.now()}`;
-          const toNumber   = msg.start?.to        || '';
-          const fromNumber = msg.start?.from      || '';
-          const streamSid  = msg.start?.stream_sid || callId;
+          const callId    = msg.start?.call_sid || msg.start?.callSid || `call-${Date.now()}`;
+          const toNumber  = msg.start?.to   || '';
+          const fromNumber = msg.start?.from || '';
+          streamSid = msg.start?.stream_sid || callId;
 
-          console.log(`📞 CallSid: ${callId}`);
+          console.log(`📞 CallSid: ${callId} | From: ${fromNumber} | To: ${toNumber}`);
 
-          // Carica config ristorante
           const rc = await getRestaurantConfig(toNumber);
 
-          // Crea client OpenAI Realtime
+          // ── Crea client con callback audio ────────────────────────────────
+          // onAudioDelta viene impostato PRIMA di connect()
+          // così il greeting arriva a Telnyx anche se TTS genera audio
+          // durante la fase finale di connect()
           openaiClient = new OpenAIRealtimeClient({
             apiKey:           process.env.OPENAI_API_KEY,
             restaurantConfig: rc,
             systemPrompt:     buildSystemPrompt(rc),
             callerPhone:      fromNumber,
+
+            // Audio TTS → Telnyx
+            onAudioDelta: (chunk) => {
+              if (telnyxWs.readyState === 1) {
+                telnyxWs.send(JSON.stringify({
+                  event:      'media',
+                  stream_sid: streamSid,
+                  media:      { payload: chunk },
+                }));
+              }
+            },
+
             onTranscript(text, role) {
               // già loggato internamente
             },
             onError(err) {
               console.error('❌ OpenAI error:', err);
             },
-            onClose() {
+            onClose(code) {
               isConnected = false;
+              console.log(`🔴 OpenAI chiuso (${code})`);
             },
           });
 
-          // Connetti a OpenAI — connect() registra già il listener ws.on('message')
+          // ── Connetti: STT pronta → TTS pronta → greeting ─────────────────
           await openaiClient.connect();
-
-          // Intercetta messaggi OpenAI per audio → Telnyx
-          // ✅ FIX GA: event name cambiato da response.audio.delta a response.output_audio.delta
-          openaiClient.ws.on('message', (raw2) => {
-            try {
-              const m = JSON.parse(raw2);
-              if (m.type === 'response.output_audio.delta' && m.delta && isConnected) {
-                if (telnyxWs.readyState === 1) {
-                  telnyxWs.send(JSON.stringify({
-                    event: 'media',
-                    stream_sid: streamSid,
-                    media: { payload: m.delta },
-                  }));
-                }
-              }
-            } catch {}
-          });
-
           isConnected = true;
+          console.log('✅ Dual session pronta, chiamata attiva');
           break;
         }
 
         case 'media':
+          // Audio Telnyx → STT session
           if (openaiClient && isConnected && msg.media?.payload) {
             openaiClient.sendAudio(msg.media.payload);
           }
@@ -222,8 +207,9 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
     });
 
     telnyxWs.on('close', () => {
-      console.log('🔌 Chiuso');
+      console.log('🔌 Telnyx chiuso');
       openaiClient?.close();
+      isConnected = false;
     });
 
     telnyxWs.on('error', (err) => {
@@ -231,5 +217,5 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
     });
   });
 
-  console.log('📡 WebSocket attivo su /media-stream');
+  console.log('📡 WebSocket handler attivo su /media-stream');
 }
