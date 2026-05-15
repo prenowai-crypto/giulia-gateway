@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
-console.log('🟢 openai-realtime.js v6.GA-2026-05-14 caricato');
+console.log('🟢 openai-realtime.js v7.GA-2026-05-14 caricato');
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 
@@ -631,7 +631,7 @@ export class OpenAIRealtimeClient {
               notes: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'Note speciali del cliente (allergie, occasioni, richieste). Array vuoto [] se nessuna.'
+                description: 'Note speciali da SALVARE sulla prenotazione: allergie, intolleranze, occasioni (es: compleanno), richieste logistiche (seggiolone, sedia a rotelle). NON includere: domande del cliente, richieste di informazioni su menu o piatti, curiosità. Array vuoto [] se nessuna nota da salvare.'
               },
               phone_alternative: {
                 type: 'string',
@@ -1124,6 +1124,8 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
           this._send({
             type: 'response.create',
             response: {
+              output_modalities: ['audio'],
+              tool_choice: 'none',
               instructions: `Il cliente chiede se una nota è stata annotata sulla sua prenotazione. ${_notesCtxN} Rispondi confermando le note effettivamente salvate. Se la nota richiesta è tra quelle salvate, confermala. Max 2 frasi.`,
             },
           });
@@ -1254,6 +1256,8 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
           this._send({
             type: 'response.create',
             response: {
+              output_modalities: ['audio'],
+              tool_choice: 'none',
               instructions: _gLang === 'it'
                 ? `La prenotazione è già confermata. ${_notesInfo} Il cliente sta facendo una domanda o ringraziando. Rispondi in modo cordiale e naturale. Se chiede delle note conferma quelle salvate. Se fa una domanda su strutture (seggiolone, parcheggio) rispondi "Non ho questa informazione, può chiedere direttamente al ristorante". IMPORTANTE: non dire mai "ho annotato" o "ho preso nota" di qualcosa a meno che non sia già presente nelle note salvate. Non inventare ingredienti o dettagli del menu non esplicitamente indicati. Max 2 frasi. Non reinventare la prenotazione.`
                 : `The reservation is already confirmed. ${_notesInfo} Reply warmly in ${_gLang}. If asked about notes confirm what was saved. If asked about facilities say "I don't have this information, please ask the restaurant directly". Max 2 sentences.`,
@@ -1346,6 +1350,8 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
       this._send({
         type: 'response.create',
         response: {
+          output_modalities: ['audio'],
+          tool_choice: 'none',
           instructions: _lang === 'it'
             ? `Il cliente ha appena completato una prenotazione o operazione con successo. ${_notesCtx} Rispondi in modo cordiale e naturale: se ringrazia di' "Grazie a lei!"; se chiede delle note conferma quelle salvate; poi chiedi se puoi aiutarlo con altro. Max 2 frasi. Non inventare informazioni sul ristorante.`
             : `The customer has just successfully completed a reservation or operation. ${_notesCtx} Reply warmly in ${_lang}: if they thank say "Thank you!"; if they ask about notes confirm what was saved. Max 2 sentences. Do not invent information.`,
@@ -1436,6 +1442,8 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
       this._send({
         type: 'response.create',
         response: {
+          output_modalities: ['audio'],
+          tool_choice: 'none',
           instructions: _langFree === 'it'
             ? `Rispondi alla domanda del cliente usando ESCLUSIVAMENTE questi dati, senza aggiungere nulla:\n- Pranzo ${ls}-${le}: aperto ${openForLunch || 'nessun giorno'}\n- Cena ${ds}-${de}: aperto ${openForDinner || 'nessun giorno'}\n- Chiuso il: ${closedText}\nMax 2 frasi. Non inventare nulla. Non suggerire mai prenotazioni proattivamente. Non proporre mai di venire al ristorante per degustare piatti.`
             : `Reply in ${_langFree}. Answer the customer's question using ONLY this data: ${_scheduleData}. Max 2 sentences. Do not invent anything.`,
@@ -1597,9 +1605,9 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
         console.log(`🚫 Orario non valido: ${this.data.time}`);
         this.data.time = null;
         this._resolveFailedFunctionCall(`orario non valido: 20:30`);
-        this._say(msg);
-        // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
+        // GA: session.update PRIMA di _say() — influenza la risposta corrente, non la prossima
         this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
+        this._say(msg);
         return;
       }
 
@@ -2761,9 +2769,9 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
       this._resolveFailedFunctionCall('orario non valido');
       this.phase = 'collecting';
       this.data.time = null;
-      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
-      // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
+      // GA: session.update PRIMA di _say()
       this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
+      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       return;
     }
 
@@ -3243,12 +3251,19 @@ UNCLEAR: true SOLO se incomprensibile o rumore. false in tutti gli altri casi.`,
 
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    // GA: previeni response concorrenti — se c'è già una response in corso, aspetta
+    if (this._responseInFlight) {
+      console.log(`⏳ _say() skip: response già in flight → "${text.substring(0, 60)}"`);
+      // Non blocchiamo — la frase viene comunque mandata, ma logghiamo
+    }
+    this._responseInFlight = true;
     const lang = this.language || 'it';
 
     // Frase italiana → non serve traduzione
     if (lang === 'it') {
-      // GA: chiudi function call aperta + audio-only + no tool calls
+      // GA: safety net — normalmente già null (chiuso nel handler)
       if (this._lastFunctionCallId) {
+        console.warn(`⚠️ _say() safety: function_call ancora aperto (${this._lastFunctionCallId}) — chiudo ora`);
         this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: this._lastFunctionCallId, output: JSON.stringify({ success: true }) } });
         this._lastFunctionCallId = null;
       }
