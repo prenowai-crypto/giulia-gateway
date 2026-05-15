@@ -102,12 +102,10 @@ class STTSession {
   }
 
   _configureSession() {
-    // Le sessioni transcription (intent=transcription) accettano solo
-    // input_audio_transcription, turn_detection e noise_reduction.
-    // input_audio_format e type NON sono supportati qui.
     this._send({
       type: 'session.update',
       session: {
+        type: 'transcription',           // obbligatorio per sessioni transcription
         input_audio_transcription: {
           model: 'gpt-realtime-whisper',
           language: this.language,
