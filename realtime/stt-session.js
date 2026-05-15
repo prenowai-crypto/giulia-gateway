@@ -2,15 +2,15 @@ import WebSocket from 'ws';
 
 // ─── STT SESSION (gpt-realtime-whisper) ──────────────────────────────────────
 // Sessione dedicata SOLO alla trascrizione audio.
+// Usa intent=transcription con transcription_session.update (schema diverso dalla conversational session).
 // Nessun output audio — nessun VAD duplex — nessun function calling.
-// Riceve PCMU 8kHz da Telnyx → emette transcript.delta ogni ~200ms durante il parlato.
 
 class STTSession {
   constructor(apiKey, opts = {}) {
-    this.apiKey    = apiKey;
-    this.ws        = null;
-    this.ready     = false;
-    this.language  = opts.language || 'it';
+    this.apiKey           = apiKey;
+    this.ws               = null;
+    this.ready            = false;
+    this.language         = opts.language || 'it';
     this.onDelta          = opts.onDelta          || (() => {});
     this.onCompleted      = opts.onCompleted      || (() => {});
     this.onSpeechStarted  = opts.onSpeechStarted  || (() => {});
@@ -20,16 +20,17 @@ class STTSession {
 
   async connect() {
     return new Promise((resolve, reject) => {
-      // Per le sessioni transcription, il modello NON va nell'URL
-      // ma viene specificato nella session config (transcription_session.update)
+      // NON includere il modello nell'URL per le sessioni transcription
       const url = 'wss://api.openai.com/v1/realtime?intent=transcription';
       this.ws = new WebSocket(url, {
-        headers: { 'Authorization': `Bearer ${this.apiKey}` },
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'OpenAI-Beta':   'realtime=v1',   // obbligatorio per le transcription session
+        },
       });
 
       this.ws.on('open', () => {
         console.log('🎙️  STT session connessa');
-        this._configureSession();
       });
 
       this.ws.on('message', (raw) => {
@@ -40,6 +41,8 @@ class STTSession {
           case 'transcription_session.created':
           case 'session.created':
             console.log(`📋 STT session: ${msg.session?.id || 'ok'}`);
+            // Configura SUBITO su session.created (non aspettare session.updated)
+            this._configureSession();
             break;
 
           case 'transcription_session.updated':
@@ -55,6 +58,10 @@ class STTSession {
             if (msg.delta) this.onDelta(msg.delta);
             break;
 
+          case 'conversation.item.input_audio_transcription.completed':
+            if (msg.transcript) this.onCompleted(msg.transcript);
+            break;
+
           case 'input_audio_buffer.speech_started':
             console.log('🎤 Parla...');
             this.onSpeechStarted();
@@ -62,10 +69,6 @@ class STTSession {
 
           case 'input_audio_buffer.speech_stopped':
             console.log('🎤 Fine (VAD)');
-            break;
-
-          case 'conversation.item.input_audio_transcription.completed':
-            if (msg.transcript) this.onCompleted(msg.transcript);
             break;
 
           case 'error':
@@ -94,7 +97,7 @@ class STTSession {
         this.onClose(code);
       });
 
-      // Timeout connessione: 10 secondi
+      // Timeout connessione
       setTimeout(() => {
         if (!this.ready) reject(new Error('STT session timeout'));
       }, 10000);
@@ -102,21 +105,29 @@ class STTSession {
   }
 
   _configureSession() {
-    // gpt-realtime-whisper: il modello è implicito nel type:'transcription'.
-    // Parametri supportati: type, turn_detection, noise_reduction.
-    // input_audio_transcription e input_audio_format NON sono supportati.
+    // Schema DIVERSO dalla conversational session:
+    // - usa transcription_session.update (NON session.update)
+    // - input_audio_format: 'g711_ulaw' (NON 'pcmu' — stesso codec, nome diverso)
+    // - input_audio_noise_reduction (NON noise_reduction)
+    // - NON supportati: instructions, voice, tools, output_modalities, conversation
     this._send({
-      type: 'session.update',
+      type: 'transcription_session.update',
       session: {
-        type: 'transcription',
+        input_audio_format: 'g711_ulaw',  // PCMU/G.711 μ-law di Telnyx
+        input_audio_transcription: {
+          model: 'gpt-realtime-whisper',
+          language: this.language,
+        },
+        input_audio_noise_reduction: {
+          type: 'far_field',              // filtra rumore linea PSTN
+        },
         turn_detection: {
           type: 'server_vad',
           threshold: 0.55,
           prefix_padding_ms: 500,
           silence_duration_ms: 1800,
-          create_response: false,
+          // NON includere create_response in transcription session
         },
-        noise_reduction: { type: 'far_field' },
       },
     });
   }
@@ -137,7 +148,5 @@ class STTSession {
     this.ws?.close();
   }
 }
-
-
 
 export { STTSession };
