@@ -1,68 +1,63 @@
 // ─── TURN MANAGER ─────────────────────────────────────────────────────────────
-// Gestisce il rilevamento del fine-turno via sliding timer su transcript.delta
-// Separato dall'OpenAIRealtimeClient per testabilità e debug isolato
+// Gestisce il rilevamento del fine-turno.
+//
+// Architettura corretta (da GPT):
+//   - delta  → SOLO interrupt detection (reset timer + interrompi TTS)
+//              NON usare come testo — le delta possono riscrivere parole precedenti
+//   - completed → transcript AUTORITATIVO → business logic
+//
+// Il sliding timer su delta serve solo a capire "l'utente sta ancora parlando".
+// Il testo reale viene da onCompleted.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const KNOWN_HALLUCINATIONS = [
-  'sottotitoli creati dalla comunità amara.org',
-  'sottotitoli e composizione',
-  'amara.org',
-  'grazie per aver visto il video',
-  'iscriviti al canale',
-  'metti mi piace',
-  'sottotitoli a cura di',
-  'sottotitolato da',
-  'transcript by',
-  'transcribed by',
-  'subtitles by',
-  'www.youtube.com',
-  'copyright',
-  'a nome della repubblica',
-  'anno medosi',
-];
 
 export class TurnManager {
   /**
-   * @param {object} opts
+   * @param {object}   opts
    * @param {number}   opts.slidingMs    Timeout sliding in ms (default 1800)
-   * @param {function} opts.onTurnReady  (transcript: string) => void  — turno finalizzato
-   * @param {function} opts.onInterrupt  ()                  => void  — interrompi TTS
+   * @param {function} opts.onTurnReady  (transcript: string) => void
+   * @param {function} opts.onInterrupt  () => void — interrompi TTS
    */
   constructor(opts = {}) {
-    this.slidingMs   = opts.slidingMs   || 1800;
-    this.onTurnReady = opts.onTurnReady || (() => {});
-    this.onInterrupt = opts.onInterrupt || (() => {});
+    this.slidingMs    = opts.slidingMs    || 1800;
+    this.onTurnReady  = opts.onTurnReady  || (() => {});
+    this.onInterrupt  = opts.onInterrupt  || (() => {});
 
     // Stato interno
-    this._transcript  = '';   // accumulo transcript corrente
-    this._timer       = null; // sliding timer handle
-    this._turnId      = 0;    // anti-race: incrementato a ogni nuovo turno
-    this._finalized   = false; // previene doppia esecuzione sullo stesso turno
+    this._timer        = null;    // sliding timer handle
+    this._speaking     = false;   // utente sta parlando (delta arrivano)
+    this._pendingText  = null;    // transcript completed in attesa del timer
+    this._turnId       = 0;       // anti-race
+    this._finalized    = false;   // previene doppia esecuzione
   }
 
-  // ── Chiamato da STTSession.onDelta ───────────────────────────────────────
-  onDelta(delta) {
-    // Nuovo delta = turno in corso → reset flag + interrompi TTS se attivo
+  // ── Chiamato su ogni transcription.delta ─────────────────────────────────
+  // NON accumula testo — serve solo per:
+  //   1. segnalare che l'utente sta parlando
+  //   2. interrompere TTS
+  //   3. resettare il sliding timer
+  onDelta(_delta) {
     this._finalized = false;
+    this._speaking  = true;
     this.onInterrupt();
-
-    this._transcript += delta;
     this._resetTimer();
   }
 
-  // ── Chiamato da STTSession.onCompleted ────────────────────────────────────
-  // Belt-and-suspenders: il timer gestisce già tutto, ma se completed arriva
-  // con transcript diverso dall'accumulato, lo usiamo come fonte autoritativa
+  // ── Chiamato su transcription.completed ──────────────────────────────────
+  // Questo è il transcript AUTORITATIVO.
+  // Lo salviamo e aspettiamo che il timer scada (silenzio reale).
   onCompleted(text) {
-    if (!this._transcript.trim() && text.trim()) {
-      this._transcript = text;
-    }
+    if (!text || text.trim().length < 2) return;
+    this._pendingText = text.trim();
+    this._speaking    = false;
+    // Resettiamo il timer: aspettiamo ancora un po' prima di finalizzare
+    // nel caso l'utente stia per riprendere a parlare
     this._resetTimer();
   }
 
-  // ── Chiamato da STTSession.onSpeechStarted ────────────────────────────────
+  // ── Chiamato su speech_started ───────────────────────────────────────────
   onSpeechStarted() {
     this._finalized = false;
+    this._speaking  = true;
     this.onInterrupt();
   }
 
@@ -75,49 +70,38 @@ export class TurnManager {
   // ── Finalizza il turno ────────────────────────────────────────────────────
   async _finalize() {
     if (this._finalized) return;
-    this._finalized = true;
 
-    const transcript = this._transcript.trim();
-    this._transcript = '';
+    // Usa il transcript completed come fonte autoritativa
+    const transcript = this._pendingText;
+    this._pendingText = null;
+    this._speaking    = false;
 
-    this._turnId++;
-    const myId = this._turnId;
-
-    // Filtro: transcript vuoto o troppo corto
     if (!transcript || transcript.length < 2) {
       this._finalized = false;
       return;
     }
 
-    // Filtro: allucinazioni Whisper note
-    const tLow = transcript.toLowerCase();
-    if (KNOWN_HALLUCINATIONS.some(h => tLow.includes(h))) {
-      console.log(`🛡️ [TurnManager] Hallucination filtrata: "${transcript.substring(0, 60)}"`);
-      this._finalized = false;
-      return;
-    }
+    this._finalized = true;
+    this._turnId++;
+    const myId = this._turnId;
 
-    // Anti-race: se nel frattempo è arrivato un altro turno, ignora
-    if (myId !== this._turnId) {
-      this._finalized = false;
-      return;
-    }
-
-    // Passa il transcript al client per l'elaborazione
     try {
       await this.onTurnReady(transcript);
     } catch (err) {
       console.error('❌ [TurnManager] onTurnReady error:', err);
     } finally {
-      // Reset flag: prossimo turno può procedere
-      this._finalized = false;
+      // Anti-race: se nel frattempo è arrivato un altro turno non resettare
+      if (myId === this._turnId) {
+        this._finalized = false;
+      }
     }
   }
 
-  // ── Reset completo (es. fine chiamata) ────────────────────────────────────
+  // ── Reset completo ────────────────────────────────────────────────────────
   reset() {
     clearTimeout(this._timer);
-    this._transcript = '';
-    this._finalized  = false;
+    this._pendingText = null;
+    this._speaking    = false;
+    this._finalized   = false;
   }
 }
