@@ -20,8 +20,9 @@ class STTSession {
 
   async connect() {
     return new Promise((resolve, reject) => {
-      // gpt-realtime-whisper: sessione transcription dedicata
-      const url = 'wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper&intent=transcription';
+      // Per le sessioni transcription, il modello NON va nell'URL
+      // ma viene specificato nella session config (transcription_session.update)
+      const url = 'wss://api.openai.com/v1/realtime?intent=transcription';
       this.ws = new WebSocket(url, {
         headers: { 'Authorization': `Bearer ${this.apiKey}` },
       });
