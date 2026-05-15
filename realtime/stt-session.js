@@ -25,7 +25,7 @@ class STTSession {
       this.ws = new WebSocket(url, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta':   'realtime=v1',   // obbligatorio per le transcription session
+          // NON usare OpenAI-Beta: realtime=v1 — gpt-realtime-whisper è GA only
         },
       });
 
