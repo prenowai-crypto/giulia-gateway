@@ -45,6 +45,7 @@ export class OpenAIRealtimeClient {
 
     // ── Turn management (delegato a TurnManager) ───────────────────────────
     this.turnManager = null;   // istanziato in connect()
+    // Nota: accumulazione transcript rimossa — TurnManager usa completed event
 
     // ── Stato business logic (invariato dal beta) ────────────────────────────
     this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
@@ -53,6 +54,9 @@ export class OpenAIRealtimeClient {
     this.existingRes   = null;
     this.availDone     = false;
     this.checkingSlot  = false;
+
+    // Dialog state: context-aware parsing
+    this._pendingQuestion = null; // 'date'|'time'|'people'|'name'|null
 
     // MODIFY / CANCEL state machine
     this.modifyState       = null;
@@ -170,38 +174,69 @@ export class OpenAIRealtimeClient {
 
 
   _extractFromTranscript(transcript) {
+    const pq = this._pendingQuestion;
+    const isShort = transcript.trim().split(/\s+/).length <= 3;
+
+    // Livello 1: estrazione opportunistica su tutti i campi
     const date   = DateManager.parseFromText(transcript);
     const time   = TimeManager.parseFromText(transcript);
     const people = PeopleManager.parseFromText(transcript);
-    const name   = this._extractName(transcript);
-    const intent = IntentDetector.detect(transcript);
 
-    // Aggiorna lingua se rilevata con sufficiente confidenza
+    // Livello 2: guided — nome usa fallback generico SOLO se pendingQuestion=name
+    let name;
+    if (pq === 'name') {
+      name = this._extractName(transcript);
+    } else {
+      name = this._extractNameExplicit(transcript);
+    }
+
+    // Penalizza campi non attesi su risposte brevi con contesto noto
+    const extracted = { date, time, people, name };
+    if (pq && isShort) {
+      console.log('\u{1F3AF} Guided extraction (short): pq=' + pq + ' "' + transcript + '"');
+      if (pq === 'people') {
+        extracted.name = null;
+        extracted.date = null;
+        extracted.time = null;
+      } else if (pq === 'time') {
+        extracted.name = null;
+      } else if (pq === 'date') {
+        extracted.name = null;
+      } else if (pq === 'name') {
+        extracted.date = null;
+        extracted.time = null;
+        extracted.people = null;
+      }
+    }
+
+    // Reset dopo ogni turno
+    this._pendingQuestion = null;
+
+    const intent = IntentDetector.detect(transcript);
     const detectedLang = this._detectLanguage(transcript);
     if (detectedLang !== 'it' && transcript.split(/\s+/).length >= 3) {
       this.language = detectedLang;
-      console.log(`🌐 Lingua rilevata: ${this.language}`);
+      console.log('\u{1F310} Lingua: ' + this.language);
     }
-
-    // Campi booleani dal testo
     const note_check    = /(?:hai|avete)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto)/i.test(transcript);
     const people_change = /\bcambiar[ei]\s+(?:il numero di\s+)?person[ae]\b/i.test(transcript);
     const unclear       = transcript.trim().split(/\s+/).length < 2;
 
     return {
-      date:              date    || 'null',
-      time:              time    || 'null',
-      people:            people  ? String(people) : 'null',
-      name:              name    || 'null',
+      date:              extracted.date   || 'null',
+      time:              extracted.time   || 'null',
+      people:            extracted.people ? String(extracted.people) : 'null',
+      name:              extracted.name   || 'null',
       intent,
       language:          this.language,
-      notes:             [],   // già gestite da _detectNotesAndPhone via this.data.notes
-      phone_alternative: null, // già gestita da _detectNotesAndPhone
+      notes:             [],
+      phone_alternative: null,
       note_check,
       people_change,
       unclear,
     };
   }
+
 
   // ── Rilevamento lingua semplice ────────────────────────────────────────────
   _detectLanguage(text) {
@@ -686,6 +721,7 @@ export class OpenAIRealtimeClient {
         this.foundReservation = null;
         this.checkingSlot = false;
         this.availDone = false;
+        this._pendingQuestion = null;
         console.log('🔄 Phase=done: nuovo intent create — reset e riparto');
         await this._processGPTData(args);
         return;
@@ -1998,6 +2034,8 @@ export class OpenAIRealtimeClient {
       people: 'Per quante persone?',
       name:   'A che nome faccio la prenotazione?',
     };
+    this._pendingQuestion = field;
+    console.log(`🎯 pendingQuestion: ${field}`);
     this._say(msgs[field] || 'Può ripetere?');
   }
 
@@ -2233,6 +2271,47 @@ export class OpenAIRealtimeClient {
   }
 
   // ── Name Extractor ────────────────────────────────────────────────────────
+
+  // ── Name Extractor (solo pattern espliciti) ──────────────────────────────
+  // Usato da _extractFromTranscript() — NO pattern generico fallback.
+  // Estrae nome solo quando c'è contesto esplicito (mi chiamo, a nome, ecc.)
+  // Evita falsi positivi come "due" → "Due" quando l'utente risponde al numero persone.
+  _extractNameExplicit(text) {
+    if (!text) return null;
+    const t = text.trim();
+
+    const explicitPatterns = [
+      // Italiano
+      /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      // Inglese
+      /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bi(?:'m|\s+am)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Francese
+      /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Spagnolo
+      /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+    ];
+
+    const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
+                      'nome','certo','quello','quella','giusto','pronto'];
+
+    for (const p of explicitPatterns) {
+      const match = t.match(p);
+      if (match && match[1] && match[1].length >= 2) {
+        const name = match[1].trim();
+        if (!excluded.includes(name.toLowerCase())) {
+          return name.replace(/\b\w/g, c => c.toUpperCase());
+        }
+      }
+    }
+    return null;
+  }
 
   _extractName(text) {
     if (!text) return null;
