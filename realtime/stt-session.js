@@ -1,96 +1,66 @@
 import WebSocket from 'ws';
 
-// ─── STT SESSION (gpt-realtime-whisper) ──────────────────────────────────────
-// Flow corretto GA transcription:
+// ─── STT SESSION ─────────────────────────────────────────────────────────────
+// Branch B: gpt-realtime-mini + whisper-1
+// (fallback finché gpt-realtime-whisper non disponibile sull'account)
 //
-//   STEP 1: POST /v1/realtime/transcription_sessions  → config + ephemeral token
-//   STEP 2: WebSocket intent=transcription con ephemeral token come Authorization
-//   STEP 3: append audio → ricevi transcript.delta
-//
-// NON usare session.update dopo la connessione — la sessione è già configurata.
-// NON usare OpenAI-Beta header — gpt-realtime-whisper è GA only.
+// Architettura:
+//   - delta  → interrupt detection only (NON usare come testo)
+//   - completed → transcript autoritativo → business logic
+//   - create_response: false → sessione input-only
+//   - cleanup conversation items dopo ogni completed
 // ─────────────────────────────────────────────────────────────────────────────
 
 class STTSession {
   constructor(apiKey, opts = {}) {
-    this.apiKey           = apiKey;
-    this.ws               = null;
-    this.ready            = false;
-    this.language         = opts.language || 'it';
-    this.onDelta          = opts.onDelta          || (() => {});
-    this.onCompleted      = opts.onCompleted      || (() => {});
-    this.onSpeechStarted  = opts.onSpeechStarted  || (() => {});
-    this.onError          = opts.onError          || console.error;
-    this.onClose          = opts.onClose          || (() => {});
+    this.apiKey          = apiKey;
+    this.ws              = null;
+    this.ready           = false;
+    this._resolved       = false;   // protezione doppio resolve
+    this._connectTimeout = null;    // per clearTimeout su connect
+    this.language        = opts.language || 'it';
+
+    this.onDelta         = opts.onDelta         || (() => {});   // solo interrupt hint
+    this.onCompleted     = opts.onCompleted     || (() => {});   // transcript autoritativo
+    this.onSpeechStarted = opts.onSpeechStarted || (() => {});
+    this.onError         = opts.onError         || console.error;
+    this.onClose         = opts.onClose         || (() => {});
   }
 
   async connect() {
-    // STEP 1: crea la sessione via REST e ottieni ephemeral token
-    const ephemeralToken = await this._createSession();
-
-    // STEP 2: connetti WebSocket con ephemeral token
-    return this._connectWebSocket(ephemeralToken);
-  }
-
-  async _createSession() {
-    console.log('🔑 Creazione STT session via REST...');
-
-    const response = await fetch(
-      'https://api.openai.com/v1/realtime/transcription_sessions',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          input_audio_format: 'g711_ulaw',
-          input_audio_transcription: {
-            model: 'gpt-realtime-whisper',
-            language: this.language,
-          },
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.55,
-            prefix_padding_ms: 500,
-            silence_duration_ms: 1800,
-          },
-          input_audio_noise_reduction: {
-            type: 'far_field',
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`STT session REST error ${response.status}: ${err}`);
-    }
-
-    const session = await response.json();
-    const token = session.client_secret?.value;
-
-    if (!token) {
-      throw new Error('STT session: client_secret.value mancante nella risposta REST');
-    }
-
-    console.log(`✅ STT session creata: ${session.id || 'ok'}`);
-    return token;
-  }
-
-  _connectWebSocket(ephemeralToken) {
     return new Promise((resolve, reject) => {
-      // STEP 2: WebSocket con ephemeral token, nessun OpenAI-Beta header
-      const url = 'wss://api.openai.com/v1/realtime?intent=transcription';
+      // Branch B: gpt-realtime-mini con whisper-1
+      const url = 'wss://api.openai.com/v1/realtime?model=gpt-realtime-mini';
       this.ws = new WebSocket(url, {
-        headers: {
-          'Authorization': `Bearer ${ephemeralToken}`,
-        },
+        headers: { 'Authorization': `Bearer ${this.apiKey}` },
       });
 
+      // Timeout connessione — cancellato su resolve/reject/close
+      this._connectTimeout = setTimeout(() => {
+        if (!this._resolved) {
+          this._resolved = true;
+          reject(new Error('STT session timeout'));
+        }
+      }, 10000);
+
+      const _resolve = () => {
+        if (!this._resolved) {
+          this._resolved = true;
+          clearTimeout(this._connectTimeout);
+          resolve();
+        }
+      };
+      const _reject = (err) => {
+        if (!this._resolved) {
+          this._resolved = true;
+          clearTimeout(this._connectTimeout);
+          reject(err);
+        }
+      };
+
       this.ws.on('open', () => {
-        console.log('🎙️  STT WebSocket connesso');
-        // STEP 3: nessun session.update — sessione già configurata via REST
+        console.log('🎙️  STT session connessa');
+        this._configureSession();
       });
 
       this.ws.on('message', (raw) => {
@@ -98,33 +68,39 @@ class STTSession {
         try { msg = JSON.parse(raw); } catch { return; }
 
         switch (msg.type) {
+
           case 'session.created':
-          case 'transcription_session.created':
             console.log(`📋 STT session: ${msg.session?.id || 'ok'}`);
-            // Sessione pronta — configurata via REST, non serve session.update
-            if (!this.ready) {
-              this.ready = true;
-              console.log('✅ STT session pronta');
-              resolve();
-            }
             break;
 
           case 'session.updated':
-          case 'transcription_session.updated':
             if (!this.ready) {
               this.ready = true;
-              console.log('✅ STT session pronta (updated)');
-              resolve();
+              console.log('✅ STT session pronta (gpt-realtime-mini + whisper-1)');
+              _resolve();
             }
             break;
 
           case 'conversation.item.input_audio_transcription.delta':
+            // Delta = SOLO interrupt hint, NON testo definitivo
             if (msg.delta) this.onDelta(msg.delta);
             break;
 
-          case 'conversation.item.input_audio_transcription.completed':
-            if (msg.transcript) this.onCompleted(msg.transcript);
+          case 'conversation.item.input_audio_transcription.completed': {
+            // Completed = transcript AUTORITATIVO → business logic
+            const transcript = msg.transcript?.trim();
+            if (transcript) {
+              this.onCompleted(transcript);
+              // Cleanup conversation item per evitare context/token growth
+              if (msg.item_id) {
+                this._send({
+                  type: 'conversation.item.delete',
+                  item_id: msg.item_id,
+                });
+              }
+            }
             break;
+          }
 
           case 'input_audio_buffer.speech_started':
             console.log('🎤 Parla...');
@@ -136,14 +112,14 @@ class STTSession {
             break;
 
           case 'error':
-            if (msg.error?.code !== 'session_expired') {
+            if (msg.error?.code !== 'response_cancel_not_active') {
               console.error('❌ STT error:', msg.error);
-              this.onError(msg.error);
+              try { this.onError(msg.error); } catch(e) { console.error('❌ onError callback:', e); }
             }
             break;
 
           default:
-            if (msg.type && !msg.type.includes('delta')) {
+            if (msg.type && !msg.type.includes('delta') && !msg.type.includes('audio')) {
               console.log(`🔍 STT event: ${msg.type}`);
             }
             break;
@@ -152,19 +128,46 @@ class STTSession {
 
       this.ws.on('error', (err) => {
         console.error('❌ STT WS error:', err.message);
-        reject(err);
+        _reject(err);
       });
 
       this.ws.on('close', (code) => {
         console.log(`🔴 STT disconnessa (${code})`);
+        clearTimeout(this._connectTimeout);
         this.ready = false;
         this.onClose(code);
       });
+    });
+  }
 
-      // Timeout connessione WebSocket
-      setTimeout(() => {
-        if (!this.ready) reject(new Error('STT WebSocket timeout'));
-      }, 10000);
+  _configureSession() {
+    // Branch B: session.update classico con gpt-realtime-mini + whisper-1
+    // create_response: false → sessione input-only, nessun audio output
+    this._send({
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        instructions: 'Transcription service only. Do not generate any response.',
+        tool_choice: 'none',
+        audio: {
+          input: {
+            format: { type: 'audio/pcmu' },
+            transcription: {
+              model: 'whisper-1',
+              language: this.language,
+            },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.55,
+              prefix_padding_ms: 500,
+              silence_duration_ms: 1800,
+              create_response: false,
+              interrupt_response: false,
+            },
+          },
+          // Nessun output audio — sessione input-only
+        },
+      },
     });
   }
 
@@ -181,6 +184,7 @@ class STTSession {
   }
 
   close() {
+    clearTimeout(this._connectTimeout);
     this.ws?.close();
   }
 }
