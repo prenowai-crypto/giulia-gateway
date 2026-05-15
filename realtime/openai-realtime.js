@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
-console.log('🟢 openai-realtime.js v7.GA-2026-05-14 caricato');
+console.log('🟢 openai-realtime.js v8.GA-2026-05-15 caricato');
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 
@@ -584,9 +584,9 @@ export class OpenAIRealtimeClient {
             transcription: { model: 'whisper-1', language: 'it' },
             turn_detection: {
               type: 'server_vad',
-              threshold: 0.5,
+              threshold: 0.4,            // PCMU: soglia più bassa, meno falsi positivi
               prefix_padding_ms: 300,
-              silence_duration_ms: 700,   // GA: 700ms consigliato per telefonia
+              silence_duration_ms: 1200, // PCMU: 1200ms necessario per audio telefonico
               create_response: false,
               interrupt_response: true,
             },
