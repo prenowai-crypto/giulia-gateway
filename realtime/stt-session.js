@@ -105,28 +105,26 @@ class STTSession {
   }
 
   _configureSession() {
-    // Schema DIVERSO dalla conversational session:
-    // - usa transcription_session.update (NON session.update)
-    // - input_audio_format: 'g711_ulaw' (NON 'pcmu' — stesso codec, nome diverso)
-    // - input_audio_noise_reduction (NON noise_reduction)
-    // - NON supportati: instructions, voice, tools, output_modalities, conversation
+    // GA API senza beta header:
+    // - usa session.update (NON transcription_session.update)
+    // - type: 'transcription' NON necessario (implicito da ?intent=transcription)
+    // - input_audio_format: 'g711_ulaw' (PCMU/G.711 μ-law di Telnyx)
     this._send({
-      type: 'transcription_session.update',
+      type: 'session.update',
       session: {
-        input_audio_format: 'g711_ulaw',  // PCMU/G.711 μ-law di Telnyx
+        input_audio_format: 'g711_ulaw',
         input_audio_transcription: {
           model: 'gpt-realtime-whisper',
           language: this.language,
         },
         input_audio_noise_reduction: {
-          type: 'far_field',              // filtra rumore linea PSTN
+          type: 'far_field',
         },
         turn_detection: {
           type: 'server_vad',
           threshold: 0.55,
           prefix_padding_ms: 500,
           silence_duration_ms: 1800,
-          // NON includere create_response in transcription session
         },
       },
     });
