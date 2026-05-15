@@ -18,7 +18,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
-console.log('🟢 openai-realtime.js v8.GA-2026-05-15 caricato');
+console.log('🟢 openai-realtime.js v10.GA-2026-05-15 caricato');
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 
@@ -522,6 +522,7 @@ export class OpenAIRealtimeClient {
     this._sessionReady = false;      // evita doppio greeting
     this._awaitingExtraction = false; // in attesa di JSON estrazione da GPT
     this._lastSpeechStoppedAt = 0;      // debounce GA speech_stopped
+    this._speechTimeoutId    = null;      // timeout VAD: se Fine non arriva entro 12s, forziamo commit
     this._responseInFlight = false;       // GA: previene response concorrenti
     this._processingModify = false;   // evita double MODIFY (doppio function call GPT)
 
@@ -683,8 +684,10 @@ export class OpenAIRealtimeClient {
         }
         break;
       case 'response.output_audio.done':
-        // Audio finito di generare → aggiorna il timestamp per il deaf period
-        this._lastSaidAt = Date.now();
+        // Audio finito di GENERARE (non di riprodurre su Telnyx)
+        // Aggiungiamo 800ms di buffer per compensare la latenza di riproduzione Telnyx
+        // Senza questo buffer, il VAD riceve ancora audio in uscita mentre l'utente inizia a parlare
+        setTimeout(() => { this._lastSaidAt = Date.now(); }, 800);
         break;
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
@@ -746,8 +749,20 @@ export class OpenAIRealtimeClient {
       case 'input_audio_buffer.speech_started':
         console.log('🎤 Parla...');
         this._speechStartedAt = Date.now();
+        // Timeout VAD: se speech_stopped non arriva entro 12s, forziamo commit
+        if (this._speechTimeoutId) clearTimeout(this._speechTimeoutId);
+        this._speechTimeoutId = setTimeout(() => {
+          this._speechTimeoutId = null;
+          if (!this._awaitingExtraction && !this.checkingSlot) {
+            console.log('⏰ VAD timeout 12s: speech_stopped non arrivato → forzo commit + estrazione');
+            this._send({ type: 'input_audio_buffer.commit' });
+            this._triggerExtraction();
+          }
+        }, 8000);
         break;
       case 'input_audio_buffer.speech_stopped': {
+        // Cancella il timeout VAD — Fine arrivato normalmente
+        if (this._speechTimeoutId) { clearTimeout(this._speechTimeoutId); this._speechTimeoutId = null; }
         const _sstNow = Date.now();
         // GA debounce: ignora speech_stopped se arriva entro 1200ms dal precedente
         if (_sstNow - this._lastSpeechStoppedAt < 1200) {
@@ -758,8 +773,8 @@ export class OpenAIRealtimeClient {
         console.log('🎤 Fine');
         // Deaf period: ignora speech_stopped per 1500ms dopo la fine dell'audio
         // Parte da response.audio.done (momento corretto) non da _say()
-        if (this._lastSaidAt && (Date.now() - this._lastSaidAt) < 1500) {
-          console.log(`🔇 speech_stopped ignorato (deaf period: ${Date.now() - this._lastSaidAt}ms < 1500ms)`);
+        if (this._lastSaidAt && (Date.now() - this._lastSaidAt) < 2500) {
+          console.log(`🔇 speech_stopped ignorato (deaf period: ${Date.now() - this._lastSaidAt}ms < 2500ms)`);
           break;
         }
         if (this.cancelState === 'awaiting_confirm' || this.modifyState === 'awaiting_smart_confirm') {
