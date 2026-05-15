@@ -103,21 +103,22 @@ class STTSession {
 
   _configureSession() {
     this._send({
-      type: 'transcription_session.update',
+      type: 'session.update',
       session: {
-        input_audio_format: 'pcmu',  // G.711 μ-law — Telnyx nativo
+        type: 'transcription',
+        input_audio_format: 'pcmu',
         input_audio_transcription: {
           model: 'gpt-realtime-whisper',
           language: this.language,
         },
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.55,            // telefonia: soglia più alta filtra comfort noise
+          threshold: 0.55,
           prefix_padding_ms: 500,
-          silence_duration_ms: 1800,  // 1800ms ottimale per telefonia italiana
-          create_response: false,     // NON creare response automatiche
+          silence_duration_ms: 1800,
+          create_response: false,
         },
-        noise_reduction: { type: 'far_field' },  // filtra rumore linea PSTN
+        noise_reduction: { type: 'far_field' },
       },
     });
   }
