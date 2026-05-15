@@ -1,9 +1,15 @@
 import WebSocket from 'ws';
 
 // ─── STT SESSION (gpt-realtime-whisper) ──────────────────────────────────────
-// Sessione dedicata SOLO alla trascrizione audio.
-// Usa intent=transcription con transcription_session.update (schema diverso dalla conversational session).
-// Nessun output audio — nessun VAD duplex — nessun function calling.
+// Flow corretto GA transcription:
+//
+//   STEP 1: POST /v1/realtime/transcription_sessions  → config + ephemeral token
+//   STEP 2: WebSocket intent=transcription con ephemeral token come Authorization
+//   STEP 3: append audio → ricevi transcript.delta
+//
+// NON usare session.update dopo la connessione — la sessione è già configurata.
+// NON usare OpenAI-Beta header — gpt-realtime-whisper è GA only.
+// ─────────────────────────────────────────────────────────────────────────────
 
 class STTSession {
   constructor(apiKey, opts = {}) {
@@ -19,18 +25,72 @@ class STTSession {
   }
 
   async connect() {
+    // STEP 1: crea la sessione via REST e ottieni ephemeral token
+    const ephemeralToken = await this._createSession();
+
+    // STEP 2: connetti WebSocket con ephemeral token
+    return this._connectWebSocket(ephemeralToken);
+  }
+
+  async _createSession() {
+    console.log('🔑 Creazione STT session via REST...');
+
+    const response = await fetch(
+      'https://api.openai.com/v1/realtime/transcription_sessions',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input_audio_format: 'g711_ulaw',
+          input_audio_transcription: {
+            model: 'gpt-realtime-whisper',
+            language: this.language,
+          },
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.55,
+            prefix_padding_ms: 500,
+            silence_duration_ms: 1800,
+          },
+          input_audio_noise_reduction: {
+            type: 'far_field',
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`STT session REST error ${response.status}: ${err}`);
+    }
+
+    const session = await response.json();
+    const token = session.client_secret?.value;
+
+    if (!token) {
+      throw new Error('STT session: client_secret.value mancante nella risposta REST');
+    }
+
+    console.log(`✅ STT session creata: ${session.id || 'ok'}`);
+    return token;
+  }
+
+  _connectWebSocket(ephemeralToken) {
     return new Promise((resolve, reject) => {
-      // NON includere il modello nell'URL per le sessioni transcription
+      // STEP 2: WebSocket con ephemeral token, nessun OpenAI-Beta header
       const url = 'wss://api.openai.com/v1/realtime?intent=transcription';
       this.ws = new WebSocket(url, {
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          // NON usare OpenAI-Beta: realtime=v1 — gpt-realtime-whisper è GA only
+          'Authorization': `Bearer ${ephemeralToken}`,
         },
       });
 
       this.ws.on('open', () => {
-        console.log('🎙️  STT session connessa');
+        console.log('🎙️  STT WebSocket connesso');
+        // STEP 3: nessun session.update — sessione già configurata via REST
       });
 
       this.ws.on('message', (raw) => {
@@ -38,18 +98,22 @@ class STTSession {
         try { msg = JSON.parse(raw); } catch { return; }
 
         switch (msg.type) {
-          case 'transcription_session.created':
           case 'session.created':
+          case 'transcription_session.created':
             console.log(`📋 STT session: ${msg.session?.id || 'ok'}`);
-            // Configura SUBITO su session.created (non aspettare session.updated)
-            this._configureSession();
-            break;
-
-          case 'transcription_session.updated':
-          case 'session.updated':
+            // Sessione pronta — configurata via REST, non serve session.update
             if (!this.ready) {
               this.ready = true;
               console.log('✅ STT session pronta');
+              resolve();
+            }
+            break;
+
+          case 'session.updated':
+          case 'transcription_session.updated':
+            if (!this.ready) {
+              this.ready = true;
+              console.log('✅ STT session pronta (updated)');
               resolve();
             }
             break;
@@ -97,36 +161,10 @@ class STTSession {
         this.onClose(code);
       });
 
-      // Timeout connessione
+      // Timeout connessione WebSocket
       setTimeout(() => {
-        if (!this.ready) reject(new Error('STT session timeout'));
+        if (!this.ready) reject(new Error('STT WebSocket timeout'));
       }, 10000);
-    });
-  }
-
-  _configureSession() {
-    // GA API senza beta header:
-    // - usa session.update (NON transcription_session.update)
-    // - type: 'transcription' NON necessario (implicito da ?intent=transcription)
-    // - input_audio_format: 'g711_ulaw' (PCMU/G.711 μ-law di Telnyx)
-    this._send({
-      type: 'session.update',
-      session: {
-        input_audio_format: 'g711_ulaw',
-        input_audio_transcription: {
-          model: 'gpt-realtime-whisper',
-          language: this.language,
-        },
-        input_audio_noise_reduction: {
-          type: 'far_field',
-        },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.55,
-          prefix_padding_ms: 500,
-          silence_duration_ms: 1800,
-        },
-      },
     });
   }
 
