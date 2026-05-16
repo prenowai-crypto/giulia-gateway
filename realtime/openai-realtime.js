@@ -190,7 +190,7 @@ export class OpenAIRealtimeClient {
 
     // Parsing locale + business logic
     this._detectNotesAndPhone(transcript);
-    const args = this._extractFromTranscript(transcript);
+    const args = await this._extractFromTranscript(transcript);
     await this._processExtraction(args).catch(err => console.error('❌ _processExtraction:', err));
   }
 
@@ -287,7 +287,7 @@ export class OpenAIRealtimeClient {
     return false;
   }
 
-  _extractFromTranscript(transcript) {
+  async _extractFromTranscript(transcript) {
     const pq = this._pendingQuestion;
     const isShort = transcript.trim().split(/\s+/).length <= 3;
 
