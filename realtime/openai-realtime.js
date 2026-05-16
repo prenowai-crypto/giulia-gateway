@@ -145,6 +145,7 @@ export class OpenAIRealtimeClient {
       return;
     }
 
+    if (this._isLowInformationTranscript(transcript)) return;
     console.log(`💬 [user]: ${transcript}`);
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
@@ -173,14 +174,52 @@ export class OpenAIRealtimeClient {
   }
 
 
+  // ── Filtro Whisper hallucination ─────────────────────────────────────────
+  // Whisper su audio corto/silenzioso "completa" con pattern frequenti nel
+  // training data (sottotitoli, watermark, ecc.). Questo filtro li scarta.
+  _isLowInformationTranscript(transcript) {
+    if (!transcript) return true;
+    const t = transcript.trim().toLowerCase();
+
+    // Pattern noti di Whisper hallucination su silenzio/rumore PSTN
+    const HALLUCINATION_PATTERNS = [
+      'amara.org', 'sottotitoli', 'subscri', 'grazie per aver guardato',
+      'iscriviti', 'metti mi piace', 'campana delle notifiche',
+      'all rights reserved', 'copyright', 'traduzione', 'sottotitolat',
+      'comunità amara', 'caption', 'transcript provided',
+    ];
+
+    for (const p of HALLUCINATION_PATTERNS) {
+      if (t.includes(p)) {
+        console.log(\`🚫 Hallucination filtrata: "\${transcript.substring(0, 60)}"\`);
+        return true;
+      }
+    }
+
+    // Testo troppo corto per avere significato reale (< 2 parole utili)
+    const words = t.replace(/[.,!?]/g, '').split(/\s+/).filter(w => w.length > 1);
+    if (words.length === 0) {
+      console.log('🚫 Transcript vuoto/minimo ignorato');
+      return true;
+    }
+
+    return false;
+  }
+
   _extractFromTranscript(transcript) {
     const pq = this._pendingQuestion;
     const isShort = transcript.trim().split(/\s+/).length <= 3;
 
+    // FIX 4: pre-normalizza orari ambigui prima di passare a PeopleManager
+    // "all'una" / "alle undici" / "all'una e mezza" contengono numeri che
+    // PeopleManager potrebbe catturare come pax. Li mascheramo temporaneamente.
+    const TIME_CLAIM_RE = /\b(?:all[ae]?|ore?)\s+(?:una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|mezzanotte|mezzogiorno|\d{1,2})(?:\s+e\s+(?:mezza|mezzo|un quarto|quarto))?/gi;
+    const transcriptForPeople = transcript.replace(TIME_CLAIM_RE, '__ORARIO__');
+
     // Livello 1: estrazione opportunistica su tutti i campi
     const date   = DateManager.parseFromText(transcript);
     const time   = TimeManager.parseFromText(transcript);
-    const people = PeopleManager.parseFromText(transcript);
+    const people = PeopleManager.parseFromText(transcriptForPeople);
 
     // Livello 2: guided — nome usa fallback generico se:
     //   - pendingQuestion='name' (bot ha chiesto il nome via _ask)
@@ -212,8 +251,13 @@ export class OpenAIRealtimeClient {
       }
     }
 
-    // Reset dopo ogni turno
-    this._pendingQuestion = null;
+    // FIX 3: _pendingQuestion persiste finché il campo non viene estratto con successo
+    // Non resettare qui — verrà resettato in _processExtraction quando il campo è acquisito
+    // oppure su topic switch / reset stato esplicito.
+    // Reset solo se la frase è lunga (probabile cambiamento argomento)
+    if (!pq || transcript.trim().split(/\s+/).length > 6) {
+      this._pendingQuestion = null;
+    }
 
     const intent = IntentDetector.detect(transcript);
     const detectedLang = this._detectLanguage(transcript);
@@ -2251,8 +2295,12 @@ export class OpenAIRealtimeClient {
       /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
     ];
 
+    // FIX 2: stopword italiane - mai accettare articoli/preposizioni come nome
     const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
-                      'nome','certo','quello','quella','giusto','pronto'];
+                      'nome','certo','quello','quella','giusto','pronto',
+                      'di','dei','del','della','delle','degli','da','dal',
+                      'a','al','alla','per','con','su','sul','sulla',
+                      'un','una','uno','il','lo','la','le','gli','i'];
 
     for (const p of explicitPatterns) {
       const match = t.match(p);
@@ -2269,8 +2317,12 @@ export class OpenAIRealtimeClient {
   _extractName(text) {
     if (!text) return null;
 
+    // FIX 2: stopword italiane - mai accettare articoli/preposizioni come nome
     const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
-                      'nome','certo','quello','quella','giusto','pronto'];
+                      'nome','certo','quello','quella','giusto','pronto',
+                      'di','dei','del','della','delle','degli','da','dal',
+                      'a','al','alla','per','con','su','sul','sulla',
+                      'un','una','uno','il','lo','la','le','gli','i'];
 
     // Pulizia: rimuovi congiunzioni inserite da Whisper tra "nome" e il nome vero
     // es. "Nome e Mirko" → "Nome Mirko", "Nome è Mirko" → "Nome Mirko"
