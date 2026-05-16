@@ -213,7 +213,7 @@ export class OpenAIRealtimeClient {
     // FIX 4: pre-normalizza orari ambigui prima di passare a PeopleManager
     // "all'una" / "alle undici" / "all'una e mezza" contengono numeri che
     // PeopleManager potrebbe catturare come pax. Li mascheramo temporaneamente.
-    const TIME_CLAIM_RE = /\b(?:all[ae]?|ore?)\s+(?:una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|mezzanotte|mezzogiorno|\d{1,2})(?:\s+e\s+(?:mezza|mezzo|un quarto|quarto))?/gi;
+    const TIME_CLAIM_RE = /\b(?:all[ae]?['']?|ore?)\s*['']?\s*(?:una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|mezzanotte|mezzogiorno|\d{1,2})(?:\s+e\s+(?:mezza|mezzo|un quarto|quarto))?/gi;
     const transcriptForPeople = transcript.replace(TIME_CLAIM_RE, '__ORARIO__');
 
     // Livello 1: estrazione opportunistica su tutti i campi
@@ -242,6 +242,7 @@ export class OpenAIRealtimeClient {
         extracted.time = null;
       } else if (pq === 'time') {
         extracted.name = null;
+        extracted.people = null; // non sovrascrivere pax già acquisiti
       } else if (pq === 'date') {
         extracted.name = null;
       } else if (pq === 'name') {
