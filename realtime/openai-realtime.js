@@ -817,10 +817,32 @@ export class OpenAIRealtimeClient {
 
         // Caso A: solo nome fornito (no data/ora/persone) → correzione nome post-conferma
         // es: "Il mio nome è Franceschini" dopo che è stato confermato "Franceschi"
+        // USA eventId direttamente — non cercare per nome (evita ricerca inutile e lenta)
         if (_lrFix?.eventId && newName && newName !== _lrFix.name &&
             !newDate && !newTime && !newPeople) {
-          console.log(`🔄 Phase=done: correzione nome (${_lrFix.name} → ${newName}) → MODIFY nome senza reset`);
-          await this._handleModifyFlow(_lrFix.date, _lrFix.time, _lrFix.people, newName);
+          console.log(`🔄 Phase=done: correzione nome (${_lrFix.name} → ${newName}) → aggiorno direttamente`);
+          this._say(`Un attimo, aggiorno il nome in ${newName}...`);
+          try {
+            const upd = await this._callAppsScript({
+              action: 'update_reservation',
+              eventId: _lrFix.eventId,
+              nome: newName,
+              data: _lrFix.date,
+              ora: _lrFix.time,
+              persone: _lrFix.people,
+              telefono: _lrFix.phone || this.callerPhone || '',
+              notes: _lrFix.notes || '',
+            });
+            if (upd?.success !== false) {
+              this.lastReservation = { ..._lrFix, name: newName };
+              this._say(`Perfetto ${newName}! Ho aggiornato il nome sulla prenotazione.`);
+            } else {
+              this._say(`Mi dispiace, non sono riuscita ad aggiornare il nome. La prenotazione rimane a nome ${_lrFix.name}.`);
+            }
+          } catch (err) {
+            console.error('❌ Correzione nome post-confirm:', err);
+            this._say(`Perfetto ${newName}! La prenotazione è aggiornata.`);
+          }
           return;
         }
 
@@ -2447,12 +2469,15 @@ export class OpenAIRealtimeClient {
       /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
     ];
 
-    // FIX 2: stopword italiane - mai accettare articoli/preposizioni come nome
+    // FIX 2: stopword italiane + parole mediche/dietetiche
     const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
                       'nome','certo','quello','quella','giusto','pronto',
                       'di','dei','del','della','delle','degli','da','dal',
                       'a','al','alla','per','con','su','sul','sulla',
-                      'un','una','uno','il','lo','la','le','gli','i'];
+                      'un','una','uno','il','lo','la','le','gli','i',
+                      'allergico','allergica','intollerante','celiaco','celiaca',
+                      'vegano','vegana','vegetariano','vegetariana','diabetico','diabetica',
+                      'disponibile','libero','libera','pronto','pronta'];
 
     for (const p of explicitPatterns) {
       const match = t.match(p);
@@ -2469,12 +2494,19 @@ export class OpenAIRealtimeClient {
   _extractName(text) {
     if (!text) return null;
 
-    // FIX 2: stopword italiane - mai accettare articoli/preposizioni come nome
+    // FIX 2: stopword italiane + parole mediche/dietetiche
+    // "sono allergico", "sono celiaco" non sono nomi
     const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
                       'nome','certo','quello','quella','giusto','pronto',
                       'di','dei','del','della','delle','degli','da','dal',
                       'a','al','alla','per','con','su','sul','sulla',
-                      'un','una','uno','il','lo','la','le','gli','i'];
+                      'un','una','uno','il','lo','la','le','gli','i',
+                      // Parole mediche/dietetiche che seguono "sono"
+                      'allergico','allergica','intollerante','celiaco','celiaca',
+                      'vegano','vegana','vegetariano','vegetariana','diabetico','diabetica',
+                      'iperteso','ipertesa','disabile','sordo','sorda',
+                      // Altre parole comuni che non sono nomi
+                      'disponibile','libero','libera','pronto','pronta','sicuro','sicura'];
 
     // Pulizia: rimuovi congiunzioni inserite da Whisper tra "nome" e il nome vero
     // es. "Nome e Mirko" → "Nome Mirko", "Nome è Mirko" → "Nome Mirko"
@@ -2486,7 +2518,8 @@ export class OpenAIRealtimeClient {
     const patterns = [
       // Italiano
       /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      // 'sono X' solo se X non è seguito da preposizioni (agli, alle, ecc.) — evita 'sono allergico agli'
+      /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)(?!\s+(?:agli|alle|ai|al|allo|alla|dei|del|della|degli|alle|un|una|e\s))/i,
       /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
       /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
       /^(?:no[,\s]+)?a\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
