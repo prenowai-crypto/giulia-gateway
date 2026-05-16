@@ -191,7 +191,7 @@ export class OpenAIRealtimeClient {
 
     for (const p of HALLUCINATION_PATTERNS) {
       if (t.includes(p)) {
-        console.log(\`🚫 Hallucination filtrata: "\${transcript.substring(0, 60)}"\`);
+        console.log('🚫 Hallucination filtrata: "' + transcript.substring(0, 60) + '"');
         return true;
       }
     }
