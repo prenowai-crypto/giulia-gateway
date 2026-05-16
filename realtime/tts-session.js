@@ -111,7 +111,7 @@ class TTSSession {
       type: 'session.update',
       session: {
         type: 'realtime',
-        instructions: 'You are a TTS reader. Say EXACTLY the text provided, nothing more.',
+        instructions: 'You are a voice output system. Your ONLY job is to vocalize the exact text given in instructions. NEVER add preambles, acknowledgments, or any words not in the given text. Do NOT say things like "Certainly", "Sure", "Ecco", "Certo" or similar. Say ONLY and EXACTLY what is in the instruction.',
         tool_choice: 'none',
         audio: {
           output: {
@@ -131,8 +131,8 @@ class TTSSession {
     // Il testo va SOLO nelle instructions, non nell'input (evita rielaborazione)
     const isIt = !lang || lang === 'it';
     const instruction = isIt
-      ? `Leggi ad alta voce ESATTAMENTE questo testo, parola per parola, senza cambiare nulla: ${text}`
-      : `Read aloud EXACTLY this text, word for word, do not change anything: ${text}`;
+      ? `PRONUNCIA SOLO QUESTE PAROLE ESATTE, senza aggiungere nulla prima o dopo. NON dire "certo", "ecco", "certamente" o simili. SOLO questo testo: ${text}`
+      : `SPEAK ONLY THESE EXACT WORDS, add nothing before or after. Do NOT say "certainly", "sure", "of course" or similar. ONLY this text: ${text}`;
 
     this._send({
       type: 'response.create',
