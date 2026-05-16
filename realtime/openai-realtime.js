@@ -722,7 +722,7 @@ export class OpenAIRealtimeClient {
           const _notesCtxN = _lrN?.notes ? `Note salvate sulla prenotazione: "${_lrN.notes}".` : '';
           // Risposta deterministica: conferma note salvate
           const _noteAnswer = _notesCtxN
-            ? `Sì, ho annotato: ${_lrN.notes}.`
+            ? `Sì, ho annotato: ${this._notesForClient(_lrN.notes)}.`
             : 'Non risultano note salvate sulla sua prenotazione.';
           this._say(_noteAnswer);
         }
@@ -852,7 +852,7 @@ export class OpenAIRealtimeClient {
           if (_postBookingInfo) {
             this._say(_postBookingInfo);
           } else if (this._noteCheck && this.lastReservation?.notes) {
-            this._say(`Sì, ho annotato: ${this.lastReservation.notes}.`);
+            this._say(`Sì, ho annotato: ${this._notesForClient(this.lastReservation.notes)}.`);
           } else {
             this._say('C\'è altro che posso fare per lei?');
           }
@@ -979,13 +979,23 @@ export class OpenAIRealtimeClient {
       if (_postOpInfo) {
         this._say(_postOpInfo);
       } else if (this.lastReservation?.notes && /nota|segnato|annotato|allergi/i.test(this.lastTranscript || '')) {
-        this._say(`Sì, ho annotato: ${this.lastReservation.notes}.`);
+        this._say(`Sì, ho annotato: ${this._notesForClient(this.lastReservation.notes)}.`);
       } else {
         this._say('C\'è altro che posso fare per lei?');
       }
     }
 
     // ── Intent ───────────────────────────────────────────────────────────────
+    // Override locale: frasi implicite di cancellazione che GPT classifica come modify
+    // "non riusciamo più a venire", "non possiamo venire", "devo cancellare"
+    const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)/i;
+    if (this.lastTranscript && _impliedCancelPat.test(this.lastTranscript)) {
+      if (args.intent !== 'cancel') {
+        console.log(`🎯 Intent override: ${args.intent} → cancel (frase implicita cancellazione)`);
+        args.intent = 'cancel';
+      }
+    }
+
     if (!this.intent && args.intent && args.intent !== 'unknown') {
       this.intent = args.intent;
       console.log(`🎯 Intent (GPT): ${this.intent}`);
@@ -1955,6 +1965,16 @@ export class OpenAIRealtimeClient {
    * Mostra cosa cambia, risponde alle domande sulle note esistenti,
    * annuncia note nuove e chiede conferma in un unico messaggio.
    */
+  // ── Helper: filtra note interne (tra parentesi) prima di leggerle al cliente ─
+  _notesForClient(notesStr) {
+    if (!notesStr) return '';
+    return notesStr
+      .split(';')
+      .map(n => n.replace(/\s*\([^)]*\)/g, '').trim())
+      .filter(n => n.length > 0)
+      .join('; ');
+  }
+
   _buildSmartModifyMsg(r, updDate, updTime, updPeople, noteCheck, newNotesStr) {
     const dateDisplay = DateManager.formatForDisplay(updDate);
     const timeDisplay = TimeManager.formatForDisplay(updTime);
@@ -1964,7 +1984,7 @@ export class OpenAIRealtimeClient {
 
     // Risponde alla domanda "avete ancora la nota X?"
     if (noteCheck && r.notes) {
-      msg += ` Sì, ho ancora annotato: ${r.notes}.`;
+      msg += ` Sì, ho ancora annotato: ${this._notesForClient(r.notes)}.`;
     }
 
     // Anuncia note nuove aggiunte
