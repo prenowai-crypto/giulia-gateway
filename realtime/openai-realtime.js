@@ -78,6 +78,9 @@ export class OpenAIRealtimeClient {
     // true quando l'utente ha parlato sopra il bot — invalida la domanda corrente
     this.interrupted = false;
 
+    // GPT name fallback cache — evita doppie inferenze su stesso transcript
+    this._gptNameCache = new Map();
+
     // Lingua
     this.language = 'it';
 
@@ -307,15 +310,30 @@ export class OpenAIRealtimeClient {
     const time   = TimeManager.parseFromText(normalizedTranscript);
     const people = PeopleManager.parseFromText(transcriptForPeople);
 
-    // Livello 2: guided — nome usa fallback generico se:
-    //   - pendingQuestion='name' (bot ha chiesto il nome via _ask)
-    //   - phase='naming' (safety net: slot ok, sistema in attesa nome)
-    // Altrimenti solo pattern espliciti per evitare "due"→"Due" ecc.
+    // Livello 2: nome a 4 livelli di confidenza
+    // L1 NAMING (pq=name o phase=naming)  → _extractName completo con fallback
+    // L2 Frase breve (≤4 parole)          → _extractNameExplicit
+    // L3 Frase lunga, pattern espliciti   → _extractNameSafe (no "sono X")
+    // L4 Frase lunga, ambigua, no nota    → _extractNameWithGPT (async, 2s timeout)
     let name;
+    const _wordCount = transcript.trim().split(/\s+/).length;
     if (pq === 'name' || this.phase === 'naming') {
       name = this._extractName(transcript);
-    } else {
+    } else if (_wordCount <= 4) {
       name = this._extractNameExplicit(transcript);
+    } else {
+      // L3: pattern safe (mi chiamo, a nome, ecc.)
+      name = this._extractNameSafe(transcript);
+
+      // L4: GPT fallback — solo se safe non trova nulla, nome non già noto,
+      // e il transcript non contiene parole chiave note/allergie
+      if (!name && !this.data.name) {
+        const _hasNoteKw = /(allerg|intoller|vegano|vegetar|seggiolone|carrozzina|celiaco|disabile)/i.test(transcript);
+        if (!_hasNoteKw) {
+          // Chiamata async — wrappata per non bloccare se GPT è lento
+          name = await this._extractNameWithGPT(transcript).catch(() => null);
+        }
+      }
     }
 
     // Penalizza campi non attesi su risposte brevi con contesto noto
@@ -2447,6 +2465,117 @@ export class OpenAIRealtimeClient {
   // Usato da _extractFromTranscript() — NO pattern generico fallback.
   // Estrae nome solo quando c'è contesto esplicito (mi chiamo, a nome, ecc.)
   // Evita falsi positivi come "due" → "Due" quando l'utente risponde al numero persone.
+  // ── Name Extractor SAFE — solo frasi lunghe fuori naming ───────────────────
+  // Usa SOLO pattern inequivocabili: "mi chiamo X", "a nome X", "prenoto a nome X"
+  // ESCLUSO: "sono X" (troppo ambiguo — "sono allergico agli arachidi")
+  // ESCLUSO: pattern generico fallback (cattura qualsiasi parola sola)
+  // ── GPT name fallback — solo per casi semanticamente ambigui ────────────────
+  // Chiamato SOLO quando: frase lunga, fuori naming, parser locale = null
+  // Costo: ~pochi centesimi/mese su 1200 chiamate. Latenza: 250-700ms (OK su completed)
+  async _extractNameWithGPT(transcript) {
+    // Cache anti-repeat
+    const cacheKey = transcript.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (this._gptNameCache.has(cacheKey)) {
+      return this._gptNameCache.get(cacheKey);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0,
+          max_tokens: 10,
+          messages: [
+            {
+              role: 'system',
+              content:
+                "Estrai SOLO il nome della prenotazione dal testo. " +
+                "Se NON c'è chiaramente un nome della persona, rispondi SOLO con NULL. " +
+                "NON estrarre allergie, descrizioni, aggettivi, note o richieste. " +
+                "Rispondi con una sola parola o cognome, oppure NULL."
+            },
+            {
+              role: 'user',
+              content: transcript
+            }
+          ]
+        })
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) { this._gptNameCache.set(cacheKey, null); return null; }
+
+      const data = await response.json();
+      const text = data?.choices?.[0]?.message?.content?.trim();
+
+      if (!text || text.toUpperCase() === 'NULL') {
+        this._gptNameCache.set(cacheKey, null);
+        return null;
+      }
+
+      // Pulizia: solo lettere, spazi, apostrofi, trattini
+      const cleaned = text.replace(/[^\p{L}\s''-]/gu, '').trim();
+      if (!cleaned || cleaned.split(/\s+/).length > 3) {
+        this._gptNameCache.set(cacheKey, null);
+        return null;
+      }
+
+      const result = cleaned.replace(/\b\w/g, c => c.toUpperCase());
+      console.log(`🤖 GPT name fallback: "${transcript.substring(0,40)}..." → ${result}`);
+      this._gptNameCache.set(cacheKey, result);
+      return result;
+
+    } catch (err) {
+      clearTimeout(timeout);
+      return null;
+    }
+  }
+
+  _extractNameSafe(text) {
+    if (!text) return null;
+    const t = text.trim();
+
+    const safePatterns = [
+      /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      /\bil\s+(?:mio\s+)?nome\s+è\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bprenoto\s+a\s+nome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      /\bprenotaz(?:ione)?\s+a\s+nome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Inglese
+      /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Francese
+      /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+      /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
+      // Spagnolo
+      /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
+    ];
+
+    const excluded = ['si','no','ok','allergico','allergica','intollerante','celiaco',
+                      'vegano','vegetariano','disponibile','libero','pronto'];
+
+    for (const p of safePatterns) {
+      const match = t.match(p);
+      if (match && match[1] && match[1].length >= 2) {
+        const name = match[1].trim();
+        if (!excluded.includes(name.toLowerCase())) {
+          return name.replace(/\b\w/g, c => c.toUpperCase());
+        }
+      }
+    }
+    return null;
+  }
+
   _extractNameExplicit(text) {
     if (!text) return null;
     const t = text.trim();
