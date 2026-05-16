@@ -2414,7 +2414,15 @@ export class OpenAIRealtimeClient {
     const _willBePending = people > _largeThresh;
 
     // Fix: includi note nel messaggio di conferma se presenti
-    const _notesConfirmStr = this.data.notes ? ` Ho annotato: ${this.data.notes}.` : '';
+    // Filtra le note interne (tra parentesi) che non vanno lette al cliente
+    const _notesForClient = this.data.notes
+      ? this.data.notes
+          .split(';')
+          .map(n => n.trim())
+          .filter(n => !n.match(/^\(.*\)$/))  // rimuove note tipo "(verifica con cliente)"
+          .join('; ')
+      : '';
+    const _notesConfirmStr = _notesForClient ? ` Ho annotato: ${_notesForClient}.` : '';
 
     if (_willBePending) {
       const _callerNum = this.callerPhone ? ` Ti contatteremo al numero da cui stai chiamando.` : '';
