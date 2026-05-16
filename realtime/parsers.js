@@ -193,7 +193,7 @@ export const TimeManager = {
     // "alle venti e trenta" / "alle otto e mezza"
     const allHourWords = Object.keys(numberMap).join('|');
     const patternWords = new RegExp(
-      `(?:alle|ore|per le)\\s+(${allHourWords})(?:\\s+e\\s+(mezza|mezzo|un quarto|trenta|quindici|quaranta|quarantacinque|venti|dieci|cinque))?`,
+      `(?:alle|all['']|l['']|ore|per le)\\s*(${allHourWords})(?:\\s+e\\s+(mezza|mezzo|un quarto|trenta|quindici|quaranta|quarantacinque|venti|dieci|cinque))?`,
       'gi'
     );
     while ((match = patternWords.exec(t)) !== null) {
@@ -209,7 +209,7 @@ export const TimeManager = {
     }
 
     // "alle 21" / "alla 21" / "alle 21.30" / "alle 21:30"
-    const pattern1 = /(?:alle|alla|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
+    const pattern1 = /(?:alle|all['']|alla|l['']|ore|per le)\s*(\d{1,2})(?:[.:](\d{2}))?/gi;
     while ((match = pattern1.exec(t)) !== null) {
       let hour = parseInt(match[1]);
       const minutes = match[2] ? parseInt(match[2]) : 0;
@@ -463,5 +463,3 @@ export const ValidationPipeline = {
     return h * 60 + (m||0);
   },
 };
-
-
