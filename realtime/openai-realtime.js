@@ -58,6 +58,11 @@ export class OpenAIRealtimeClient {
     // Dialog state: context-aware parsing
     this._pendingQuestion = null; // 'date'|'time'|'people'|'name'|null
 
+    // STEP 1: conversationLocked separato da phase=done (GPT suggestion)
+    // phase=done = "esiste una prenotazione" — NON = "hard stop globale"
+    // conversationLocked = true solo quando la conversazione è davvero chiusa
+    this.conversationLocked = false;
+
     // MODIFY / CANCEL state machine
     this.modifyState       = null;
     this.cancelState       = null;
@@ -68,6 +73,10 @@ export class OpenAIRealtimeClient {
     // Anti-loop flags
     this._sessionReady     = false;
     this._processingModify = false;
+
+    // STEP 6: Interrupt safety
+    // true quando l'utente ha parlato sopra il bot — invalida la domanda corrente
+    this.interrupted = false;
 
     // Lingua
     this.language = 'it';
@@ -89,11 +98,16 @@ export class OpenAIRealtimeClient {
     // ── TurnManager: sliding timer + filtri ──────────────────────────────
     this.turnManager = new TurnManager({
       slidingMs:   1800,
-      onTurnReady: (transcript) => this._onTurnReady(transcript),
+      onTurnReady:  (transcript) => this._onTurnReady(transcript),
       onInterrupt: () => {
+        // STEP 6: utente parla sopra il bot — cancella TTS e setta flag interrupted
         if (this._ttsPlaying) {
           this.ttsSession?.cancel();
           this._ttsPlaying = false;
+        }
+        if (!this.interrupted) {
+          this.interrupted = true;
+          console.log('🛑 Interrupt: utente parla sopra bot');
         }
       },
     });
@@ -146,6 +160,10 @@ export class OpenAIRealtimeClient {
     }
 
     if (this._isLowInformationTranscript(transcript)) return;
+
+    // STEP 6: reset interrupted — il turno è completato, l'utente ha finito di parlare
+    this.interrupted = false;
+
     console.log(`💬 [user]: ${transcript}`);
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
@@ -177,6 +195,66 @@ export class OpenAIRealtimeClient {
   // ── Filtro Whisper hallucination ─────────────────────────────────────────
   // Whisper su audio corto/silenzioso "completa" con pattern frequenti nel
   // training data (sottotitoli, watermark, ecc.). Questo filtro li scarta.
+  // ── _applyExtraction() — mutazione stato centralizzata (STEP 5) ──────────────
+  // Unico punto dove this.data viene aggiornato dai campi estratti.
+  // NON mutare this.data altrove per i campi principali — passa sempre di qui.
+  // Ritorna oggetto con i campi effettivamente cambiati per il logging.
+  _applyExtraction(extracted) {
+    const changed = {};
+    const rc = this.restaurantConfig;
+
+    // Date
+    if (extracted.date && extracted.date !== 'null' && extracted.date !== this.data.date) {
+      changed.date = { from: this.data.date, to: extracted.date };
+      this.data.date = extracted.date;
+      if (this._pendingQuestion === 'date') this._pendingQuestion = null;
+    }
+
+    // Time
+    if (extracted.time && extracted.time !== 'null' && extracted.time !== this.data.time) {
+      changed.time = { from: this.data.time, to: extracted.time };
+      this.data.time = extracted.time;
+      if (this._pendingQuestion === 'time') this._pendingQuestion = null;
+    }
+
+    // People — con lock anti-overwrite
+    if (extracted.people && extracted.people !== 'null') {
+      const newP = parseInt(extracted.people, 10);
+      if (newP !== this.data.people) {
+        const transcriptPeople = this.lastTranscript ? PeopleManager.parseFromText(this.lastTranscript) : null;
+        if (transcriptPeople === null && this.data.people !== null) {
+          console.log(`🔒 People locked (${this.data.people}): transcript senza numeri espliciti`);
+        } else {
+          changed.people = { from: this.data.people, to: newP };
+          this.data.people = newP;
+          if (this._pendingQuestion === 'people') this._pendingQuestion = null;
+        }
+      }
+    }
+
+    // Name — con protezione anti-overwrite involontario
+    if (extracted.name && extracted.name !== 'null') {
+      if (!this.data.name) {
+        changed.name = { from: null, to: extracted.name };
+        this.data.name = extracted.name;
+        if (this._pendingQuestion === 'name') this._pendingQuestion = null;
+      } else if (extracted.name !== this.data.name && this.lastTranscript &&
+                 /\bmi chiamo\b|\bsono\b|\bil mio nome\b|\bno.*mi chiamo\b|\ba nome\b|\bchiamati\b/i.test(this.lastTranscript)) {
+        changed.name = { from: this.data.name, to: extracted.name };
+        this.data.name = extracted.name;
+        if (this._pendingQuestion === 'name') this._pendingQuestion = null;
+      }
+    }
+
+    // Log campi cambiati
+    for (const [field, val] of Object.entries(changed)) {
+      const icons = { date: '📅', time: '⏰', people: '👥', name: '👤' };
+      console.log(`${icons[field] || '•'} ${field}: ${val.from ?? 'null'} → ${val.to}`);
+    }
+
+    return changed;
+  }
+
   _isLowInformationTranscript(transcript) {
     if (!transcript) return true;
     const t = transcript.trim().toLowerCase();
@@ -260,13 +338,19 @@ export class OpenAIRealtimeClient {
       }
     }
 
-    // FIX 3: _pendingQuestion persiste finché il campo non viene estratto con successo
-    // Non resettare qui — verrà resettato in _processExtraction quando il campo è acquisito
-    // oppure su topic switch / reset stato esplicito.
-    // Reset solo se la frase è lunga (probabile cambiamento argomento)
-    if (!pq || transcript.trim().split(/\s+/).length > 6) {
+    // STEP 6: se l'utente ha interrotto il bot, considera reset _pendingQuestion
+    // solo se l'interrupt era significativo (bot stava parlando da > 500ms)
+    // Per ora: mantieni il contesto — l'interrupt potrebbe essere rumore PSTN
+
+    // STEP 3: _pendingQuestion persiste fino a slot acquisito o intent switch esplicito
+    // GPT: la lunghezza della frase NON è indicatore di topic switch
+    // es: "sì guardi siamo in quattro perché arriva anche mia moglie" > 6 parole ma è ancora people
+    // Reset solo se non c'era nessun contesto attivo
+    if (!pq) {
       this._pendingQuestion = null;
     }
+    // Se c'era un contesto attivo (_pendingQuestion settato), lo manteniamo
+    // Verrà resettato quando il campo viene acquisito con successo (in _processExtraction)
 
     const intent = IntentDetector.detect(transcript);
     const detectedLang = this._detectLanguage(transcript);
@@ -727,9 +811,21 @@ export class OpenAIRealtimeClient {
           }
         }
 
-        // Fix: se l'unica differenza con lastReservation è il nome → MODIFY del nome, non nuova prenotazione
-        // Caso: "Mi chiamo Russo, non Rossi" → GPT estrae create+nome corretto+stessi dati
+        // STEP 2: Post-confirm correction patching (GPT suggestion)
+        // NON resettare mai per una correzione — è un "state patch"
         const _lrFix = this.lastReservation;
+
+        // Caso A: solo nome fornito (no data/ora/persone) → correzione nome post-conferma
+        // es: "Il mio nome è Franceschini" dopo che è stato confermato "Franceschi"
+        if (_lrFix?.eventId && newName && newName !== _lrFix.name &&
+            !newDate && !newTime && !newPeople) {
+          console.log(`🔄 Phase=done: correzione nome (${_lrFix.name} → ${newName}) → MODIFY nome senza reset`);
+          await this._handleModifyFlow(_lrFix.date, _lrFix.time, _lrFix.people, newName);
+          return;
+        }
+
+        // Caso B: stessi dati ma nome diverso → MODIFY nome
+        // es: "Mi chiamo Russo, non Rossi" con tutti i dati presenti
         if (_lrFix?.eventId && newName && newName !== _lrFix.name &&
             newDate === _lrFix.date && newTime === _lrFix.time &&
             String(newPeople) === String(_lrFix.people)) {
@@ -999,31 +1095,13 @@ export class OpenAIRealtimeClient {
       return;
     }
 
-    if (newDate   && newDate   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${newDate}`);     this.data.date   = newDate; }
-    if (newTime   && newTime   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${newTime}`);     this.data.time   = newTime; }
-    if (newPeople && newPeople !== this.data.people) {
-      // 🔒 Lock: se il transcript corrente non contiene un numero esplicito di persone
-      // e people è già stato validato, non sovrascrivere con il valore GPT.
-      // Evita che al 2° GPT call (es: user dice "Ferrari.") GPT ri-estragga people
-      // dal contesto della conversazione e sovrascriva il valore già corretto.
-      const transcriptPeople = this.lastTranscript ? PeopleManager.parseFromText(this.lastTranscript) : null;
-      if (transcriptPeople === null && this.data.people !== null) {
-        console.log(`🔒 People locked (${this.data.people}): transcript senza numeri, ignoro GPT=${newPeople}`);
-      } else {
-        console.log(`👥 people: ${this.data.people} → ${newPeople}`);
-        this.data.people = newPeople;
-      }
-    }
-    if (newName) {
-      if (!this.data.name) {
-        console.log(`👤 name:   ${newName}`);
-        this.data.name = newName;
-      } else if (newName !== this.data.name && this.lastTranscript &&
-                 /\bmi chiamo\b|\bsono\b|\bil mio nome\b|\bno.*mi chiamo\b|\bfai a nome\b|\ba nome\b/i.test(this.lastTranscript)) {
-        console.log(`👤 name update (correzione): ${this.data.name} → ${newName}`);
-        this.data.name = newName;
-      }
-    }
+    // STEP 5: usa _applyExtraction() come unico punto di mutazione stato
+    this._applyExtraction({
+      date:   newDate,
+      time:   newTime,
+      people: newPeople ? String(newPeople) : null,
+      name:   newName,
+    });
 
     console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people} name=${this.data.name}`);
 
@@ -1223,8 +1301,9 @@ export class OpenAIRealtimeClient {
       return;
     }
 
-    // Dopo phase=done, la logica è gestita da _processExtraction (via extraction)
-    if (this.phase === 'done') return;
+    // STEP 1: usa conversationLocked invece di phase=done come hard stop
+    // phase=done = "prenotazione esiste", conversationLocked = "conversazione chiusa"
+    if (this.conversationLocked) return;
 
     // Rileva note e telefono alternativo su ogni messaggio
     this._detectNotesAndPhone(text);
