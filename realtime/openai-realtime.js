@@ -1493,35 +1493,97 @@ export class OpenAIRealtimeClient {
 
   // ── MODIFY flow ───────────────────────────────────────────────────────────
 
-  // Helper: ricerca a 3 stadi (nome+data → solo nome → solo telefono)
-  // Valida che il risultato abbia almeno date e name non null
+  // Helper: ricerca a 4 stadi con priorità sicura (STEP 4 anti-regressione)
+  //
+  // Logica:
+  //   Stadio 1: nome + data      → se confidence >= 0.9 → ritorna subito
+  //                              → se fuzzy incerto → salva come candidato, continua
+  //   Stadio 2: solo nome        → idem
+  //   Stadio 3: telefono         → PRIORITY: se trovato, usa SEMPRE (batte fuzzy incerto)
+  //   Stadio 4: solo se tel fail → usa miglior fuzzy candidato raccolto (chiede conferma)
+  //
+  // Ritorna:
+  //   - reservation object                             → match certo, procedi
+  //   - { fuzzyCandidate, requiresConfirmation: true } → chiedi conferma
+  //   - null                                           → non trovato
   async _findReservationWithFallback(searchName, searchDate, logPrefix) {
     const phone = this.callerPhone || '';
-
     const isValid = (r) => r && r.date && r.name && r.date !== 'null' && r.name !== 'null';
+
+    let bestFuzzyCandidate = null; // miglior fuzzy incerto raccolto durante la ricerca
 
     // Stadio 1: nome + data
     if (searchName && searchDate) {
       console.log(`🔍 ${logPrefix} cerca: nome=${searchName}, data=${searchDate}`);
       const r1 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, data: searchDate, sheet: 'Prenotazioni' });
-      if (r1?.found && isValid(r1.reservation)) return r1.reservation;
+      if (r1?.found && isValid(r1.reservation)) {
+        const res = r1.reservation;
+        if (!res.requiresConfirmation) return res; // match esatto → procedi subito
+        // Fuzzy incerto → salva e continua verso telefono
+        console.log(`🔍 Fuzzy candidato (${res.fuzzyConfidence?.toFixed(2)}): ${res.name} — cerco telefono prima`);
+        if (!bestFuzzyCandidate || res.fuzzyConfidence > bestFuzzyCandidate.fuzzyConfidence) {
+          bestFuzzyCandidate = res;
+        }
+      }
     }
 
-    // Stadio 2: solo nome (GPT potrebbe aver estratto data di destinazione)
+    // Stadio 2: solo nome
     if (searchName) {
       console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
       const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, sheet: 'Prenotazioni' });
-      if (r2?.found && isValid(r2.reservation)) return r2.reservation;
+      if (r2?.found && isValid(r2.reservation)) {
+        const res = r2.reservation;
+        if (!res.requiresConfirmation) return res;
+        console.log(`🔍 Fuzzy candidato (${res.fuzzyConfidence?.toFixed(2)}): ${res.name} — cerco telefono prima`);
+        if (!bestFuzzyCandidate || res.fuzzyConfidence > bestFuzzyCandidate.fuzzyConfidence) {
+          bestFuzzyCandidate = res;
+        }
+      }
     }
 
-    // Stadio 3: solo telefono (cliente corregge nome, es: "Conti"→"Conte")
+    // Stadio 3: telefono — PRIORITY, batte sempre il fuzzy incerto
+    // Comportamento identico a prima del STEP 4 — nessuna regressione possibile
     if (phone) {
-      console.log(`🔍 ${logPrefix} fallback: solo telefono=${phone}`);
+      console.log(`🔍 ${logPrefix} fallback telefono: ${phone}`);
       const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone, sheet: 'Prenotazioni' });
-      if (r3?.found && isValid(r3.reservation)) return r3.reservation;
+      if (r3?.found && isValid(r3.reservation)) {
+        console.log(`✅ ${logPrefix} trovato per telefono → priorità su fuzzy`);
+        return r3.reservation; // telefono vince sempre
+      }
+    }
+
+    // Stadio 4: nessun match esatto né telefono — usa miglior fuzzy candidato
+    if (bestFuzzyCandidate) {
+      console.log(`🔍 Stadio 4: uso fuzzy candidato (${bestFuzzyCandidate.fuzzyConfidence?.toFixed(2)}): ${bestFuzzyCandidate.name}`);
+      return { fuzzyCandidate: bestFuzzyCandidate, requiresConfirmation: true };
     }
 
     return null;
+  }
+
+  // STEP 4: gestisci fuzzy candidate — chiedi conferma all'utente
+  _handleFuzzyCandidate(candidate, flowType) {
+    // flowType: 'modify' | 'cancel'
+    const timeNorm = candidate.time?.length === 5 ? candidate.time + ':00' : (candidate.time || '');
+    const dateDisplay = DateManager.formatForDisplay(candidate.date);
+    const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+    const action = flowType === 'cancel' ? 'cancellare' : 'modificare';
+
+    console.log(`🔍 Fuzzy confirm: ${candidate.name} (${candidate.fuzzyConfidence?.toFixed(2)})`);
+
+    // Salva il candidato e aspetta conferma
+    this.foundReservation = candidate;
+    if (flowType === 'modify') {
+      this.modifyState = 'awaiting_smart_confirm';
+      this._smartModifyParams = { date: candidate.date, time: candidate.time, people: candidate.people, name: candidate.name };
+    } else {
+      this.cancelState = 'awaiting_confirm';
+    }
+
+    this._say(
+      `Ho trovato una prenotazione a nome ${candidate.name}, ${dateDisplay} alle ${timeDisplay} per ${candidate.people} persone. ` +
+      `È quella che vuole ${action}?`
+    );
   }
 
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
@@ -1538,8 +1600,9 @@ export class OpenAIRealtimeClient {
         const r = await this._findReservationWithFallback(newName, newDate, 'MODIFY primo msg');
         if (this.intent !== 'modify') { console.log('🚫 MODIFY search abortita: intent cambiato durante ricerca'); return; }
         if (r) {
+          // STEP 4: fuzzy candidate → chiedi conferma prima di procedere
+          if (r.requiresConfirmation) { this._handleFuzzyCandidate(r.fuzzyCandidate, 'modify'); return; }
           this.foundReservation = r;
-          // 🆕 SMART MODIFY: se il primo messaggio già contiene le modifiche, salta il round-trip
           const smartHandled = await this._trySmartModify(r, newDate, newTime, newPeople);
           if (!smartHandled) {
             const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -1562,8 +1625,9 @@ export class OpenAIRealtimeClient {
         const r = await this._findReservationWithFallback(newName, null, 'MODIFY solo nome');
         if (this.intent !== 'modify') { console.log('🚫 MODIFY search abortita: intent cambiato durante ricerca'); return; }
         if (r) {
+          // STEP 4: fuzzy candidate → chiedi conferma
+          if (r.requiresConfirmation) { this._handleFuzzyCandidate(r.fuzzyCandidate, 'modify'); return; }
           this.foundReservation = r;
-          // 🆕 SMART MODIFY: tenta anche senza data esplicita
           const smartHandled2 = await this._trySmartModify(r, r.date, newTime, newPeople);
           if (!smartHandled2) {
             const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
