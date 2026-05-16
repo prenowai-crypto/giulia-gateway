@@ -210,15 +210,23 @@ export class OpenAIRealtimeClient {
     const pq = this._pendingQuestion;
     const isShort = transcript.trim().split(/\s+/).length <= 3;
 
+    // PSTN normalization: Whisper su 8kHz trascrive "all'una" in vari modi
+    // Normalizziamo prima di passare a qualsiasi parser
+    let normalizedTranscript = transcript
+      .replace(/\ba\s+luna\b/gi, "all'una")       // "a luna" → "all'una"
+      .replace(/\balluna\b/gi, "all'una")            // "alluna" → "all'una"
+      .replace(/\ball'\s*una\b/gi, "all'una")       // "all' una" → "all'una"
+      .replace(/\bal\s+una\b/gi, "all'una");        // "al una" → "all'una"
+
     // FIX 4: pre-normalizza orari ambigui prima di passare a PeopleManager
     // "all'una" / "alle undici" / "all'una e mezza" contengono numeri che
     // PeopleManager potrebbe catturare come pax. Li mascheramo temporaneamente.
     const TIME_CLAIM_RE = /\b(?:all[ae]?['']?|ore?)\s*['']?\s*(?:una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|mezzanotte|mezzogiorno|\d{1,2})(?:\s+e\s+(?:mezza|mezzo|un quarto|quarto))?/gi;
-    const transcriptForPeople = transcript.replace(TIME_CLAIM_RE, '__ORARIO__');
+    const transcriptForPeople = normalizedTranscript.replace(TIME_CLAIM_RE, '__ORARIO__');
 
     // Livello 1: estrazione opportunistica su tutti i campi
-    const date   = DateManager.parseFromText(transcript);
-    const time   = TimeManager.parseFromText(transcript);
+    const date   = DateManager.parseFromText(normalizedTranscript);
+    const time   = TimeManager.parseFromText(normalizedTranscript);
     const people = PeopleManager.parseFromText(transcriptForPeople);
 
     // Livello 2: guided — nome usa fallback generico se:
