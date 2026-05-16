@@ -670,7 +670,6 @@ export class OpenAIRealtimeClient {
       const intent = args.intent;
 
       // Fix 3A: "Pronto?" = segnale telefonico (cliente non sentiva risposta)
-      // Risposta deterministica, skip di tutto il resto
       if (this.lastTranscript) {
         const _prontoPat = /^(pronto|pronto\?|ci sei|mi senti|sei li|sei l[ìi]|sento|hello\?|are you there)[?!.\s]*$/i;
         if (_prontoPat.test(this.lastTranscript.trim())) {
@@ -678,6 +677,22 @@ export class OpenAIRealtimeClient {
           this._say('Sì, sono qui! Posso aiutarla con altro?');
           return;
         }
+      }
+
+      // Fix 3B: Domanda su note esistenti — intercetta PRIMA di qualsiasi check intent
+      // Es: "Avete segnato che sono allergico?" dopo un MODIFY → NON resettare, rispondere
+      const _noteQGuard = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(this.lastTranscript || '');
+      if (_noteQGuard && this.lastReservation?.eventId) {
+        console.log('📋 Phase=done: domanda su note → risposta diretta senza reset');
+        const _lrNotes = this.lastReservation.notes
+          ? this.lastReservation.notes.split(';').map(n => n.replace(/\s*\([^)]*\)/g, '').trim()).filter(n => n.length > 0).join('; ')
+          : '';
+        if (_lrNotes) {
+          this._say(`Sì, ho annotato: ${_lrNotes}.`);
+        } else {
+          this._say('Non risultano note salvate sulla sua prenotazione.');
+        }
+        return;
       }
 
       // Nuovo intent modify → usa lastReservation se disponibile, altrimenti cerca
