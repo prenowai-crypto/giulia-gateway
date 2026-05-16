@@ -2418,8 +2418,8 @@ export class OpenAIRealtimeClient {
     const _notesForClient = this.data.notes
       ? this.data.notes
           .split(';')
-          .map(n => n.trim())
-          .filter(n => !n.match(/^\(.*\)$/))  // rimuove note tipo "(verifica con cliente)"
+          .map(n => n.replace(/\s*\([^)]*\)/g, '').trim())  // rimuove "(verifica con cliente)" anche se preceduto da testo
+          .filter(n => n.length > 0)
           .join('; ')
       : '';
     const _notesConfirmStr = _notesForClient ? ` Ho annotato: ${_notesForClient}.` : '';
