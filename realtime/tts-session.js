@@ -126,21 +126,21 @@ class TTSSession {
   // Dice una frase esatta — conversation:none = ignora storia conversazione
   speak(text, lang) {
     this.cancel();  // Cancella audio in corso
-    const instruction = (!lang || lang === 'it')
-      ? `Di' ESATTAMENTE e SOLO questa frase, senza aggiungere nulla: "${text}"`
-      : `Say EXACTLY and ONLY this phrase in ${lang}, nothing else: "${text}"`;
+
+    // FIX 5: istruzione ultra-restrittiva per evitare parafrasi
+    // Il testo va SOLO nelle instructions, non nell'input (evita rielaborazione)
+    const isIt = !lang || lang === 'it';
+    const instruction = isIt
+      ? `Leggi ad alta voce ESATTAMENTE questo testo, parola per parola, senza cambiare nulla: ${text}`
+      : `Read aloud EXACTLY this text, word for word, do not change anything: ${text}`;
 
     this._send({
       type: 'response.create',
       response: {
-        conversation: 'none',     // Fondamentale: ignora contesto conversazione
+        conversation: 'none',
         output_modalities: ['audio'],
         instructions: instruction,
-        input: [{
-          type: 'message',
-          role: 'user',
-          content: [{ type: 'input_text', text }],
-        }],
+        // NON includere input separato: evita che GPT "risponda" invece di leggere
       },
     });
   }
