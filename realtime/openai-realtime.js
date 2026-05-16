@@ -169,7 +169,7 @@ export class OpenAIRealtimeClient {
     // Parsing locale + business logic
     this._detectNotesAndPhone(transcript);
     const args = this._extractFromTranscript(transcript);
-    await this._processGPTData(args).catch(err => console.error('❌ _processGPTData:', err));
+    await this._processExtraction(args).catch(err => console.error('❌ _processExtraction:', err));
   }
 
 
@@ -182,9 +182,12 @@ export class OpenAIRealtimeClient {
     const time   = TimeManager.parseFromText(transcript);
     const people = PeopleManager.parseFromText(transcript);
 
-    // Livello 2: guided — nome usa fallback generico SOLO se pendingQuestion=name
+    // Livello 2: guided — nome usa fallback generico se:
+    //   - pendingQuestion='name' (bot ha chiesto il nome via _ask)
+    //   - phase='naming' (safety net: slot ok, sistema in attesa nome)
+    // Altrimenti solo pattern espliciti per evitare "due"→"Due" ecc.
     let name;
-    if (pq === 'name') {
+    if (pq === 'name' || this.phase === 'naming') {
       name = this._extractName(transcript);
     } else {
       name = this._extractNameExplicit(transcript);
@@ -357,39 +360,9 @@ export class OpenAIRealtimeClient {
     this.ttsSession?.close();
   }
 
-  // ── No-op: funzioni legacy function-calling non più necessarie ────────────
-  _resolveFailedFunctionCall(reason) {
-    // Non più necessario: nessun function call da chiudere
-    console.log(`ℹ️ _resolveFailedFunctionCall: ${reason} (no-op)`);
-  }
-  _resolveFunctionCallPending(reason) {
-    // Non più necessario
-    console.log(`ℹ️ _resolveFunctionCallPending: ${reason} (no-op)`);
-  }
 
-  // ── _send: compatibility stub ─────────────────────────────────────────────
-  // Alcune funzioni legacy chiamano this._send() per session.update ATTENZIONE CRITICA.
-  // In dual session, non serve più — il TTS è già deterministico.
-  _send(obj) {
-    // Ignora session.update ATTENZIONE CRITICA — non necessario con TTS deterministico
-    if (obj?.type === 'session.update') return;
-    // Ignora response.cancel — gestito da ttsSession.cancel()
-    if (obj?.type === 'response.cancel') { this.ttsSession?.cancel(); return; }
-    // Ignora function_call_output — non c'è function calling
-    if (obj?.item?.type === 'function_call_output') return;
-    // Ignora conversation.item.create (context injection) — non necessario
-    if (obj?.type === 'conversation.item.create') return;
-    // Log per debug
-    console.log(`⚠️ _send() chiamato con tipo inatteso: ${obj?.type}`);
-  }
 
-  // ── _injectContext: no-op in dual session ─────────────────────────────────
-  _injectContext(r) {
-    // In dual session non c'è conversation history da iniettare in OpenAI
-    // I dati sono in this.foundReservation e this.lastReservation
-  }
-
-  async _processGPTData(args) {
+  async _processExtraction(args) {
     if (this.checkingSlot) return;
 
     const rc = this.restaurantConfig;
@@ -431,7 +404,7 @@ export class OpenAIRealtimeClient {
           // Resetta lastTranscript per evitare loop infinito al rientro
           this.lastTranscript = null;
           // Re-entra come CREATE con data=oggi e time calcolato
-          await this._processGPTData({ ...args, intent: 'create', date: _todayISO, time: _calcTime,
+          await this._processExtraction({ ...args, intent: 'create', date: _todayISO, time: _calcTime,
                                         people: args.people || null, name: args.name || null, _walkInHandled: true });
           return;
         }
@@ -626,7 +599,6 @@ export class OpenAIRealtimeClient {
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           console.log(`💾 Phase=done MODIFY: uso _refRes direttamente (${r.name}, ${r.date})`);
-          this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
           return;
         }
@@ -723,7 +695,7 @@ export class OpenAIRealtimeClient {
         this.availDone = false;
         this._pendingQuestion = null;
         console.log('🔄 Phase=done: nuovo intent create — reset e riparto');
-        await this._processGPTData(args);
+        await this._processExtraction(args);
         return;
       }
 
@@ -895,9 +867,9 @@ export class OpenAIRealtimeClient {
         console.log(`🔄 Intent-switch collecting: create → modify IGNORATO (dati già presenti, è correzione CREATE)`);
         // Fix B2: reset foundReservation residuo da MODIFY fallback
         this.foundReservation = null;
-        // Rientra in _processGPTData con intent=create corretto
+        // Rientra in _processExtraction con intent=create corretto
         // così il flow normale (validazione orario, check slot, ecc.) viene eseguito
-        await this._processGPTData({ ...args, intent: 'create' });
+        await this._processExtraction({ ...args, intent: 'create' });
         return;
       }
       console.log(`🔄 Intent-switch collecting: create → modify, avvio MODIFY flow`);
@@ -923,7 +895,7 @@ export class OpenAIRealtimeClient {
       this.checkingSlot = false;
       this.availDone = false;
       this.lastTranscript = null; // 🆕 evita che il cross-check parsePeople giri sul transcript precedente
-      await this._processGPTData(args);
+      await this._processExtraction(args);
       return;
     }
 
@@ -934,7 +906,6 @@ export class OpenAIRealtimeClient {
       if (args.intent === 'cancel') {
         console.log('🔄 Intent-switch MODIFY → cancel rilevato fuori phase=done');
         this.intent = 'cancel';
-        this._resolveFunctionCallPending('switching to cancel');
         // Se abbiamo già la prenotazione trovata (es. MODIFY slot_full), vai diretto alla conferma
         if (this.foundReservation?.eventId) {
           const r = this.foundReservation;
@@ -943,7 +914,6 @@ export class OpenAIRealtimeClient {
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.cancelState = 'awaiting_confirm';
           console.log(`🗑️ CANCEL diretto su foundReservation: ${r.name}, ${r.date}`);
-          this._injectContext(r);
           this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
         } else {
           this.cancelState = null;
@@ -1018,7 +988,6 @@ export class OpenAIRealtimeClient {
       if (msg) {
         console.log(`🚫 Giorno chiuso: ${this.data.date}`);
         this.data.date = null;
-        this._resolveFailedFunctionCall(`giorno chiuso: ${this.data.date || ""}`);
         this._say(msg);
         return;
       }
@@ -1032,10 +1001,8 @@ export class OpenAIRealtimeClient {
         const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
         console.log(`🚫 Orario non valido: ${this.data.time}`);
         this.data.time = null;
-        this._resolveFailedFunctionCall(`orario non valido: 20:30`);
         this._say(msg);
         // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-        this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
         return;
       }
 
@@ -1047,7 +1014,6 @@ export class OpenAIRealtimeClient {
         const ds = rc?.dinner_start || '21:00';
         const de = rc?.dinner_end   || '22:30';
         this.data.time = null;
-        this._resolveFailedFunctionCall(`pranzo chiuso`);
         this._say(`Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`);
         return;
       }
@@ -1057,7 +1023,6 @@ export class OpenAIRealtimeClient {
         const ls = rc?.lunch_start || '12:00';
         const le = rc?.lunch_end   || '14:30';
         this.data.time = null;
-        this._resolveFailedFunctionCall(`cena chiusa`);
         this._say(`Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`);
         return;
       }
@@ -1205,7 +1170,7 @@ export class OpenAIRealtimeClient {
       return;
     }
 
-    // Dopo phase=done, la logica è gestita da _processGPTData (via extraction)
+    // Dopo phase=done, la logica è gestita da _processExtraction (via extraction)
     if (this.phase === 'done') return;
 
     // Rileva note e telefono alternativo su ogni messaggio
@@ -1390,7 +1355,7 @@ export class OpenAIRealtimeClient {
       console.log(`👤 Nome: ${name}`);
       this._confirmReservation();
     } else {
-      this._say('A che nome faccio la prenotazione?');
+      this._ask('name');
     }
   }
 
@@ -1432,7 +1397,6 @@ export class OpenAIRealtimeClient {
     if (!this.modifyState) {
       this.modifyState = 'awaiting_search';
       // 🆕 Cancella eventuale risposta GPT in corso
-      this._send({ type: 'response.cancel' });
 
       // Se il primo messaggio contiene già nome E data, cerca subito
       if (newName && newDate) {
@@ -1443,7 +1407,6 @@ export class OpenAIRealtimeClient {
         if (this.intent !== 'modify') { console.log('🚫 MODIFY search abortita: intent cambiato durante ricerca'); return; }
         if (r) {
           this.foundReservation = r;
-          this._injectContext(r);
           // 🆕 SMART MODIFY: se il primo messaggio già contiene le modifiche, salta il round-trip
           const smartHandled = await this._trySmartModify(r, newDate, newTime, newPeople);
           if (!smartHandled) {
@@ -1468,7 +1431,6 @@ export class OpenAIRealtimeClient {
         if (this.intent !== 'modify') { console.log('🚫 MODIFY search abortita: intent cambiato durante ricerca'); return; }
         if (r) {
           this.foundReservation = r;
-          this._injectContext(r);
           // 🆕 SMART MODIFY: tenta anche senza data esplicita
           const smartHandled2 = await this._trySmartModify(r, r.date, newTime, newPeople);
           if (!smartHandled2) {
@@ -1515,7 +1477,6 @@ export class OpenAIRealtimeClient {
       const r = await this._findReservationWithFallback(searchName, searchDate, 'MODIFY');
       if (r) {
         this.foundReservation = r;
-        this._injectContext(r);
         // 🆕 SMART MODIFY: check anche nella fase awaiting_search
         const smartHandled3 = await this._trySmartModify(r, newDate, newTime, newPeople);
         if (!smartHandled3) {
@@ -1603,12 +1564,10 @@ export class OpenAIRealtimeClient {
           this._processingModify = false;
           this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
           // Fix B4 MODIFY: forza GPT a NON confermare dopo orario invalido
-          this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, modifica NON effettuata. DEVI chiedere orario diverso. VIETATO dire confermato o aggiornato.` } });
           return;
         }
         console.log(`🔍 MODIFY check disponibilità: ${updDate} ${updTime} per ${updPeople}`);
         // Fix: usa pending (success:true) per evitare rogue response di GPT durante il check
-        this._resolveFunctionCallPending('checking availability');
         this._say('Un attimo che verifico la disponibilità...');
         // Fix E3/E9: existingPeople va passato SOLO se il nuovo slot coincide con quello originale.
         // Se si sposta su data/ora diversa, i pax esistenti NON sono nel nuovo slot → existingPeople=0.
@@ -1679,7 +1638,6 @@ export class OpenAIRealtimeClient {
       }
 
       console.log(`✏️ MODIFY aggiorna eventId=${r.eventId}: ${updDate} ${updTime} ${updPeople} pax ${updName}`);
-      this._resolveFunctionCallPending('updating reservation');
       this._say('Perfetto, aggiorno subito...');
       const updateResult = await this._callAppsScript({
         action: 'update_reservation',
@@ -1904,7 +1862,6 @@ export class OpenAIRealtimeClient {
     if (!this.cancelState) {
       this.cancelState = 'awaiting_search';
       // 🆕 Cancella eventuale risposta GPT in corso: vogliamo controllare noi il dialogo
-      this._send({ type: 'response.cancel' });
 
       if (newName && newDate) {
         if (newName) this.data.name = newName;
@@ -1917,7 +1874,6 @@ export class OpenAIRealtimeClient {
           const dateDisplay = DateManager.formatForDisplay(r.date);
           const timeDisplay = TimeManager.formatForDisplay(timeNorm);
           this.cancelState = 'awaiting_confirm';
-          this._injectContext(r);
           // v3.9.35: se il nome trovato è diverso da quello cercato (fallback telefono),
           // avvisa l'utente invece di presentarlo silenziosamente come corretto
           const nameMismatch = newName && r.name && r.name.toLowerCase() !== newName.toLowerCase();
@@ -1965,7 +1921,6 @@ export class OpenAIRealtimeClient {
         const dateDisplay = DateManager.formatForDisplay(r.date);
         const timeDisplay = TimeManager.formatForDisplay(timeNorm);
         this.cancelState = 'awaiting_confirm';
-        this._injectContext(r);
         const nameMismatch2 = searchName && r.name && r.name.toLowerCase() !== searchName.toLowerCase();
         if (nameMismatch2) {
           this._say(`Tramite il suo numero ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. È la sua prenotazione? Conferma la cancellazione?`);
@@ -2110,7 +2065,7 @@ export class OpenAIRealtimeClient {
         if (this.data.name) {
           this._confirmReservation();
         } else {
-          this._say('Perfetto! A che nome faccio la prenotazione?');
+          this._ask('name');
         }
       } else if (result?.reason === 'slot_full') {
         console.log('❌ Slot pieno');
@@ -2173,14 +2128,14 @@ export class OpenAIRealtimeClient {
         this.phase = 'naming';
         this.checkingSlot = false;
         this.availDone = true;
-        this._say('A che nome faccio la prenotazione?');
+        this._ask('name');
       }
     } catch (err) {
       console.error('❌ Errore check slot:', err);
       this.phase = 'naming';
       this.checkingSlot = false;
       this.availDone = true;
-      this._say('A che nome faccio la prenotazione?');
+      this._ask('name');
     }
   }
 
@@ -2196,12 +2151,10 @@ export class OpenAIRealtimeClient {
       const lunch = rc?.lunch_hours || '12:00-14:30';
       const dinner = rc?.dinner_hours || '21:00-22:30';
       // CRITICO: risolve function_call pendente PRIMA di _say, altrimenti GPT genera risposta autonoma
-      this._resolveFailedFunctionCall('orario non valido');
       this.phase = 'collecting';
       this.data.time = null;
       this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
       // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-      this._send({ type: 'session.update', session: { type: 'realtime', tool_choice: 'none', instructions: this.systemPrompt + this._buildInfoSection() + `\n\nATTENZIONE CRITICA: orario NON valido, prenotazione NON effettuata. DEVI chiedere orario diverso. VIETATO dire prenotato.` } });
       return;
     }
 
@@ -2609,40 +2562,6 @@ export class OpenAIRealtimeClient {
       lines.join('\n') + '\n' + sep;
   }
 
-  // mandare function_call_output con errore prima di _say.
-  // Senza questo, GPT ignora l'istruzione di _say e genera la sua risposta (es: conferma falsa).
-  _resolveFailedFunctionCall(reason) {
-    if (this._lastFunctionCallId) {
-      console.log(`🔧 Resolving failed function_call ${this._lastFunctionCallId}: ${reason}`);
-      this._send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'function_call_output',
-          call_id: this._lastFunctionCallId,
-          output: JSON.stringify({ success: false, error: reason })
-        }
-      });
-      this._lastFunctionCallId = null;
-    }
-  }
-
-  // Risolve function_call pending per operazioni in corso (check/update).
-  // Usa {success: true, status: 'pending'} invece di {success: false}
-  // per evitare che GPT interpreti il resolve come un errore e generi rogue responses.
-  _resolveFunctionCallPending(reason) {
-    if (this._lastFunctionCallId) {
-      console.log(`🔧 Resolving pending function_call ${this._lastFunctionCallId}: ${reason}`);
-      this._send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'function_call_output',
-          call_id: this._lastFunctionCallId,
-          output: JSON.stringify({ success: true, status: 'pending', message: reason })
-        }
-      });
-      this._lastFunctionCallId = null;
-    }
-  }
   // notesToRemove: array di stringhe da escludere dal merge (es. ['Tavolo esterno/terrazza'])
   _mergeNotesStr(existing, newNotes, notesToRemove) {
     let eArr = existing ? existing.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
@@ -2655,20 +2574,6 @@ export class OpenAIRealtimeClient {
     return eArr.join('; ');
   }
 
-  _injectContext(r) {
-    if (!r) return;
-    // 🆕 FIX BUG-03A: includi note nel contesto iniettato così GPT le conosce
-    const notesStr = r.notes ? `, note_salvate="${r.notes}"` : '';
-    const text = `[Dati reali trovati: nome="${r.name}", data="${r.date}", ora="${r.time}", persone="${r.people}"${notesStr}]`;
-    this._send({
-      type: 'conversation.item.create',
-      item: {
-        type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text }],
-      },
-    });
-  }
 
   // ── Apps Script ───────────────────────────────────────────────────────────
 
