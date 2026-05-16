@@ -569,7 +569,12 @@ export class OpenAIRealtimeClient {
     let   newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
     let   newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
     let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
-    const newName   = (args.name   && args.name   !== 'null') ? args.name.trim() : null;
+    // BUG 1 FIX: pulizia nome — rimuove parole non-nome aggiunte da GPT
+    // es: "Rossi Per Sabato" → "Rossi", "Ferrari Alle 21" → "Ferrari"
+    const _rawName = (args.name && args.name !== 'null') ? args.name.trim() : null;
+    const newName = _rawName
+      ? _rawName.replace(/\s+(per|sabato|domenica|lunedì|martedì|mercoledì|giovedì|venerdì|sera|pranzo|cena|stasera|domani|oggi|alle|a|il|la|lo|le|un|una)\b.*/i, '').trim()
+      : null;
 
     // 🆕 GPT-ONLY: cross-check data rimosso — GPT gestisce domani/oggi/stasera
     // con le regole esplicite nel prompt e il calendario iniettato.
@@ -669,12 +674,21 @@ export class OpenAIRealtimeClient {
     if (this.phase === 'done') {
       const intent = args.intent;
 
-      // Fix 3A: "Pronto?" = segnale telefonico (cliente non sentiva risposta)
+      // Fix 3A: "Pronto?" = segnale telefonico
       if (this.lastTranscript) {
         const _prontoPat = /^(pronto|pronto\?|ci sei|mi senti|sei li|sei l[ìi]|sento|hello\?|are you there)[?!.\s]*$/i;
         if (_prontoPat.test(this.lastTranscript.trim())) {
           console.log('📞 "Pronto?" rilevato → risposta deterministica');
           this._say('Sì, sono qui! Posso aiutarla con altro?');
+          return;
+        }
+
+        // Fix 3A2: saluti e ringraziamenti finali → congedo, NON reset
+        // "Perfetto grazie mille", "Ok grazie", "Arrivederci", "Ciao"
+        const _farewellPat = /^(?:ok|sì|si|perfetto|benissimo|ottimo|capito|bene)?[,\s]*(?:grazie(?:\s+mille)?|arrivederci|arrivederla|a presto|ciao|buona(?:\s+serata|\s+giornata)?|salve)[!.\s]*$/i;
+        if (_farewellPat.test(this.lastTranscript.trim())) {
+          console.log('👋 Saluto/ringraziamento finale → congedo senza reset');
+          this._say('Grazie a lei! A presto.');
           return;
         }
       }
