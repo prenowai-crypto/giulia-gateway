@@ -1492,7 +1492,7 @@ export class OpenAIRealtimeClient {
         if (_notesClean) {
           this._say(`Ho annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
         } else {
-          this._say('Ho aggiornato le note sulla sua prenotazione. C'è altro che posso fare?');
+          this._say("Ho aggiornato le note sulla sua prenotazione. C'è altro che posso fare?");
         }
         return;
       }
