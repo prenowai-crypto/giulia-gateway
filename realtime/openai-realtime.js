@@ -186,10 +186,20 @@ export class OpenAIRealtimeClient {
 
     if (this._isLowInformationTranscript(transcript)) return;
 
-    // STEP 6: reset interrupted — il turno è completato, l'utente ha finito di parlare
+    // STEP 6: reset interrupted
     this.interrupted = false;
 
     console.log(`💬 [user]: ${transcript}`);
+
+    // BUG 1: info query side channel — intercetta domande informative PRIMA del flow
+    // NON muta state, risponde e continua (se non in booking flow attivo)
+    if (this._isInformationalQuery(transcript) && !this.modifyState && !this.cancelState && this.phase !== 'done') {
+      console.log('ℹ️ Info query rilevata → side channel risposta');
+      await this._handleInfoQuery(transcript);
+      // Side channel: non fa return — continua il flow normale
+      // (l'utente potrebbe voler prenotare dopo aver ricevuto l'info)
+      return;
+    }
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
 
@@ -218,7 +228,8 @@ export class OpenAIRealtimeClient {
     }
 
     // Parsing locale + business logic
-    this._detectNotesAndPhone(transcript);
+    const _notesHandled = this._detectNotesAndPhone(transcript);
+    if (_notesHandled) return; // BUG 6: note post-confirm già gestite con risposta — stop
     const args = await this._extractFromTranscript(transcript);
     await this._processExtraction(args).catch(err => console.error('❌ _processExtraction:', err));
   }
@@ -749,6 +760,16 @@ export class OpenAIRealtimeClient {
     if (this.modifyState === 'awaiting_smart_confirm') {
       console.log('🔒 GPT result ignorato: smart confirm MODIFY in attesa');
       return;
+    }
+
+    // ══ STATE OWNERSHIP — BUG 2 fix (GPT raccomandazione) ═══════════════════
+    // Active flow state ha SEMPRE priorità sul transcript intent
+    // "diventiamo in otto" in modify flow → aggiorna people, non fa create
+    // Deve stare PRIMA di qualsiasi intent routing globale
+    if (this.modifyState && this.modifyState !== 'done' && this.modifyState !== 'idle' && this.modifyState !== 'awaiting_smart_confirm') {
+      console.log(`🔒 State ownership: modifyState=${this.modifyState} → resto in modify flow`);
+      // non fare return — lascia continuare _processExtraction ma con intent forzato modify
+      args.intent = 'modify';
     }
 
     // ── Fix 3: Phase=done — gestisce saluti, ringraziamenti e nuovi intent ────
@@ -1395,6 +1416,8 @@ export class OpenAIRealtimeClient {
   // ── Note e Telefono Alternativo ───────────────────────────────────────────
 
   _detectNotesAndPhone(text) {
+    // Ritorna true se ha già gestito la risposta (update_notes post-confirm)
+    // Il caller deve fare return immediatamente in quel caso
     const t = text.toLowerCase();
 
     // ── Keyword note ─────────────────────────────────────────────────────────
@@ -1402,23 +1425,32 @@ export class OpenAIRealtimeClient {
     const noteKeywords = [
       { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
       { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
-      { pattern: /allergi[aoci]|uova|uovo/i,                        note: 'Allergia (verifica con cliente)' },
+      // BUG 4: "allergico alle uova" → "Allergia uova"
+      { pattern: /allergi[aoci]/i, note: 'Allergia (verifica con cliente)',
+        contextCapture: /allergi[coa]+\s+(?:a(?:gli|lle|l'|l)?\s+)?([\wàèéìòù]+(?:\s+[\wàèéìòù]+){0,2})/i, contextPrefix: 'Allergia' },
+      { pattern: /\buova\b|\buovo\b/i,                              note: 'Allergia uova' },
       { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
       { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
       { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
       { pattern: /seggiol[eo]n[eo]|seggiolino|seggialone|seggilon[ei]|seggialino|highchair/i, note: 'Richiesto seggiolone' },
       { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
-      { pattern: /anniversario/i,                                   note: 'Anniversario' },
-      { pattern: /compleanno|birthday/i,                            note: 'Compleanno' },
+      // BUG 4: cattura contesto dopo keyword (max 3 parole) — "anniversario di matrimonio"
+      { pattern: /anniversario/i, note: 'Anniversario',
+        contextCapture: /anniversario(?:\s+(?:di\s+)?([\w\s]{2,20}))?/i, contextPrefix: 'Anniversario' },
+      // BUG 4: "compleanno di mia moglie" → "Compleanno moglie"
+      { pattern: /compleanno|birthday/i, note: 'Compleanno',
+        contextCapture: /compleanno(?:\s+(?:di\s+)?([\w\s]{2,15}))?/i, contextPrefix: 'Compleanno' },
       { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,     note: 'Proposta di matrimonio' },
       { pattern: /occasion[ei]\s*speciale/i,                        note: 'Occasione speciale' },
       { pattern: /romantico|romantica/i,                            note: 'Cena romantica' },
       { pattern: /finestra|vista/i,                                 note: 'Tavolo vicino finestra' },
       // 🆕 FIX 4: esterno negato da interno → non aggiungere
-      { pattern: /esterno|terrazza|giardino|dehor/i,                note: 'Tavolo esterno/terrazza',
-        negation: /\ball.interno\b|prefer[ei].{0,20}intern|non.{0,20}esterno|starei.{0,10}intern/i },
-      // 🆕 FIX 4: "interno" rimuove la nota esterno e non aggiunge niente (default)
-      { pattern: /\binterno\b|\bdentro\b|preferis[ce].{0,20}intern/i, note: null, removes: 'Tavolo esterno/terrazza' },
+      { pattern: /esterno|terrazza|giardino|dehor|\bfuori\b|all.aperto/i, note: 'Tavolo esterno/terrazza',
+        negation: /\ball.interno\b|prefer[ei].{0,20}intern|non.{0,20}esterno|starei.{0,10}intern|\bdentro\b/i },
+      // BUG 5: aggiunti "dentro/fuori" come sinonimi di interno/esterno
+      // "vogliamo stare dentro" → Tavolo interno (nota positiva, non solo rimozione)
+      { pattern: /\binterno\b|\bdentro\b|preferis[ce].{0,20}intern|star[ei].{0,10}dentro|vorrei.{0,10}dentro/i,
+        note: 'Tavolo interno', removes: 'Tavolo esterno/terrazza' },
       { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,          note: 'Accessibilità disabili' },
       { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
     ];
@@ -1437,7 +1469,9 @@ export class OpenAIRealtimeClient {
 
     const newNotes = [];
     if (!_isNoteQuestion) {
-      for (const { pattern, note, negation, removes } of noteKeywords) {
+      for (let kw of noteKeywords) {
+        const { pattern, negation, removes, contextCapture, contextPrefix } = kw;
+        let note = kw.note;
         // Guard: "vegano" come domanda info non va annotato come nota
         if (note === 'Vegano' && _isVeganInfoQuestion) {
           console.log(`📋 Vegan rilevato come domanda info → skip nota`);
@@ -1448,6 +1482,14 @@ export class OpenAIRealtimeClient {
           continue;
         }
         if (pattern.test(text)) {
+          // BUG 4: cattura contesto dopo keyword se presente
+          if (contextCapture && contextPrefix) {
+            const _ctxM = text.match(contextCapture);
+            if (_ctxM?.[1]) {
+              const _ctx = _ctxM[1].trim().split(/\s+/).slice(0,3).join(' ');
+              if (_ctx && _ctx.length > 1) note = `${contextPrefix} ${_ctx}`;
+            }
+          }
           // 🆕 FIX 4: controlla negazione (es. "non all'esterno" non aggiunge nota esterno)
           if (negation && negation.test(text)) {
             console.log(`📋 Nota "${note}" negata nel contesto → skip`);
@@ -1495,16 +1537,17 @@ export class OpenAIRealtimeClient {
         this._callAppsScript({ action: 'update_notes', eventId: _evId, notes: _notes })
           .then(r => console.log(`📝 update_notes: ${r?.success ? 'OK' : 'FAIL'}`))
           .catch(e => console.error('❌ update_notes error:', e));
-        // Short-circuit: conferma vocale e ritorna — non cadere nei guard successivi
+        // Short-circuit: conferma vocale — ritorna true per segnalare al caller
         this._lastTopic = 'notes';
         if (_notesClean) {
           this._say(`Ho annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
         } else {
           this._say("Ho aggiornato le note sulla sua prenotazione. C'è altro che posso fare?");
         }
-        return;
+        return true; // segnala al caller che ha già risposto
       }
     }
+    return false; // nessuna gestione speciale
 
     // ── Telefono alternativo ─────────────────────────────────────────────────
     const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
@@ -1538,7 +1581,8 @@ export class OpenAIRealtimeClient {
     if (this.conversationLocked) return;
 
     // Rileva note e telefono alternativo su ogni messaggio
-    this._detectNotesAndPhone(text);
+    const _notesHandled2 = this._detectNotesAndPhone(text);
+    if (_notesHandled2) return; // BUG 6: note già gestite
 
     // Detect intent on first message
     if (!this.intent) {
@@ -2679,6 +2723,51 @@ export class OpenAIRealtimeClient {
   // Usa SOLO pattern inequivocabili: "mi chiamo X", "a nome X", "prenoto a nome X"
   // ESCLUSO: "sono X" (troppo ambiguo — "sono allergico agli arachidi")
   // ESCLUSO: pattern generico fallback (cattura qualsiasi parola sola)
+  // ── Info query detector — domande informative sul ristorante ───────────────
+  _isInformationalQuery(transcript) {
+    const t = transcript.toLowerCase();
+    if (/\b(?:carbonara|pizza|menu|menù|piatto|cucina|serv|prepar|vegano|vegetar|gluten|celiaco|pesce|carne|dolce|vino|birra)\b/.test(t)) return true;
+    if (/\b(?:dove siete|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
+    if (/\b(?:animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzina)\b/.test(t)) return true;
+    if (/\b(?:siete aperti|aprite|chiudete|orari|quando apre|quando chiude)\b/.test(t)) return true;
+    return false;
+  }
+
+  // ── Info query handler — risponde da menuDetails senza mutare lo state ─────
+  async _handleInfoQuery(transcript) {
+    const menuDetails = this.restaurantConfig?.menuDetails || this.restaurantConfig?.notes || '';
+    if (!menuDetails) {
+      this._say('Per informazioni dettagliate sul locale vi invito a contattare direttamente il ristorante.');
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0,
+          max_tokens: 80,
+          messages: [
+            { role: 'system', content: `Sei l'assistente vocale di un ristorante. Rispondi SOLO usando le informazioni presenti. Se non presenti: "Per dettagli specifici conviene contattare direttamente il ristorante." Massimo 2 frasi brevi.\n\nInfo ristorante:\n${menuDetails}` },
+            { role: 'user', content: transcript }
+          ]
+        })
+      });
+      clearTimeout(timeout);
+      const data = await response.json();
+      const answer = data?.choices?.[0]?.message?.content?.trim();
+      console.log(`ℹ️ Info query: "${answer?.substring(0,60)}"`);
+      this._say(answer || 'Per informazioni contattate direttamente il ristorante.');
+    } catch (err) {
+      clearTimeout(timeout);
+      this._say('Per informazioni contattate direttamente il ristorante.');
+    }
+  }
+
   // ── Ambiguity score — decide se serve context GPT ───────────────────────────
   // FIX 4 (GPT): score numerico invece di boolean puro
   // Riduce falsi positivi, evita trigger inutili
