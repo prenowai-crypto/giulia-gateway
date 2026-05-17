@@ -49,6 +49,9 @@ export class OpenAIRealtimeClient {
 
     // ── Stato business logic (invariato dal beta) ────────────────────────────
     this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
+    // FIX 5: entity provenance — traccia la sorgente di ogni campo
+    // 'parser' = estratto deterministicamente | 'gpt' = gap fill da ambiguity resolver
+    this._meta = { dateSource: null, timeSource: null, peopleSource: null, nameSource: null };
     this.phase         = 'collecting';
     this.intent        = null;
     this.existingRes   = null;
@@ -80,6 +83,25 @@ export class OpenAIRealtimeClient {
 
     // GPT name fallback cache — evita doppie inferenze su stesso transcript
     this._gptNameCache = new Map();
+
+    // Conversational history buffer (ultimi 3 turni = 6 messaggi max)
+    // Pattern GPT: "cosa significa questa frase nel contesto" → state machine decide
+    this._conversationHistory = [];
+    this._historyMaxTurns = 3;
+
+    // FIX 4: Dedup anti-loop — evita re-resolution continua sullo stesso contesto
+    // TTL breve: 2 turni — dopo di che il contesto è cambiato abbastanza
+    this._lastAmbiguityResolution = null; // { transcript, result, turn }
+    this._ambiguityTurnCounter = 0;
+
+    // STEP 1 (GPT): Intent lock — quando siamo in modify/cancel flow attivo
+    // l'intent globale NON deve mai sovrascrivere lo stato locale
+    // flow state > transcript intent (regola fondamentale dialog engine)
+    this.intentLocked = false;
+
+    // STEP 3 (GPT): Topic memory — per follow-up su note senza ripetere keyword
+    // es: "lo avete?" dopo aver parlato di seggiolone → risponde sulle note
+    this._lastTopic = null; // 'notes' | 'date' | 'time' | 'people' | null
 
     // Lingua
     this.language = 'it';
@@ -171,6 +193,13 @@ export class OpenAIRealtimeClient {
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
 
+    // Aggiorna history buffer — mantieni ultimi N turni
+    this._ambiguityTurnCounter++; // FIX 4: incrementa per dedup TTL
+    this._conversationHistory.push({ role: 'user', content: transcript });
+    if (this._conversationHistory.length > this._historyMaxTurns * 2) {
+      this._conversationHistory.splice(0, 2);
+    }
+
     // Aggiorna lingua rilevata
     const detectedLang = this._detectLanguage(transcript);
     if (detectedLang !== 'it' && transcript.split(/\s+/).length >= 3) {
@@ -210,6 +239,7 @@ export class OpenAIRealtimeClient {
     if (extracted.date && extracted.date !== 'null' && extracted.date !== this.data.date) {
       changed.date = { from: this.data.date, to: extracted.date };
       this.data.date = extracted.date;
+      this._meta.dateSource = 'parser';
       if (this._pendingQuestion === 'date') this._pendingQuestion = null;
     }
 
@@ -217,6 +247,7 @@ export class OpenAIRealtimeClient {
     if (extracted.time && extracted.time !== 'null' && extracted.time !== this.data.time) {
       changed.time = { from: this.data.time, to: extracted.time };
       this.data.time = extracted.time;
+      this._meta.timeSource = 'parser';
       if (this._pendingQuestion === 'time') this._pendingQuestion = null;
     }
 
@@ -249,7 +280,7 @@ export class OpenAIRealtimeClient {
       }
     }
 
-    // Log campi cambiati
+    // Log campi cambiati con provenance
     for (const [field, val] of Object.entries(changed)) {
       const icons = { date: '📅', time: '⏰', people: '👥', name: '👤' };
       console.log(`${icons[field] || '•'} ${field}: ${val.from ?? 'null'} → ${val.to}`);
@@ -370,7 +401,7 @@ export class OpenAIRealtimeClient {
     // Se c'era un contesto attivo (_pendingQuestion settato), lo manteniamo
     // Verrà resettato quando il campo viene acquisito con successo (in _processExtraction)
 
-    const intent = IntentDetector.detect(transcript);
+    let intent = IntentDetector.detect(transcript);
     const detectedLang = this._detectLanguage(transcript);
     if (detectedLang !== 'it' && transcript.split(/\s+/).length >= 3) {
       this.language = detectedLang;
@@ -379,6 +410,38 @@ export class OpenAIRealtimeClient {
     const note_check    = /(?:hai|avete)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto)/i.test(transcript);
     const people_change = /\bcambiar[ei]\s+(?:il numero di\s+)?person[ae]\b/i.test(transcript);
     const unclear       = transcript.trim().split(/\s+/).length < 2;
+
+    // ── STEP GPT: Conversational history resolution (solo se ambiguo) ─────────
+    // Chiama GPT con gli ultimi 3 turni SOLO quando i parser locali non bastano
+    // Costo aggiuntivo stimato: ~$0.20/mese su 1200 chiamate — trascurabile
+    let _ambiguityResult = null;
+    if (this._isAmbiguous(transcript, extracted)) {
+      _ambiguityResult = await this._resolveAmbiguity(transcript).catch(() => null);
+      if (_ambiguityResult) {
+        // FIX 1+3 (GPT): il prompt non ritorna più "intent" — solo reference/entities
+        // confirmation e correction come hint per la state machine
+        if (_ambiguityResult.confirmation === true && intent === 'unknown') {
+          console.log('🧠 Ambiguity: conferma rilevata dal contesto');
+        }
+        if (_ambiguityResult.correction === true) {
+          console.log('🧠 Ambiguity: correzione rilevata dal contesto');
+        }
+
+        // FIX 1 HARDCODED (GPT): parser deterministico = authority ASSOLUTA
+        // GPT può SOLO riempire buchi — MAI correggere, sostituire o reinterpretare il parser
+        // Su transcript ≤ 3 parole: GPT non produce nuove entity strutturate (solo reference/confirm)
+        const _transcriptWords = (transcript || '').trim().split(/\s+/).length;
+        if (_ambiguityResult.entities && _transcriptWords > 3) {
+          const e = _ambiguityResult.entities;
+          // HARD RULE: if (local == null && gpt != null) → OK. if (local != null) → GPT ignorato.
+          if (e.people != null && extracted.people == null) { extracted.people = e.people; this._meta.peopleSource = 'gpt'; }
+          if (e.date   != null && extracted.date   == null) { extracted.date   = e.date;   this._meta.dateSource   = 'gpt'; }
+          if (e.time   != null && extracted.time   == null) { extracted.time   = e.time;   this._meta.timeSource   = 'gpt'; }
+          if (e.name   != null && extracted.name   == null) { extracted.name   = e.name;   this._meta.nameSource   = 'gpt'; }
+          if (e.note   != null && !extracted.notes)         { extracted.notes  = [e.note]; }
+        }
+      }
+    }
 
     return {
       date:              extracted.date   || 'null',
@@ -477,8 +540,26 @@ export class OpenAIRealtimeClient {
     },
   };
 
+  // FIX 2 (GPT): filtra filler/thinking messages dalla history
+  // Salva SOLO messaggi semanticamente rilevanti — NON progress/filler
+  _isSemanticMessage(text) {
+    const NON_SEMANTIC = [
+      'Un attimo', 'Verifico', 'Aggiorno', 'Controllo', 'Procedo',
+      'Un momento', 'Cerco la prenotazione', 'verifico la disponibilità',
+      'aggiorno subito', 'procedo con la cancellazione', 'Perfetto, aggiorno'
+    ];
+    return !NON_SEMANTIC.some(filler => text.includes(filler));
+  }
+
   _say(text) {
     console.log(`💉 [say]: ${text.substring(0, 100)}`);
+    // Registra SOLO messaggi semantici nella history — no filler/thinking phrases
+    if (text && text.trim() && this._isSemanticMessage(text)) {
+      this._conversationHistory.push({ role: 'assistant', content: text });
+      if (this._conversationHistory.length > this._historyMaxTurns * 2) {
+        this._conversationHistory.splice(0, 2);
+      }
+    }
     const lang = this.language || 'it';
     this._ttsPlaying = true;
 
@@ -698,6 +779,7 @@ export class OpenAIRealtimeClient {
       const _noteQGuard = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(this.lastTranscript || '');
       if (_noteQGuard && this.lastReservation?.eventId) {
         console.log('📋 Phase=done: domanda su note → risposta diretta senza reset');
+        this._lastTopic = 'notes'; // STEP 3
         const _lrNotes = this.lastReservation.notes
           ? this.lastReservation.notes.split(';').map(n => n.replace(/\s*\([^)]*\)/g, '').trim()).filter(n => n.length > 0).join('; ')
           : '';
@@ -904,20 +986,33 @@ export class OpenAIRealtimeClient {
         }
 
         // GUARD: se non c'è nessun dato prenotazione estratto (no data/ora/persone)
-        // è quasi certamente una domanda sul locale, non una nuova prenotazione
-        // Es: "Lo avete il seggiolone?", "A che piano siete?", "Il menu lo avete online?"
+        // è quasi certamente una domanda o follow-up, non una nuova prenotazione
         const _hasBookingData = newDate || newTime || newPeople;
         if (!_hasBookingData) {
-          console.log('💬 Phase=done: intent create senza dati → probabile domanda sul locale');
-          // Controlla se riguarda qualcosa già annotato sulla prenotazione
-          const _noteKeywords = /(seggiolone|allergi|celiaco|vegano|vegetar|carrozzin|disabil|parcheggio|posto|tavolo|menu|carta|prezzo|costo|dove|indirizzo|orari|chiuso|aperto|wifi|aria condizionata)/i;
+          console.log('💬 Phase=done: intent create senza dati → probabile domanda/follow-up');
+
+          // STEP 3 (GPT): Topic memory — se l'ultimo topic era 'notes' e la frase è
+          // breve/interrogativa, è un follow-up sulle note senza ripetere le keyword
+          const _wordCount3 = (this.lastTranscript || '').trim().split(/\s+/).length;
+          const _isFollowUp = _wordCount3 <= 8 && /\?|avete|c'è|posso|si può|ok|bene|sì|certo|capito/i.test(this.lastTranscript || '');
+          if (this._lastTopic === 'notes' && this.lastReservation?.notes && _isFollowUp) {
+            const _notesClean = this._notesForClient(this.lastReservation.notes);
+            console.log('💬 STEP 3: follow-up su notes (topic memory)');
+            this._say(`Sì, ho già annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
+            return;
+          }
+
+          // Controlla keyword note esplicite nel transcript
+          const _noteKeywords = /(seggiolone|allergi|celiaco|vegano|vegetar|carrozzin|disabil|lattosio|glutine|intolleranz)/i;
           if (this.lastReservation?.notes && _noteKeywords.test(this.lastTranscript || '')) {
             const _notesClean = this._notesForClient(this.lastReservation.notes);
+            this._lastTopic = 'notes';
             this._say(`Sì, ho già annotato sulla sua prenotazione: ${_notesClean}. C'è altro che posso fare per lei?`);
-          } else {
-            // Domanda generica sul locale — rimanda al ristorante
-            this._say('Per informazioni sul locale la invito a contattare direttamente il ristorante. Posso aiutarla con altro?');
+            return;
           }
+
+          // Domanda generica sul locale — rimanda al ristorante
+          this._say('Per informazioni sul locale la invito a contattare direttamente il ristorante. Posso aiutarla con altro?');
           return;
         }
 
@@ -1004,10 +1099,31 @@ export class OpenAIRealtimeClient {
     }
 
     // ── Intent ───────────────────────────────────────────────────────────────
+    // STEP 1 (GPT): Intent lock — flow state > transcript intent
+    // Quando siamo in un flow guidato (modify/cancel attivo), l'intent GPT
+    // NON deve mai resettare lo stato. L'utente sta rispondendo alla nostra domanda.
+    const _modifyActive = this.intent === 'modify' && this.modifyState && this.modifyState !== 'done';
+    const _cancelActive = this.intent === 'cancel' && this.cancelState;
+
+    if (_modifyActive || _cancelActive) {
+      // Solo cancel esplicito può uscire dal modify flow
+      const _explicitCancel = /\b(?:cancell|disdic|annull|voglio cancellare)\b/i.test(this.lastTranscript || '');
+      if (!_explicitCancel) {
+        this.intentLocked = true;
+        if (args.intent !== this.intent) {
+          console.log(`🔒 Intent locked: GPT dice "${args.intent}" ma siamo in ${this.intent}/${this.modifyState || this.cancelState} — ignoro`);
+          args.intent = this.intent;
+        }
+      } else {
+        this.intentLocked = false;
+      }
+    } else {
+      this.intentLocked = false;
+    }
+
     // Override locale: frasi implicite di cancellazione che GPT classifica come modify
-    // "non riusciamo più a venire", "non possiamo venire", "devo cancellare"
     const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)/i;
-    if (this.lastTranscript && _impliedCancelPat.test(this.lastTranscript)) {
+    if (!this.intentLocked && this.lastTranscript && _impliedCancelPat.test(this.lastTranscript)) {
       if (args.intent !== 'cancel') {
         console.log(`🎯 Intent override: ${args.intent} → cancel (frase implicita cancellazione)`);
         args.intent = 'cancel';
@@ -1347,6 +1463,7 @@ export class OpenAIRealtimeClient {
             if (!this.data.notes || !this.data.notes.includes(note)) {
               newNotes.push(note);
               console.log(`📝 Nota rilevata: "${note}"`);
+            this._lastTopic = 'notes'; // STEP 3: topic memory
             }
           }
         }
@@ -1359,15 +1476,25 @@ export class OpenAIRealtimeClient {
         ? `${this.data.notes}; ${toAdd}`
         : toAdd;
 
-      // Note post-conferma → aggiorna Calendar in background
+      // STEP 2 (GPT): Note post-conferma — update_notes + conferma vocale + return immediato
+      // Successful mutation deve short-circuitare il flow (GPT raccomandazione)
       if (this.phase === 'done' && this.lastReservation?.eventId) {
         const _evId = this.lastReservation.eventId;
         const _notes = this.data.notes;
         this.lastReservation.notes = _notes;
+        const _notesClean = this._notesForClient(_notes);
         console.log(`📝 Note post-conferma → update_notes su Calendar: "${_notes}"`);
         this._callAppsScript({ action: 'update_notes', eventId: _evId, notes: _notes })
           .then(r => console.log(`📝 update_notes: ${r?.success ? 'OK' : 'FAIL'}`))
           .catch(e => console.error('❌ update_notes error:', e));
+        // Short-circuit: conferma vocale e ritorna — non cadere nei guard successivi
+        this._lastTopic = 'notes';
+        if (_notesClean) {
+          this._say(`Ho annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
+        } else {
+          this._say('Ho aggiornato le note sulla sua prenotazione. C'è altro che posso fare?');
+        }
+        return;
       }
     }
 
@@ -2544,6 +2671,147 @@ export class OpenAIRealtimeClient {
   // Usa SOLO pattern inequivocabili: "mi chiamo X", "a nome X", "prenoto a nome X"
   // ESCLUSO: "sono X" (troppo ambiguo — "sono allergico agli arachidi")
   // ESCLUSO: pattern generico fallback (cattura qualsiasi parola sola)
+  // ── Ambiguity score — decide se serve context GPT ───────────────────────────
+  // FIX 4 (GPT): score numerico invece di boolean puro
+  // Riduce falsi positivi, evita trigger inutili
+  // Threshold: score >= 3 → chiama GPT
+  _isAmbiguous(transcript, extracted) {
+    const words = transcript.trim().split(/\s+/);
+    const wordCount = words.length;
+    const noEntities = !extracted.date && !extracted.time && !extracted.people && !extracted.name;
+
+    let score = 0;
+
+    // FIX 3a: entity forte presente → NON è ambiguo anche se frase breve
+    // "Ferrari", "alle nove", "siamo quattro" non sono ambigui
+    const hasStrongEntity = !!(extracted.date || extracted.time || extracted.people || extracted.name);
+
+    // Risposta breve (≤ 4 parole) SOLO se nessuna entity forte estratta
+    if (wordCount <= 4 && !hasStrongEntity) score += 2;
+
+    // FIX 3b: pronomi — rimuovi "la/le/li/lo" (troppo rumorosi in italiano PSTN)
+    // Mantieni solo pronomi disambiguanti reali
+    if (/\b(?:quello|quella|questo|questa|anche|invece)\b/i.test(transcript)) score += 2;
+
+    // Nessuna entity estratta dai parser locali
+    if (noEntities) score += 2;
+
+    // Sì/No puro — sempre ambiguo senza contesto
+    if (/^(?:sì|si|no|ok|bene|esatto|perfetto|certo|vai|procedi)[!.,\s]*$/i.test(transcript.trim())) score += 1;
+
+    // Parole di correzione — quasi sempre richiedono contesto
+    if (/\b(?:invece|anzi|aspetti|volevo dire|no aspetti|piuttosto)\b/i.test(transcript)) score += 2;
+
+    // "anche" + qualcosa (es: "anche mia moglie", "anche il seggiolone")
+    if (/\banche\b/i.test(transcript) && wordCount <= 6) score += 2;
+
+    // Partial extraction conflict — parser ha trovato entity conflittuali
+    if (extracted.time && extracted.people && wordCount <= 6) score += 1;
+
+    // Nessuna entity e frase medio-corta
+    if (noEntities && wordCount <= 8) score += 1;
+
+    const isAmbig = score >= 3;
+    if (isAmbig) console.log(`🔍 Ambiguity score: ${score}/10 → chiamo GPT context`);
+    return isAmbig;
+  }
+
+  // ── GPT contextual resolver — chiama GPT con history solo se ambiguo ─────────
+  // Ritorna un oggetto con i campi chiariti nel contesto
+  // NON decide il flow — solo interpreta il significato
+  async _resolveAmbiguity(transcript) {
+    if (!this._conversationHistory || this._conversationHistory.length < 2) {
+      return null;
+    }
+
+    // FIX 4: dedup anti-loop — se stesso transcript risolto negli ultimi 2 turni → skip
+    const _cacheKey = transcript.trim().toLowerCase();
+    if (this._lastAmbiguityResolution &&
+        this._lastAmbiguityResolution.transcript === _cacheKey &&
+        (this._ambiguityTurnCounter - this._lastAmbiguityResolution.turn) <= 2) {
+      console.log('🔁 Ambiguity dedup: stesso contesto → uso cached result');
+      return this._lastAmbiguityResolution.result;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+
+    try {
+      // Passa ultimi 3 turni (escludi il turno corrente già aggiunto)
+      const historySlice = this._conversationHistory.slice(-6, -1); // ultimi 3 turni senza current
+
+      // FIX 3 (GPT): prompt ristretto a contextual interpretation ONLY
+      // NON chiedere intent globale — solo cosa riferisce e entity gap fill
+      // Riduce semantic drift e over-interpretation
+      // FIX 2: stato ridotto al minimo — solo phase/pendingQuestion/lastTopic
+      // NON passare il booking completo: GPT deve solo capire il riferimento
+      const systemPrompt = `Interpreta SOLO il significato contestuale dell'ultima frase dell'utente nel contesto di una conversazione per prenotazioni ristorante.\nNON decidere il flow conversazionale.\nNON inventare informazioni mancanti.\nNON inferire intent globali.\n\nContesto minimo:\n- Fase: ${this.phase || 'collecting'}\n- Domanda in attesa: ${this._pendingQuestion || 'nessuna'}\n- Ultimo argomento: ${this._lastTopic || 'nessuno'}\n\nRispondi SOLO con JSON valido, nessun testo aggiuntivo:\n{\n  \"reference\": \"cosa sta referenziando (es: seggiolone già menzionato, null)\",\n  \"confirmation\": true,\n  \"correction\": false,\n  \"entities\": {\n    \"date\": null,\n    \"time\": null,\n    \"people\": null,\n    \"name\": null,\n    \"note\": null\n  }\n}`;
+NON decidere il flow conversazionale.
+NON inventare informazioni mancanti.
+NON inferire intent globali.
+
+Stato corrente:
+- Data: ${this.data.date || 'non raccolta'}
+- Ora: ${this.data.time || 'non raccolta'}
+- Persone: ${this.data.people || 'non raccolte'}
+- Nome: ${this.data.name || 'non raccolto'}
+- Note: ${this.data.notes || 'nessuna'}
+
+Rispondi SOLO con JSON valido, nessun testo aggiuntivo:
+{
+  "reference": "cosa sta referenziando (es: seggiolone già menzionato, orario precedente, null)",
+  "confirmation": true/false,
+  "correction": true/false,
+  "entities": {
+    "date": null,
+    "time": null,
+    "people": null,
+    "name": null,
+    "note": null
+  }
+}`;
+
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...historySlice,
+        { role: 'user', content: `Interpreta questa frase nel contesto: "${transcript}"` }
+      ];
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0,
+          max_tokens: 150,
+          messages,
+        })
+      });
+
+      clearTimeout(timeout);
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      const raw = data?.choices?.[0]?.message?.content?.trim();
+      if (!raw) return null;
+
+      const clean = raw.replace(/```json|```/g, '').trim();
+      const result = JSON.parse(clean);
+      console.log(`🧠 Ambiguity resolved: "${transcript}" → ref="${result.reference}" confirm=${result.confirmation} correction=${result.correction}`);
+      // Salva in dedup cache
+      this._lastAmbiguityResolution = { transcript: _cacheKey, result, turn: this._ambiguityTurnCounter };
+      return result;
+
+    } catch (err) {
+      clearTimeout(timeout);
+      return null;
+    }
+  }
+
   // ── GPT name fallback — solo per casi semanticamente ambigui ────────────────
   // Chiamato SOLO quando: frase lunga, fuori naming, parser locale = null
   // Costo: ~pochi centesimi/mese su 1200 chiamate. Latenza: 250-700ms (OK su completed)
