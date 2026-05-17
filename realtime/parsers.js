@@ -319,13 +319,25 @@ export const PeopleManager = {
       }
     }
 
+    // BUG 3: maschera "uno/una di noi", "uno dei nostri" — frasi descrittive NON count
+    // "per quattro persone, uno di noi è vegano" → people=4, non people=1
+    // GPT raccomandazione: narrowing semantic zones, non più regex masking
+    const tCleanDescr = tClean
+      .replace(/\bun[oa]\s+di\s+noi\b/gi, '__DESCR__')
+      .replace(/\bun[oa]\s+dei\s+nostri\b/gi, '__DESCR__')
+      .replace(/\bun[oa]\s+di\s+loro\b/gi, '__DESCR__')
+      .replace(/\buno\s+dei\s+miei\b/gi, '__DESCR__')
+      .replace(/\buno\s+è\b/gi, '__DESCR__')     // "uno è vegano"
+      .replace(/\buna\s+è\b/gi, '__DESCR__');    // "una è allergica"
+
+    // Ordine: numeri più grandi prima per evitare che "uno" catturi contesti come "siamo quattro, uno è..."
     const wordNumbers = {
-      'una':1,'uno':1,'due':2,'tre':3,'quattro':4,'cinque':5,'sei':6,
-      'sette':7,'otto':8,'nove':9,'dieci':10,'undici':11,'dodici':12,
+      'dodici':12,'undici':11,'dieci':10,'nove':9,'otto':8,'sette':7,
+      'sei':6,'cinque':5,'quattro':4,'tre':3,'due':2,'una':1,'uno':1,
     };
     for (const [word, num] of Object.entries(wordNumbers)) {
       const regex = new RegExp(`\\b${word}\\b`, 'i');
-      if (regex.test(tClean)) return num;
+      if (regex.test(tCleanDescr)) return num;
     }
 
     return null;
