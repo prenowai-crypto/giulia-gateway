@@ -903,6 +903,24 @@ export class OpenAIRealtimeClient {
           return;
         }
 
+        // GUARD: se non c'è nessun dato prenotazione estratto (no data/ora/persone)
+        // è quasi certamente una domanda sul locale, non una nuova prenotazione
+        // Es: "Lo avete il seggiolone?", "A che piano siete?", "Il menu lo avete online?"
+        const _hasBookingData = newDate || newTime || newPeople;
+        if (!_hasBookingData) {
+          console.log('💬 Phase=done: intent create senza dati → probabile domanda sul locale');
+          // Controlla se riguarda qualcosa già annotato sulla prenotazione
+          const _noteKeywords = /(seggiolone|allergi|celiaco|vegano|vegetar|carrozzin|disabil|parcheggio|posto|tavolo|menu|carta|prezzo|costo|dove|indirizzo|orari|chiuso|aperto|wifi|aria condizionata)/i;
+          if (this.lastReservation?.notes && _noteKeywords.test(this.lastTranscript || '')) {
+            const _notesClean = this._notesForClient(this.lastReservation.notes);
+            this._say(`Sì, ho già annotato sulla sua prenotazione: ${_notesClean}. C'è altro che posso fare per lei?`);
+          } else {
+            // Domanda generica sul locale — rimanda al ristorante
+            this._say('Per informazioni sul locale la invito a contattare direttamente il ristorante. Posso aiutarla con altro?');
+          }
+          return;
+        }
+
         this.intent = 'create';
         this.phase = 'collecting';
         this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
