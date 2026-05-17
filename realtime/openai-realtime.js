@@ -2746,31 +2746,6 @@ export class OpenAIRealtimeClient {
       // FIX 2: stato ridotto al minimo — solo phase/pendingQuestion/lastTopic
       // NON passare il booking completo: GPT deve solo capire il riferimento
       const systemPrompt = `Interpreta SOLO il significato contestuale dell'ultima frase dell'utente nel contesto di una conversazione per prenotazioni ristorante.\nNON decidere il flow conversazionale.\nNON inventare informazioni mancanti.\nNON inferire intent globali.\n\nContesto minimo:\n- Fase: ${this.phase || 'collecting'}\n- Domanda in attesa: ${this._pendingQuestion || 'nessuna'}\n- Ultimo argomento: ${this._lastTopic || 'nessuno'}\n\nRispondi SOLO con JSON valido, nessun testo aggiuntivo:\n{\n  \"reference\": \"cosa sta referenziando (es: seggiolone già menzionato, null)\",\n  \"confirmation\": true,\n  \"correction\": false,\n  \"entities\": {\n    \"date\": null,\n    \"time\": null,\n    \"people\": null,\n    \"name\": null,\n    \"note\": null\n  }\n}`;
-NON decidere il flow conversazionale.
-NON inventare informazioni mancanti.
-NON inferire intent globali.
-
-Stato corrente:
-- Data: ${this.data.date || 'non raccolta'}
-- Ora: ${this.data.time || 'non raccolta'}
-- Persone: ${this.data.people || 'non raccolte'}
-- Nome: ${this.data.name || 'non raccolto'}
-- Note: ${this.data.notes || 'nessuna'}
-
-Rispondi SOLO con JSON valido, nessun testo aggiuntivo:
-{
-  "reference": "cosa sta referenziando (es: seggiolone già menzionato, orario precedente, null)",
-  "confirmation": true/false,
-  "correction": true/false,
-  "entities": {
-    "date": null,
-    "time": null,
-    "people": null,
-    "name": null,
-    "note": null
-  }
-}`;
-
       const messages = [
         { role: 'system', content: systemPrompt },
         ...historySlice,
