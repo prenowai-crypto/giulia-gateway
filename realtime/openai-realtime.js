@@ -764,10 +764,16 @@ export class OpenAIRealtimeClient {
           return;
         }
 
-        // Fix 3A2: saluti e ringraziamenti finali → congedo, NON reset
-        // "Perfetto grazie mille", "Ok grazie", "Arrivederci", "Ciao"
-        const _farewellPat = /^(?:ok|sì|si|perfetto|benissimo|ottimo|capito|bene)?[,\s]*(?:grazie(?:\s+mille)?|arrivederci|arrivederla|a presto|ciao|buona(?:\s+serata|\s+giornata)?|salve)[!.\s]*$/i;
-        if (_farewellPat.test(this.lastTranscript.trim())) {
+        // Fix 3A2: saluti e ringraziamenti finali → congedo SEMPRE PRIMO
+        // Deve scattare PRIMA di topic memory e ambiguity — ordine critico
+        // Pattern esteso: "No, va benissimo, grazie mille", "Grazie buona giornata"
+        const _farewellPat = /^(?:ok|sì|si|no|perfetto|benissimo|ottimo|capito|bene)?[,\s]*(?:va\s+bene(?:\s+così)?[,\s]*)?(?:grazie(?:\s+mille)?|arrivederci|arrivederla|a presto|ciao|buona(?:\s+serata|\s+giornata)?|salve)[!.\s]*$/i;
+        // Pattern alternativo: frasi con "grazie" o congedo ovunque nella frase breve
+        const _farewellAlt = /\b(?:grazie(?:\s+mille)?|arrivederci|arrivederla|buona\s+(?:serata|giornata|notte))[!.\s]*$/i;
+        const _transcript = this.lastTranscript.trim();
+        const _isFarewell = _farewellPat.test(_transcript) ||
+                           (_transcript.split(/\s+/).length <= 8 && _farewellAlt.test(_transcript));
+        if (_isFarewell) {
           console.log('👋 Saluto/ringraziamento finale → congedo senza reset');
           this._say('Grazie a lei! A presto.');
           return;
@@ -995,7 +1001,9 @@ export class OpenAIRealtimeClient {
           // breve/interrogativa, è un follow-up sulle note senza ripetere le keyword
           const _wordCount3 = (this.lastTranscript || '').trim().split(/\s+/).length;
           const _isFollowUp = _wordCount3 <= 8 && /\?|avete|c'è|posso|si può|ok|bene|sì|certo|capito/i.test(this.lastTranscript || '');
-          if (this._lastTopic === 'notes' && this.lastReservation?.notes && _isFollowUp) {
+          // STEP 3: topic memory — ma NON se è un congedo
+          const _isCongedoInFollowUp = /\b(?:grazie|arrivederci|buona\s+(?:giornata|serata)|ciao|a\s+presto)\b/i.test(this.lastTranscript || '');
+          if (this._lastTopic === 'notes' && this.lastReservation?.notes && _isFollowUp && !_isCongedoInFollowUp) {
             const _notesClean = this._notesForClient(this.lastReservation.notes);
             console.log('💬 STEP 3: follow-up su notes (topic memory)');
             this._say(`Sì, ho già annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
