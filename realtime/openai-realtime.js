@@ -2876,7 +2876,7 @@ export class OpenAIRealtimeClient {
       return true;
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 5000);
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -2899,7 +2899,11 @@ export class OpenAIRealtimeClient {
       const data = await response.json();
       const answer = data?.choices?.[0]?.message?.content?.trim();
       console.log(`ℹ️ Info query risposta: "${answer?.substring(0,60)}"`);
-      if (!answer || answer === 'NOT_RESTAURANT') return false;
+      if (!answer || answer === 'NOT_RESTAURANT') {
+        console.log('🔍 _handleInfoQuery: NOT_RESTAURANT → risposta neutra');
+        this._say('Posso aiutarla con una prenotazione. Per quale giorno desidera?');
+        return true;
+      }
       if (answer.toLowerCase() === 'null') {
         this._say('Non ho questa informazione, le consiglio di contattare direttamente il ristorante.');
       } else {
