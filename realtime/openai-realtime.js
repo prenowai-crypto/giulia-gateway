@@ -191,14 +191,13 @@ export class OpenAIRealtimeClient {
 
     console.log(`💬 [user]: ${transcript}`);
 
-    // BUG 1: info query side channel — intercetta domande informative PRIMA del flow
-    // NON muta state, risponde e continua (se non in booking flow attivo)
+    // Side channel info query: segnali strutturali forti (menu, fate X, seggiolone, ecc.)
+    // Per domande semantiche senza segnali forti → gestito nel fallback intent=unknown
     if (this._isInformationalQuery(transcript) && !this.modifyState && !this.cancelState && this.phase !== 'done') {
       console.log('ℹ️ Info query rilevata → side channel risposta');
-      await this._handleInfoQuery(transcript);
-      // Side channel: non fa return — continua il flow normale
-      // (l'utente potrebbe voler prenotare dopo aver ricevuto l'info)
-      return;
+      const _handled = await this._handleInfoQuery(transcript);
+      if (_handled) return;
+      // GPT ha detto NOT_RESTAURANT (improbabile qui ma sicurezza) → continua
     }
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
@@ -1162,6 +1161,20 @@ export class OpenAIRealtimeClient {
     if (!this.intent && args.intent && args.intent !== 'unknown') {
       this.intent = args.intent;
       console.log(`🎯 Intent (GPT): ${this.intent}`);
+    }
+
+    // Se intent=unknown E nessuna entity estratta → potrebbe essere domanda sul locale
+    // GPT classifica: NOT_RESTAURANT → passa oltre | risposta → say e return
+    if (
+      (!this.intent || this.intent === 'unknown') &&
+      !newDate && !newTime && !newPeople && !newName &&
+      !this.modifyState && !this.cancelState && this.phase !== 'done' &&
+      this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0
+    ) {
+      console.log('🔍 Intent unknown + no entity → classifico con GPT');
+      const _handled = await this._handleInfoQuery(this.lastTranscript || '');
+      if (_handled) return; // GPT ha risposto → stop
+      // GPT dice NOT_RESTAURANT → continua il flow normale
     }
 
     const prevDate = this.data.date;
@@ -2724,21 +2737,34 @@ export class OpenAIRealtimeClient {
   // ESCLUSO: "sono X" (troppo ambiguo — "sono allergico agli arachidi")
   // ESCLUSO: pattern generico fallback (cattura qualsiasi parola sola)
   // ── Info query detector — domande informative sul ristorante ───────────────
+  // ── Info query detector — segnali STRUTTURALI solo, NON semantici ────────────
+  // La semantica (es: "fate la carbonara?") è delegata a GPT via _handleInfoQuery
+  // NON aggiungere mai nomi di piatti, ingredienti o servizi qui — cambia col menu
   _isInformationalQuery(transcript) {
     const t = transcript.toLowerCase();
-    // Menu e piatti
-    if (/\b(?:carbonara|pizza|pasta|risotto|menu|menù|piatt|cucin|serv[io]|prepar|vegano|vegetar|gluten|celiaco|pesce|carne|dolce|dessert|vino|birra|cocktail|aperitivo|carta|specialità)\b/.test(t)) return true;
-    // Location
-    if (/\b(?:dove siete|dove si trova|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
-    // Attrezzature — seggiolone con tutte le varianti Whisper (seggioroni, seggiorni, ecc.)
-    if (/\b(?:seggiol|seggior|seggial|seggiolin|seggiaron|highchair|sedia.*bamb|animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzin|wifi|aria\s*condiz)\b/.test(t)) return true;
-    // Bambini + contesto domanda
-    if (/\b(?:bambini|bambino|bimb|neonat)\b/.test(t) && /\b(?:avete|c'è|ce l'avete|disponibil|sedia|angolo|menu|serv)\b/.test(t)) return true;
-    // Orari
-    if (/\b(?:siete aperti|aprite|chiudete|orari|quando apre|quando chiude|a che ora|fino alle|fino a che)\b/.test(t)) return true;
-    // Domanda generica breve sul locale: "avete X?", "fate X?", "c'è X?"
+
+    // "menu/menù" menzionato — sicuro indicatore di domanda sul locale
+    if (/men[uù]/.test(t)) return true;
+
+    // Domande strutturali: "voglio sapere se...", "volevo chiederle se..."
+    if (/\b(?:voglio|volevo|vorrei)\s+(?:solo\s+|soltanto\s+)?(?:sap|chied|capir|inform)\w*\s+se\b/.test(t)) return true;
+
+    // "fate/servite/preparate [qualcosa]" — azione culinaria
+    if (/\b(?:fate|servite|preparate|cucinate|proponete)\s+\w/.test(t)) return true;
+
+    // "avete [qualcosa] nel/sulla/in carta" o "c'è [qualcosa] nel menù"
+    if (/\bnel\s+men[uù]\b|\bin\s+men[uù]\b|\bnel\s+carta\b|\bsulla\s+carta\b/.test(t)) return true;
+
+    // Servizi logistici — lista breve, stabile nel tempo
+    if (/\b(?:seggiol|seggior|highchair|parcheggio|disabil|carrozzin|accessibil|terrazza|dehor|animali|wifi)\b/.test(t)) return true;
+
+    // Orari e apertura
+    if (/\b(?:siete\s+aperti|aprite|chiudete|orari|quando\s+apre|a\s+che\s+ora)\b/.test(t)) return true;
+
+    // Domanda breve generica (≤8 parole) che inizia con avete/fate/c'è
     const words = t.trim().split(/\s+/);
-    if (words.length <= 8 && /^(?:avete|fate|c'è|ce l'avete|avete il|fate il|avete la|fate la|avete i|avete le|avete un|avete una|lo avete|la avete|li avete)/i.test(t.trim())) return true;
+    if (words.length <= 8 && /^(?:avete|fate|c'è|lo\s+avete|la\s+avete|li\s+avete)\b/i.test(t.trim())) return true;
+
     return false;
   }
 
@@ -2763,9 +2789,9 @@ export class OpenAIRealtimeClient {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           temperature: 0,
-          max_tokens: 80,
+          max_tokens: 100,
           messages: [
-            { role: 'system', content: `Sei l'assistente vocale di un ristorante. Rispondi in modo naturale e conversazionale. Usa SOLO le informazioni presenti nel contesto. Se l'informazione richiesta NON è presente nel contesto, rispondi con la parola null e nient'altro. Non inventare nulla. Massimo 2 frasi brevi in italiano.${menuDetails}` },
+            { role: 'system', content: `Sei l'assistente vocale di un ristorante. Il tuo compito e' rispondere a domande sul locale.\n\nREGOLE:\n1. Se la frase NON e' una domanda sul ristorante (es: ho una prenotazione, voglio prenotare, mi chiamo Rossi) risppondi esattamente: NOT_RESTAURANT\n2. Se e' una domanda sul ristorante MA la risposta non e' nelle info fornite, rispondi esattamente: null\n3. Se e' una domanda sul ristorante E la risposta e' nelle info, rispondi in max 2 frasi brevi italiane naturali. Non inventare nulla.${menuDetails}` },
             { role: 'user', content: transcript }
           ]
         })
@@ -2774,15 +2800,21 @@ export class OpenAIRealtimeClient {
       const data = await response.json();
       const answer = data?.choices?.[0]?.message?.content?.trim();
       console.log(`ℹ️ Info query: "${answer?.substring(0,60)}"`);
-      const isNull = !answer || answer.trim().toLowerCase() === 'null';
-      if (!isNull) {
-        this._say(answer);
-      } else {
-        this._say('Non ho informazioni specifiche su questo. Per dettagli vi invito a contattare direttamente il ristorante.');
+      if (!answer || answer.trim() === 'NOT_RESTAURANT') {
+        // Non è una domanda sul ristorante → non intercettare, ritorna false
+        console.log('🔍 _handleInfoQuery: non è domanda sul locale → lascio passare');
+        return false;
       }
+      if (answer.trim().toLowerCase() === 'null') {
+        this._say('Non ho questa informazione, le consiglio di contattare direttamente il ristorante.');
+        return true;
+      }
+      this._say(answer.trim());
+      return true;
     } catch (err) {
       clearTimeout(timeout);
-      this._say('Per informazioni contattate direttamente il ristorante.');
+      console.log('⚠️ _handleInfoQuery error:', err?.message);
+      return false; // In caso di errore non intercettare
     }
   }
 
