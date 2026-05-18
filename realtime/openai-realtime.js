@@ -2794,15 +2794,18 @@ export class OpenAIRealtimeClient {
   // Controlla frame linguistico interrogativo + assenza entity booking
   // NON altera mai lo state booking — è side conversation
   async _shouldHandleAsRestaurantInfo(transcript, extracted) {
+    // Segnali espliciti di booking → mai info query, indipendentemente da tutto
+    // "ho prenotato", "ho una prenotazione", "spostare", ecc. → sempre booking flow
+    const _t = transcript.toLowerCase();
+    const _clearBookingSignal = /\bho\s+(?:già\s+)?prenotat|\bho\s+una\s+prenotazione|\bprenotazione\s+a\s+nome|\bspostare\b|\bmodificare\b|\bcancellare\b|\bdisdire\b|\bannullare\b|\bvolevo\s+spostare\b|\bvolevo\s+modificare\b/.test(_t);
+    if (_clearBookingSignal) return false;
+
     // FIX 2 (GPT): entity booking e intent informational possono coesistere
-    // "Sabato avete tavoli fuori?" ha date ma è informational
-    // Blocca solo se c'è STRONG booking intent: entity + nessun segnale info
     const _hasEntities = !!(extracted.date || extracted.time || extracted.people);
     if (_hasEntities) {
-      const _t = transcript.toLowerCase();
-      const _looksInformational = /\bavete\b|\bfate\b|\bservite\b|\bc'è\b|\bposso\s+sapere\b|\bmen[uù]\b|\bparcheggio\b|\bseggiol\b|\borari\b|\baccessibil\b|\bpagament\b/.test(_t);
-      if (!_looksInformational) return false; // entity forti + nessun segnale info → booking
-      // entity + segnale info → lascia passare al check GPT
+      const _looksInformational = /\bfate\b|\bservite\b|\bc'è\b|\bposso\s+sapere\b|\bmen[uù]\b|\bparcheggio\b|\bseggiol\b|\borari\b|\baccessibil\b|\bpagament\b/.test(_t);
+      // Rimosso \bavete\b — troppo broad ("avete segnato" è booking, non info)
+      if (!_looksInformational) return false;
     }
 
     // Solo in fase collecting senza flow attivi
