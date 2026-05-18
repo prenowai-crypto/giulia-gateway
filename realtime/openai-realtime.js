@@ -2726,18 +2726,31 @@ export class OpenAIRealtimeClient {
   // ── Info query detector — domande informative sul ristorante ───────────────
   _isInformationalQuery(transcript) {
     const t = transcript.toLowerCase();
-    if (/\b(?:carbonara|pizza|menu|menù|piatto|cucina|serv|prepar|vegano|vegetar|gluten|celiaco|pesce|carne|dolce|vino|birra)\b/.test(t)) return true;
-    if (/\b(?:dove siete|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
-    if (/\b(?:animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzina)\b/.test(t)) return true;
-    if (/\b(?:siete aperti|aprite|chiudete|orari|quando apre|quando chiude)\b/.test(t)) return true;
+    // Menu e piatti
+    if (/\b(?:carbonara|pizza|pasta|risotto|menu|menù|piatt|cucin|serv[io]|prepar|vegano|vegetar|gluten|celiaco|pesce|carne|dolce|dessert|vino|birra|cocktail|aperitivo|carta|specialità)\b/.test(t)) return true;
+    // Location
+    if (/\b(?:dove siete|dove si trova|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
+    // Attrezzature — seggiolone con tutte le varianti Whisper (seggioroni, seggiorni, ecc.)
+    if (/\b(?:seggiol|seggior|seggial|seggiolin|seggiaron|highchair|sedia.*bamb|animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzin|wifi|aria\s*condiz)\b/.test(t)) return true;
+    // Bambini + contesto domanda
+    if (/\b(?:bambini|bambino|bimb|neonat)\b/.test(t) && /\b(?:avete|c'è|ce l'avete|disponibil|sedia|angolo|menu|serv)\b/.test(t)) return true;
+    // Orari
+    if (/\b(?:siete aperti|aprite|chiudete|orari|quando apre|quando chiude|a che ora|fino alle|fino a che)\b/.test(t)) return true;
+    // Domanda generica breve sul locale: "avete X?", "fate X?", "c'è X?"
+    const words = t.trim().split(/\s+/);
+    if (words.length <= 8 && /^(?:avete|fate|c'è|ce l'avete|avete il|fate il|avete la|fate la|avete i|avete le|avete un|avete una|lo avete|la avete|li avete)/i.test(t.trim())) return true;
     return false;
   }
 
   // ── Info query handler — risponde da menuDetails senza mutare lo state ─────
   async _handleInfoQuery(transcript) {
-    const menuDetails = this.restaurantConfig?.menuDetails || this.restaurantConfig?.notes || '';
-    if (!menuDetails) {
-      this._say('Per informazioni dettagliate sul locale vi invito a contattare direttamente il ristorante.');
+    // _restaurantInfo è caricato da _fetchAndInjectRestaurantInfo() con get_restaurant_info
+    // NON usare this.restaurantConfig che non contiene le info del locale
+    const ri = this._restaurantInfo || {};
+    const menuDetails = this._buildInfoSection();
+
+    if (!menuDetails || menuDetails.trim().length < 10) {
+      this._say('Per informazioni sul locale vi invito a contattare direttamente il ristorante.');
       return;
     }
     const controller = new AbortController();
@@ -2752,7 +2765,7 @@ export class OpenAIRealtimeClient {
           temperature: 0,
           max_tokens: 80,
           messages: [
-            { role: 'system', content: `Sei l'assistente vocale di un ristorante. Rispondi SOLO usando le informazioni presenti. Se non presenti: "Per dettagli specifici conviene contattare direttamente il ristorante." Massimo 2 frasi brevi.\n\nInfo ristorante:\n${menuDetails}` },
+            { role: 'system', content: `Sei l'assistente vocale di un ristorante. Rispondi in modo naturale e conversazionale. Usa SOLO le informazioni presenti nel contesto. Se l'informazione richiesta NON è presente nel contesto, rispondi con la parola null e nient'altro. Non inventare nulla. Massimo 2 frasi brevi in italiano.${menuDetails}` },
             { role: 'user', content: transcript }
           ]
         })
@@ -2761,7 +2774,12 @@ export class OpenAIRealtimeClient {
       const data = await response.json();
       const answer = data?.choices?.[0]?.message?.content?.trim();
       console.log(`ℹ️ Info query: "${answer?.substring(0,60)}"`);
-      this._say(answer || 'Per informazioni contattate direttamente il ristorante.');
+      const isNull = !answer || answer.trim().toLowerCase() === 'null';
+      if (!isNull) {
+        this._say(answer);
+      } else {
+        this._say('Non ho informazioni specifiche su questo. Per dettagli vi invito a contattare direttamente il ristorante.');
+      }
     } catch (err) {
       clearTimeout(timeout);
       this._say('Per informazioni contattate direttamente il ristorante.');
