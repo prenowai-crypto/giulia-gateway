@@ -191,13 +191,14 @@ export class OpenAIRealtimeClient {
 
     console.log(`💬 [user]: ${transcript}`);
 
-    // Side channel info query: segnali strutturali forti (menu, fate X, seggiolone, ecc.)
-    // Per domande semantiche senza segnali forti → gestito nel fallback intent=unknown
+    // BUG 1: info query side channel — intercetta domande informative PRIMA del flow
+    // NON muta state, risponde e continua (se non in booking flow attivo)
+    // Side channel: segnali strutturali forti (menu, seggiolone, orari)
+    // Il pre-routing in _processExtraction gestisce i casi semantici (dolci, primi, ecc.)
     if (this._isInformationalQuery(transcript) && !this.modifyState && !this.cancelState && this.phase !== 'done') {
-      console.log('ℹ️ Info query rilevata → side channel risposta');
+      console.log('ℹ️ Info query strutturale → side channel risposta');
       const _handled = await this._handleInfoQuery(transcript);
       if (_handled) return;
-      // GPT ha detto NOT_RESTAURANT (improbabile qui ma sicurezza) → continua
     }
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
@@ -227,7 +228,7 @@ export class OpenAIRealtimeClient {
     }
 
     // Parsing locale + business logic
-    const _notesHandled = this._detectNotesAndPhone(transcript);
+    const _notesHandled = await this._detectNotesAndPhone(transcript);
     if (_notesHandled) return; // BUG 6: note post-confirm già gestite con risposta — stop
     const args = await this._extractFromTranscript(transcript);
     await this._processExtraction(args).catch(err => console.error('❌ _processExtraction:', err));
@@ -771,6 +772,21 @@ export class OpenAIRealtimeClient {
       args.intent = 'modify';
     }
 
+    // ══ PRE-ROUTING LAYER (GPT raccomandazione) ══════════════════════════════
+    // Prima del booking flow: intercetta domande sul locale
+    // Intent=create NON significa sempre "vuole prenotare" — è anche il fallback catch-all
+    // Segnali strutturali (no entity + frame interrogativo) → GPT risponde dal menu
+    if (!this.modifyState && !this.cancelState && this.phase !== 'done') {
+      const _isInfoQ = await this._shouldHandleAsRestaurantInfo(this.lastTranscript || '', {
+        date: newDate, time: newTime, people: newPeople
+      });
+      if (_isInfoQ) {
+        const _handled = await this._handleInfoQuery(this.lastTranscript || '');
+        if (_handled) return; // GPT ha risposto → stop, NON mutare phase
+        // GPT dice NOT_RESTAURANT → continua il booking flow normalmente
+      }
+    }
+
     // ── Fix 3: Phase=done — gestisce saluti, ringraziamenti e nuovi intent ────
     if (this.phase === 'done') {
       const intent = args.intent;
@@ -1163,20 +1179,6 @@ export class OpenAIRealtimeClient {
       console.log(`🎯 Intent (GPT): ${this.intent}`);
     }
 
-    // Se intent=unknown E nessuna entity estratta → potrebbe essere domanda sul locale
-    // GPT classifica: NOT_RESTAURANT → passa oltre | risposta → say e return
-    if (
-      (!this.intent || this.intent === 'unknown') &&
-      !newDate && !newTime && !newPeople && !newName &&
-      !this.modifyState && !this.cancelState && this.phase !== 'done' &&
-      this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0
-    ) {
-      console.log('🔍 Intent unknown + no entity → classifico con GPT');
-      const _handled = await this._handleInfoQuery(this.lastTranscript || '');
-      if (_handled) return; // GPT ha risposto → stop
-      // GPT dice NOT_RESTAURANT → continua il flow normale
-    }
-
     const prevDate = this.data.date;
     const prevTime = this.data.time;
 
@@ -1428,44 +1430,94 @@ export class OpenAIRealtimeClient {
 
   // ── Note e Telefono Alternativo ───────────────────────────────────────────
 
-  _detectNotesAndPhone(text) {
+  // ── GPT note extractor — label nota da contesto (sostituisce contextCapture) ──
+  // Pattern GPT: note semantiche → GPT, entity strutturate → parser
+  // Chiamata leggera: solo il label della nota, max 6 parole
+  async _extractNoteWithGPT(text, category) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1500);
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0,
+          max_tokens: 15,
+          messages: [{
+            role: 'system',
+            content: `Estrai la nota specifica dalla frase per la categoria "${category}". Rispondi SOLO con il label della nota, max 4 parole in italiano, nessun altro testo. Esempi: "anniversario di matrimonio" → "Anniversario matrimonio". "sono allergico alle uova" → "Allergia uova". "mia moglie è celiaca" → "Celiachia (moglie)". "compleanno di mia figlia" → "Compleanno figlia".`
+          }, {
+            role: 'user', content: text
+          }]
+        })
+      });
+      clearTimeout(timeout);
+      const data = await response.json();
+      const label = data?.choices?.[0]?.message?.content?.trim();
+      return label && label.length < 50 ? label : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async _detectNotesAndPhone(text) {
     // Ritorna true se ha già gestito la risposta (update_notes post-confirm)
     // Il caller deve fare return immediatamente in quel caso
     const t = text.toLowerCase();
 
     // ── Keyword note ─────────────────────────────────────────────────────────
     // 🆕 FIX 4: campo `removes` per gestire note confliggenti (es. interno vs esterno)
+    // NOTE: pattern = trigger strutturale (dice che c'è qualcosa da annotare)
+    // note = fallback label se GPT non è disponibile o per note non-semantiche
+    // gptCategory = hint per GPT su che tipo di nota estrarre
+    // NO più contextCapture regex — label semantico estratto da GPT
     const noteKeywords = [
-      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i, note: 'Intolleranza glutine' },
-      { pattern: /lattosio|lactose/i,                               note: 'Intolleranza lattosio' },
-      // BUG 4: "allergico alle uova" → "Allergia uova"
-      { pattern: /allergi[aoci]/i, note: 'Allergia (verifica con cliente)',
-        contextCapture: /allergi[coa]+\s+(?:a(?:gli|lle|l'|l)?\s+)?([\wàèéìòù]+(?:\s+[\wàèéìòù]+){0,2})/i, contextPrefix: 'Allergia' },
-      { pattern: /\buova\b|\buovo\b/i,                              note: 'Allergia uova' },
-      { pattern: /arachidi|arachide|frutta\s*secca|noci/i,          note: 'Allergia frutta secca' },
-      { pattern: /vegetarian[oai]/i,                                note: 'Vegetariano' },
-      { pattern: /vegan[oai]/i,                                     note: 'Vegano' },
-      { pattern: /seggiol[eo]n[eo]|seggiolino|seggialone|seggilon[ei]|seggialino|highchair/i, note: 'Richiesto seggiolone' },
-      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i, note: 'Neonato/bambino piccolo' },
-      // BUG 4: cattura contesto dopo keyword (max 3 parole) — "anniversario di matrimonio"
-      { pattern: /anniversario/i, note: 'Anniversario',
-        contextCapture: /anniversario(?:\s+(?:di\s+)?([\w\s]{2,20}))?/i, contextPrefix: 'Anniversario' },
-      // BUG 4: "compleanno di mia moglie" → "Compleanno moglie"
-      { pattern: /compleanno|birthday/i, note: 'Compleanno',
-        contextCapture: /compleanno(?:\s+(?:di\s+)?([\w\s]{2,15}))?/i, contextPrefix: 'Compleanno' },
-      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,     note: 'Proposta di matrimonio' },
-      { pattern: /occasion[ei]\s*speciale/i,                        note: 'Occasione speciale' },
-      { pattern: /romantico|romantica/i,                            note: 'Cena romantica' },
-      { pattern: /finestra|vista/i,                                 note: 'Tavolo vicino finestra' },
-      // 🆕 FIX 4: esterno negato da interno → non aggiungere
-      { pattern: /esterno|terrazza|giardino|dehor|\bfuori\b|all.aperto/i, note: 'Tavolo esterno/terrazza',
+      // Allergie e intolleranze — GPT estrae l'allergene specifico
+      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i,
+        note: 'Intolleranza glutine', gptCategory: 'intolleranza/celiachia' },
+      { pattern: /lattosio|lactose/i,
+        note: 'Intolleranza lattosio', gptCategory: 'intolleranza lattosio' },
+      { pattern: /allergi[aoci]/i,
+        note: 'Allergia (verifica con cliente)', gptCategory: 'allergia alimentare' },
+      { pattern: /\buova\b|\buovo\b/i,
+        note: 'Allergia uova', gptCategory: 'allergia uova' },
+      { pattern: /arachidi|arachide|frutta\s*secca|noci/i,
+        note: 'Allergia frutta secca', gptCategory: 'allergia frutta secca' },
+      // Dieta — GPT può specificare "vegano (1 persona)", "vegetariana (moglie)" ecc.
+      { pattern: /vegetarian[oai]/i,
+        note: 'Vegetariano', gptCategory: 'dieta vegetariana' },
+      { pattern: /vegan[oai]/i,
+        note: 'Vegano', gptCategory: 'dieta vegana' },
+      // Bambini (label già preciso, GPT non aggiunge valore)
+      { pattern: /seggiol[eo]n[eo]|seggiolino|seggialone|seggilon[ei]|seggialino|highchair/i,
+        note: 'Richiesto seggiolone' },
+      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i,
+        note: 'Neonato/bambino piccolo' },
+      // Occasioni — GPT estrae contesto preciso (matrimonio, moglie, ecc.)
+      { pattern: /anniversario/i,
+        note: 'Anniversario', gptCategory: 'anniversario' },
+      { pattern: /compleanno|birthday/i,
+        note: 'Compleanno', gptCategory: 'compleanno' },
+      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,
+        note: 'Proposta di matrimonio' },
+      { pattern: /occasion[ei]\s*speciale/i,
+        note: 'Occasione speciale', gptCategory: 'occasione speciale' },
+      { pattern: /romantico|romantica/i,
+        note: 'Cena romantica' },
+      { pattern: /finestra|vista/i,
+        note: 'Tavolo vicino finestra' },
+      // Tavolo — label deterministico, no GPT
+      { pattern: /esterno|terrazza|giardino|dehor|\bfuori\b|all.aperto/i,
+        note: 'Tavolo esterno/terrazza',
         negation: /\ball.interno\b|prefer[ei].{0,20}intern|non.{0,20}esterno|starei.{0,10}intern|\bdentro\b/i },
-      // BUG 5: aggiunti "dentro/fuori" come sinonimi di interno/esterno
-      // "vogliamo stare dentro" → Tavolo interno (nota positiva, non solo rimozione)
       { pattern: /\binterno\b|\bdentro\b|preferis[ce].{0,20}intern|star[ei].{0,10}dentro|vorrei.{0,10}dentro/i,
         note: 'Tavolo interno', removes: 'Tavolo esterno/terrazza' },
-      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,          note: 'Accessibilità disabili' },
-      { pattern: /tranquill[oa]|riservat[oa]/i,                     note: 'Tavolo tranquillo/riservato' },
+      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,
+        note: 'Accessibilità disabili' },
+      { pattern: /tranquill[oa]|riservat[oa]/i,
+        note: 'Tavolo tranquillo/riservato' },
     ];
 
     // 🆕 FIX 3B: se il cliente sta CHIEDENDO di note già esistenti → non rilevare note
@@ -1495,15 +1547,16 @@ export class OpenAIRealtimeClient {
           continue;
         }
         if (pattern.test(text)) {
-          // BUG 4: cattura contesto dopo keyword se presente
-          if (contextCapture && contextPrefix) {
-            const _ctxM = text.match(contextCapture);
-            if (_ctxM?.[1]) {
-              const _ctx = _ctxM[1].trim().split(/\s+/).slice(0,3).join(' ');
-              if (_ctx && _ctx.length > 1) note = `${contextPrefix} ${_ctx}`;
+          // GPT estrae il label semantico se gptCategory è definito
+          // Questo sostituisce il contextCapture regex — scala col cambiamento del linguaggio
+          if (kw.gptCategory) {
+            const _gptLabel = await this._extractNoteWithGPT(text, kw.gptCategory);
+            if (_gptLabel) {
+              note = _gptLabel;
+              console.log(`🧠 Nota GPT: "${_gptLabel}" (categoria: ${kw.gptCategory})`);
             }
           }
-          // 🆕 FIX 4: controlla negazione (es. "non all'esterno" non aggiunge nota esterno)
+          // 🆕 FIX 4: controlla negazione
           if (negation && negation.test(text)) {
             console.log(`📋 Nota "${note}" negata nel contesto → skip`);
             continue;
@@ -1594,7 +1647,7 @@ export class OpenAIRealtimeClient {
     if (this.conversationLocked) return;
 
     // Rileva note e telefono alternativo su ogni messaggio
-    const _notesHandled2 = this._detectNotesAndPhone(text);
+    const _notesHandled2 = await this._detectNotesAndPhone(text);
     if (_notesHandled2) return; // BUG 6: note già gestite
 
     // Detect intent on first message
@@ -2736,48 +2789,91 @@ export class OpenAIRealtimeClient {
   // Usa SOLO pattern inequivocabili: "mi chiamo X", "a nome X", "prenoto a nome X"
   // ESCLUSO: "sono X" (troppo ambiguo — "sono allergico agli arachidi")
   // ESCLUSO: pattern generico fallback (cattura qualsiasi parola sola)
-  // ── Info query detector — domande informative sul ristorante ───────────────
-  // ── Info query detector — segnali STRUTTURALI solo, NON semantici ────────────
-  // La semantica (es: "fate la carbonara?") è delegata a GPT via _handleInfoQuery
-  // NON aggiungere mai nomi di piatti, ingredienti o servizi qui — cambia col menu
-  _isInformationalQuery(transcript) {
+  // ── Pre-routing: decide se la frase va gestita come domanda sul locale ──────
+  // Pattern GPT: structural + contextual, NON regex sui piatti
+  // Controlla frame linguistico interrogativo + assenza entity booking
+  // NON altera mai lo state booking — è side conversation
+  async _shouldHandleAsRestaurantInfo(transcript, extracted) {
+    // FIX 2 (GPT): entity booking e intent informational possono coesistere
+    // "Sabato avete tavoli fuori?" ha date ma è informational
+    // Blocca solo se c'è STRONG booking intent: entity + nessun segnale info
+    const _hasEntities = !!(extracted.date || extracted.time || extracted.people);
+    if (_hasEntities) {
+      const _t = transcript.toLowerCase();
+      const _looksInformational = /\bavete\b|\bfate\b|\bservite\b|\bc'è\b|\bposso\s+sapere\b|\bmen[uù]\b|\bparcheggio\b|\bseggiol\b|\borari\b|\baccessibil\b|\bpagament\b/.test(_t);
+      if (!_looksInformational) return false; // entity forti + nessun segnale info → booking
+      // entity + segnale info → lascia passare al check GPT
+    }
+
+    // Solo in fase collecting senza flow attivi
+    if (this.modifyState || this.cancelState || this.phase === 'done') return false;
+
+    // Deve avere restaurantInfo disponibile
+    if (!this._restaurantInfo || Object.keys(this._restaurantInfo).length === 0) return false;
+
     const t = transcript.toLowerCase();
 
-    // "menu/menù" menzionato — sicuro indicatore di domanda sul locale
-    if (/men[uù]/.test(t)) return true;
+    // Frame linguistico interrogativo — NON nomi di piatti specifici
+    // Segnali strutturali: domanda generica sul locale
+    const infoPatterns = [
+      /\bcosa\b/,           // "cosa avete", "cosa fate"
+      /\bche\b.*\?/,       // "che dolci avete?"
+      /\bavete\b/,          // "avete X"
+      /\bfate\b/,           // "fate X"
+      /\bservite\b/,
+      /\bpreparate\b/,
+      /\bmen[uù]\b/,        // "menu"
+      /\bprimi\b/,          // categoria, non piatto
+      /\bsecondi\b/,        // categoria
+      /\bdolci\b/,          // categoria
+      /\bantipasti\b/,      // categoria
+      /\bsenza\s+glut/,     // "senza glutine"
+      /\bvegan[oi]\b/,
+      /\bvegetar/,
+      /\bparcheggio\b/,
+      /\bindirizzo\b/,
+      /\borari\b/,
+      /\bseggiol/,           // "seggiolone" e varianti
+      /\baccessibil/,
+      /\bpagamento\b/,
+      /\bprezzo\b/,
+      /\bcosto\b/,
+      /\bcucina\b/,
+      /\bspecialit/,
+      /posso\s+sapere/,      // "posso sapere..."
+      /voglio\s+sapere/,     // "voglio sapere..."
+      /vorrei\s+sapere/,
+      /volevo\s+sapere/,
+      /vorrei\s+chieder/,
+      /ho\s+una\s+domanda/,
+    ];
 
-    // Domande strutturali: "voglio sapere se...", "volevo chiederle se..."
-    if (/\b(?:voglio|volevo|vorrei)\s+(?:solo\s+|soltanto\s+)?(?:sap|chied|capir|inform)\w*\s+se\b/.test(t)) return true;
-
-    // "fate/servite/preparate [qualcosa]" — azione culinaria
-    if (/\b(?:fate|servite|preparate|cucinate|proponete)\s+\w/.test(t)) return true;
-
-    // "avete [qualcosa] nel/sulla/in carta" o "c'è [qualcosa] nel menù"
-    if (/\bnel\s+men[uù]\b|\bin\s+men[uù]\b|\bnel\s+carta\b|\bsulla\s+carta\b/.test(t)) return true;
-
-    // Servizi logistici — lista breve, stabile nel tempo
-    if (/\b(?:seggiol|seggior|highchair|parcheggio|disabil|carrozzin|accessibil|terrazza|dehor|animali|wifi)\b/.test(t)) return true;
-
-    // Orari e apertura
-    if (/\b(?:siete\s+aperti|aprite|chiudete|orari|quando\s+apre|a\s+che\s+ora)\b/.test(t)) return true;
-
-    // Domanda breve generica (≤8 parole) che inizia con avete/fate/c'è
-    const words = t.trim().split(/\s+/);
-    if (words.length <= 8 && /^(?:avete|fate|c'è|lo\s+avete|la\s+avete|li\s+avete)\b/i.test(t.trim())) return true;
-
+    const score = infoPatterns.filter(r => r.test(t)).length;
+    if (score >= 1) {
+      console.log(`🔍 Pre-routing: info query score=${score} → gestisco come domanda locale`);
+      return true;
+    }
     return false;
   }
 
-  // ── Info query handler — risponde da menuDetails senza mutare lo state ─────
-  async _handleInfoQuery(transcript) {
-    // _restaurantInfo è caricato da _fetchAndInjectRestaurantInfo() con get_restaurant_info
-    // NON usare this.restaurantConfig che non contiene le info del locale
-    const ri = this._restaurantInfo || {};
-    const menuDetails = this._buildInfoSection();
+  // ── Info query detector — domande informative sul ristorante ───────────────
+  _isInformationalQuery(transcript) {
+    const t = transcript.toLowerCase();
+    if (/\b(?:carbonara|pizza|menu|menù|piatto|cucina|serv|prepar|vegano|vegetar|gluten|celiaco|pesce|carne|dolce|vino|birra)\b/.test(t)) return true;
+    if (/\b(?:dove siete|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
+    if (/\b(?:animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzina)\b/.test(t)) return true;
+    if (/\b(?:siete aperti|aprite|chiudete|orari|quando apre|quando chiude)\b/.test(t)) return true;
+    return false;
+  }
 
-    if (!menuDetails || menuDetails.trim().length < 10) {
-      this._say('Per informazioni sul locale vi invito a contattare direttamente il ristorante.');
-      return;
+  // ── Info query handler — risponde da _restaurantInfo via GPT ───────────────
+  // NON muta mai phase o stato booking — side conversation pura
+  // Ritorna true se ha risposto, false se non era una domanda sul locale
+  async _handleInfoQuery(transcript) {
+    const infoSection = this._buildInfoSection ? this._buildInfoSection() : '';
+    if (!infoSection || infoSection.trim().length < 20) {
+      this._say('Per informazioni sul locale la invito a contattare direttamente il ristorante.');
+      return true;
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
@@ -2791,7 +2887,10 @@ export class OpenAIRealtimeClient {
           temperature: 0,
           max_tokens: 100,
           messages: [
-            { role: 'system', content: `Sei l'assistente vocale di un ristorante. Il tuo compito e' rispondere a domande sul locale.\n\nREGOLE:\n1. Se la frase NON e' una domanda sul ristorante (es: ho una prenotazione, voglio prenotare, mi chiamo Rossi) risppondi esattamente: NOT_RESTAURANT\n2. Se e' una domanda sul ristorante MA la risposta non e' nelle info fornite, rispondi esattamente: null\n3. Se e' una domanda sul ristorante E la risposta e' nelle info, rispondi in max 2 frasi brevi italiane naturali. Non inventare nulla.${menuDetails}` },
+            {
+              role: 'system',
+              content: `Sei l'assistente vocale di un ristorante. Rispondi a domande sul locale.\nREGOLE:\n1. Se la frase NON e' una domanda sul ristorante → rispondi esattamente: NOT_RESTAURANT\n2. Se e' domanda sul ristorante ma risposta non presente → rispondi esattamente: null\n3. Se e' domanda con risposta presente → max 2 frasi brevi in italiano. Non inventare.\n${infoSection}`
+            },
             { role: 'user', content: transcript }
           ]
         })
@@ -2799,24 +2898,21 @@ export class OpenAIRealtimeClient {
       clearTimeout(timeout);
       const data = await response.json();
       const answer = data?.choices?.[0]?.message?.content?.trim();
-      console.log(`ℹ️ Info query: "${answer?.substring(0,60)}"`);
-      if (!answer || answer.trim() === 'NOT_RESTAURANT') {
-        // Non è una domanda sul ristorante → non intercettare, ritorna false
-        console.log('🔍 _handleInfoQuery: non è domanda sul locale → lascio passare');
-        return false;
-      }
-      if (answer.trim().toLowerCase() === 'null') {
+      console.log(`ℹ️ Info query risposta: "${answer?.substring(0,60)}"`);
+      if (!answer || answer === 'NOT_RESTAURANT') return false;
+      if (answer.toLowerCase() === 'null') {
         this._say('Non ho questa informazione, le consiglio di contattare direttamente il ristorante.');
-        return true;
+      } else {
+        this._say(answer);
       }
-      this._say(answer.trim());
       return true;
     } catch (err) {
       clearTimeout(timeout);
       console.log('⚠️ _handleInfoQuery error:', err?.message);
-      return false; // In caso di errore non intercettare
+      return false;
     }
   }
+
 
   // ── Ambiguity score — decide se serve context GPT ───────────────────────────
   // FIX 4 (GPT): score numerico invece di boolean puro
@@ -2829,12 +2925,13 @@ export class OpenAIRealtimeClient {
 
     let score = 0;
 
-    // FIX 3a: entity forte presente → NON è ambiguo anche se frase breve
-    // "Ferrari", "alle nove", "siamo quattro" non sono ambigui
+    // HARD RULE (GPT): se ci sono entity estratte → MAI triggerare ambiguity GPT
+    // "sabato alle 9", "siamo in quattro", "Ferrari" → parser deterministico basta
     const hasStrongEntity = !!(extracted.date || extracted.time || extracted.people || extracted.name);
+    if (hasStrongEntity) return false; // zero ambiguity se parser ha già estratto
 
-    // Risposta breve (≤ 4 parole) SOLO se nessuna entity forte estratta
-    if (wordCount <= 4 && !hasStrongEntity) score += 2;
+    // Risposta breve (≤ 4 parole) senza entity
+    if (wordCount <= 4) score += 2;
 
     // FIX 3b: pronomi — rimuovi "la/le/li/lo" (troppo rumorosi in italiano PSTN)
     // Mantieni solo pronomi disambiguanti reali
