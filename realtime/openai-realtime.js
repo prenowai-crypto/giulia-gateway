@@ -1479,12 +1479,15 @@ export class OpenAIRealtimeClient {
         note: 'Intolleranza glutine', gptCategory: 'intolleranza/celiachia' },
       { pattern: /lattosio|lactose/i,
         note: 'Intolleranza lattosio', gptCategory: 'intolleranza lattosio' },
+      // Allergia generica: scatta SOLO se non ci sono allergeni specifici già coperti
+      // Negazione: arachidi/uova/frutta secca/glutine hanno pattern dedicati → skip generico
       { pattern: /allergi[aoci]/i,
-        note: 'Allergia (verifica con cliente)', gptCategory: 'allergia alimentare' },
+        note: 'Allergia (verifica con cliente)', gptCategory: 'allergia alimentare',
+        negation: /arachidi|arachide|frutta\s*secca|noci|\buov[ao]\b|lattosio|glutine|celiaco/i },
       { pattern: /\buova\b|\buovo\b/i,
         note: 'Allergia uova', gptCategory: 'allergia uova' },
       { pattern: /arachidi|arachide|frutta\s*secca|noci/i,
-        note: 'Allergia frutta secca', gptCategory: 'allergia frutta secca' },
+        note: 'Allergia arachidi/frutta secca', gptCategory: 'allergia arachidi o frutta secca' },
       // Dieta — GPT può specificare "vegano (1 persona)", "vegetariana (moglie)" ecc.
       { pattern: /vegetarian[oai]/i,
         note: 'Vegetariano', gptCategory: 'dieta vegetariana' },
