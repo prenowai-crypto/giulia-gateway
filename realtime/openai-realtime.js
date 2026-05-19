@@ -766,7 +766,7 @@ export class OpenAIRealtimeClient {
     // Nel modify flow l'utente PUÒ dire date/ore/numeri senza voler fare una nuova prenotazione.
     // Reset SOLO con frasi esplicite: "voglio fare una nuova prenotazione", "annulla tutto", ecc.
     if (this.modifyState && this.modifyState !== 'done' && this.modifyState !== 'idle' && this.modifyState !== 'awaiting_smart_confirm') {
-      const _explicitExit = /\b(?:nuova\s+prenotazione|voglio\s+prenotare\s+(?:un|un')\s+altro|annulla\s+tutto|lasci\s+stare|ripartiamo|lasciate?\s+perdere)\b/i.test(transcript || '');
+      const _explicitExit = /\b(?:nuova\s+prenotazione|voglio\s+prenotare\s+(?:un|un')\s+altro|annulla\s+tutto|lasci\s+stare|ripartiamo|lasciate?\s+perdere)\b/i.test(this.lastTranscript || '');
       if (!_explicitExit) {
         console.log(`🔒 HARD LOCK: modifyState=${this.modifyState}, blocco reset`);
         args.intent = 'modify';
