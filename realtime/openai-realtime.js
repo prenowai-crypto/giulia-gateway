@@ -762,15 +762,17 @@ export class OpenAIRealtimeClient {
       return;
     }
 
-    // ══ STATE OWNERSHIP — BUG 2 fix (GPT raccomandazione) ═══════════════════
-    // Active flow state ha SEMPRE priorità sul transcript intent
-    // "diventiamo in otto" in modify flow → aggiorna people, non fa create
-    // Deve stare PRIMA di qualsiasi intent routing globale
+    // ══ HARD LOCK: modifyState attivo → nessun reset automatico ══════════════
+    // Nel modify flow l'utente PUÒ dire date/ore/numeri senza voler fare una nuova prenotazione.
+    // Reset SOLO con frasi esplicite: "voglio fare una nuova prenotazione", "annulla tutto", ecc.
     if (this.modifyState && this.modifyState !== 'done' && this.modifyState !== 'idle' && this.modifyState !== 'awaiting_smart_confirm') {
-      console.log(`🔒 State ownership: modifyState=${this.modifyState} → resto in modify flow`);
-      // non fare return — lascia continuare _processExtraction ma con intent forzato modify
-      args.intent = 'modify';
+      const _explicitExit = /\b(?:nuova\s+prenotazione|voglio\s+prenotare\s+(?:un|un')\s+altro|annulla\s+tutto|lasci\s+stare|ripartiamo|lasciate?\s+perdere)\b/i.test(transcript || '');
+      if (!_explicitExit) {
+        console.log(`🔒 HARD LOCK: modifyState=${this.modifyState}, blocco reset`);
+        args.intent = 'modify';
+      }
     }
+
 
     // ══ PRE-ROUTING LAYER (GPT raccomandazione) ══════════════════════════════
     // Prima del booking flow: intercetta domande sul locale
@@ -1979,6 +1981,104 @@ export class OpenAIRealtimeClient {
     }
   }
 
+  // ══ MODIFY PATCH SYSTEM (GPT semantic diff) ══════════════════════════════
+  // Invece di parsare entità assolute, GPT interpreta il DELTA rispetto alla prenotazione corrente.
+  // Output: { action, changes: { people: {mode,value}, time: {mode,value}, date: {mode,value} } }
+  // action: "modify" | "reject" | "no_change"
+  // mode: "delta" (relativo) | "set" (assoluto) | "delta_minutes" (per orario)
+  async _resolveModifyPatch(transcript, r) {
+    try {
+      const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+      const dateDisplay = DateManager.formatForDisplay(r.date);
+      const timeDisplay = TimeManager.formatForDisplay(timeNorm);
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0,
+          max_tokens: 120,
+          messages: [{
+            role: 'system',
+            content: `Sei un interprete di modifiche a prenotazioni ristorante. Analizza il messaggio utente rispetto alla prenotazione corrente e rispondi SOLO con JSON valido, nient'altro.
+
+Prenotazione corrente:
+- nome: ${r.name}
+- persone: ${r.people}
+- giorno: ${dateDisplay}
+- orario: ${timeDisplay}
+
+Regole:
+- action="modify" se vuole cambiare qualcosa
+- action="reject" se rifiuta esplicitamente (solo "no grazie", "annulla", "lasci perdere")
+- action="no_change" se non si capisce cosa vuole modificare
+- people mode="delta": positivo=aggiunge, negativo=riduce (es: "aggiunte 2" → delta +2)
+- people mode="set": numero finale assoluto (es: "diventiamo 6" → set 6)
+- time mode="set": orario finale HH:MM:SS
+- time mode="delta_minutes": minuti in più/meno (es: "mezz'ora dopo" → +30)
+- date mode="set": data finale YYYY-MM-DD
+- Se una chiave non cambia, NON includerla in changes.
+
+Esempio output:
+{"action":"modify","changes":{"people":{"mode":"delta","value":2}}}`
+          }, {
+            role: 'user', content: transcript
+          }]
+        })
+      });
+      clearTimeout(timeout);
+      const data = await response.json();
+      const raw = data?.choices?.[0]?.message?.content?.trim();
+      const patch = JSON.parse(raw);
+      console.log(`🔧 ModifyPatch: ${JSON.stringify(patch)}`);
+      return patch;
+    } catch (err) {
+      console.log('⚠️ _resolveModifyPatch error:', err?.message);
+      return null;
+    }
+  }
+
+  // Applica il patch alla prenotazione corrente → ritorna valori aggiornati
+  _applyModifyPatch(r, patch) {
+    const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '21:00:00');
+    let updDate   = r.date;
+    let updTime   = timeNorm;
+    let updPeople = Number(r.people);
+
+    const changes = patch?.changes || {};
+
+    if (changes.people) {
+      if (changes.people.mode === 'delta') {
+        updPeople = Number(r.people) + Number(changes.people.value);
+      } else if (changes.people.mode === 'set') {
+        updPeople = Number(changes.people.value);
+      }
+      updPeople = Math.max(1, Math.min(50, updPeople)); // clamp 1-50
+    }
+
+    if (changes.time) {
+      if (changes.time.mode === 'set') {
+        updTime = changes.time.value;
+      } else if (changes.time.mode === 'delta_minutes') {
+        const [h, m] = timeNorm.split(':').map(Number);
+        const total = h * 60 + m + Number(changes.time.value);
+        const nh = Math.floor(total / 60) % 24;
+        const nm = total % 60;
+        updTime = `${String(nh).padStart(2,'0')}:${String(nm).padStart(2,'0')}:00`;
+      }
+    }
+
+    if (changes.date?.mode === 'set') {
+      updDate = changes.date.value;
+    }
+
+    return { updDate, updTime, updPeople };
+  }
+
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
     // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
     if (!this.modifyState) {
@@ -2086,98 +2186,56 @@ export class OpenAIRealtimeClient {
       const r = this.foundReservation;
       if (!r) { this.modifyState = null; return; }
 
+      // ══ PATCH SYSTEM — GPT interpreta il delta semantico ══════════════════════
+      // "si sono aggiunte due persone" → people delta +2 (non set 2)
+      // "mezz'ora dopo" → time delta +30min
+      // "No, diventiamo sei" → correzione, non rifiuto
+      const _transcript = this.lastTranscript || '';
+      const patch = await this._resolveModifyPatch(_transcript, r);
 
-
-      // Guard v3.9.35: se l'utente fornisce un nome DIVERSO da quello trovato
-      // (es: "No, io sono Rossi" dopo aver trovato "Sposta") → ri-cerca con il nome corretto
-      // invece di aggiornare l'evento sbagliato.
-      if (newName && r.name && newName.toLowerCase() !== r.name.toLowerCase()) {
-        const onlyNameChanged = !newDate && !newTime && !newPeople;
-        if (onlyNameChanged) {
-          // Solo il nome è cambiato → è una correzione, non una modifica di campi
-          console.log(`🔄 MODIFY: nome corretto "${r.name}" → "${newName}", ri-cerca`);
-          this.modifyState = 'awaiting_search';
-          this.data.name = newName;
-          this.foundReservation = null;
-          const found = await this._findReservationWithFallback(newName, r.date, 'MODIFY ri-cerca');
-          if (found) {
-            this.foundReservation = found;
-            const timeNorm = found.time?.length === 5 ? found.time + ':00' : (found.time || '');
-            const dateDisplay = DateManager.formatForDisplay(found.date);
-            const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-            this.modifyState = 'awaiting_changes';
-            this._say(`Ho trovato: ${found.name}, ${dateDisplay} alle ${timeDisplay} per ${found.people} persone. Cosa vuole modificare?`);
-          } else {
-            this._say(`Non trovo nessuna prenotazione a nome ${newName}. Può riprovare?`);
-          }
-          return;
-        }
-      }
-
-      const timeOrig = r.time?.length >= 5 ? (r.time.length === 5 ? r.time + ':00' : r.time) : null;
-
-      if (!timeOrig && !newTime) {
-        // Non abbiamo né l'orario originale né uno nuovo — chiedi
-        this._say(`Non riesco a leggere l'orario della prenotazione. A che ora era prevista?`);
-        return;
-      }
-
-      // Fix 2: accetta newTime solo se diverso da timeOrig (evita che GPT inventi orari)
-      // Se il cliente dice "stessa ora" o non menziona l'orario, GPT può estrarre un orario
-      // diverso dalla conversazione precedente — lo ignoriamo e usiamo sempre timeOrig
-      const timeChangedExplicitly = newTime && newTime !== timeOrig;
-
-      const updDate   = newDate   || r.date;
-      const updTime   = timeChangedExplicitly ? newTime : timeOrig;
-      const updPeople = newPeople || Number(r.people);
-      const updName   = newName   || r.name;
-
-      const dateChanged   = newDate   && newDate   !== r.date;
-      const timeChanged   = timeChangedExplicitly;
-      const peopleChanged = newPeople && Number(newPeople) !== Number(r.people);
-
-      if (!dateChanged && !timeChanged && !peopleChanged && !newName) {
-        // Ultima risorsa: GPT interpreta espressioni relative ("si sono aggiunte due", "altri due")
-        // PeopleManager può aver estratto il numero delta (es: "due" → 2) ma non il totale
-        if (this.lastTranscript && r) {
-          const _gptPeople = await this._extractPeopleGPT(this.lastTranscript, Number(r.people));
-          if (_gptPeople && _gptPeople !== Number(r.people)) {
-            newPeople = _gptPeople;
-            // Ricalcola con il valore GPT
-            const _updPeopleGPT = Number(newPeople);
-            const _mergedNotesGPT = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
-            const _rNotesArrGPT = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
-            const _mergedArrGPT = _mergedNotesGPT ? _mergedNotesGPT.split('; ').map(s => s.trim()).filter(Boolean) : [];
-            const _addedNotesGPT = _mergedArrGPT.filter(n => !_rNotesArrGPT.includes(n));
-            const _newNotesStrGPT = _addedNotesGPT.length > 0 ? _addedNotesGPT.join(', ') : null;
-            this._smartModifyParams = { r, updDate: r.date, updTime: r.time?.length === 5 ? r.time + ':00' : r.time, updPeople: _updPeopleGPT, mergedNotes: _mergedNotesGPT };
-            this.modifyState = 'awaiting_smart_confirm';
-            const _msgGPT = this._buildSmartModifyMsg(r, r.date, r.time?.length === 5 ? r.time + ':00' : r.time, _updPeopleGPT, false, _newNotesStrGPT);
-            console.log(`🤖 MODIFY GPT people: ${r.people}→${_updPeopleGPT}`);
-            this._say(_msgGPT);
-            return;
-          }
-        }
+      if (!patch) {
+        // GPT non disponibile → fallback vecchio sistema con parser
         this._say('Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?');
         return;
       }
 
-      // ─── RECAP + CONFIRM prima di eseguire ───────────────────────────────────
-      // Invece di eseguire direttamente, mostriamo un recap e chiediamo conferma.
-      // Questo rende il modify regolare identico a SMART MODIFY nell'UX.
-      {
-        const mergedNotes = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
-        const rNotesArr = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
-        const mergedArr = mergedNotes ? mergedNotes.split('; ').map(s => s.trim()).filter(Boolean) : [];
-        const addedNotes = mergedArr.filter(n => !rNotesArr.includes(n));
-        const newNotesStr = addedNotes.length > 0 ? addedNotes.join(', ') : null;
-        this._smartModifyParams = { r, updDate, updTime, updPeople: Number(updPeople), mergedNotes };
-        this.modifyState = 'awaiting_smart_confirm';
-        const msg = this._buildSmartModifyMsg(r, updDate, updTime, Number(updPeople), false, newNotesStr);
-        console.log(`🤖 MODIFY→SMART recap: ${updDate} ${updTime} ${updPeople}pax`);
-        this._say(msg);
+      if (patch.action === 'reject') {
+        // Rifiuto ESPLICITO ("no grazie", "annulla", "lasci perdere")
+        // NON resettare — chiedi cosa vuole fare
+        this._say('Ok, la prenotazione rimane invariata. Posso aiutarla con altro?');
+        this.modifyState = 'done';
         return;
       }
+
+      if (patch.action === 'no_change' || !patch.changes || Object.keys(patch.changes).length === 0) {
+        this._say('Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?');
+        return;
+      }
+
+      // Applica il patch → calcola valori aggiornati
+      const { updDate, updTime, updPeople } = this._applyModifyPatch(r, patch);
+      const updName = r.name;
+
+      // Verifica che almeno qualcosa sia cambiato
+      const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+      const changed = updDate !== r.date || updTime !== timeOrig || updPeople !== Number(r.people);
+      if (!changed) {
+        this._say('Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?');
+        return;
+      }
+
+      // Mostra recap e chiedi conferma (path SMART MODIFY)
+      const mergedNotes = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
+      const rNotesArr = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
+      const mergedArr = mergedNotes ? mergedNotes.split('; ').map(s => s.trim()).filter(Boolean) : [];
+      const addedNotes = mergedArr.filter(n => !rNotesArr.includes(n));
+      const newNotesStr = addedNotes.length > 0 ? addedNotes.join(', ') : null;
+      this._smartModifyParams = { r, updDate, updTime, updPeople, mergedNotes };
+      this.modifyState = 'awaiting_smart_confirm';
+      const msg = this._buildSmartModifyMsg(r, updDate, updTime, updPeople, false, newNotesStr);
+      console.log(`🔧 PATCH→SMART: ${r.people}pax→${updPeople}pax ${timeOrig}→${updTime} ${r.date}→${updDate}`);
+      this._say(msg);
+      return;
       // ─── (il codice sotto è ora raggiunto solo da _handleSmartModifyConfirm) ─
 
       // Lock anti-double: impedisce al secondo GPT trigger di eseguire un altro MODIFY
