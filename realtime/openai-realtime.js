@@ -1121,6 +1121,14 @@ export class OpenAIRealtimeClient {
         return;
       }
 
+      // FIX 3: domande informative sul locale (seggiolone, menu, ecc.) → _handleInfoQuery
+      // NON usare note recall per domande come "avete il seggiolone?"
+      if (this._isInformationalQuery(this.lastTranscript || '') &&
+          this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
+        const _handled = await this._handleInfoQuery(this.lastTranscript || '');
+        if (_handled) return;
+      }
+
       // Controlla prima se è una domanda info — risposta deterministica
       const _infoAnswerDone = this._checkInfoQuestion(this.lastTranscript || '');
       if (_infoAnswerDone !== null) {
@@ -2084,12 +2092,30 @@ export class OpenAIRealtimeClient {
 
       const dateChanged   = newDate   && newDate   !== r.date;
       const timeChanged   = timeChangedExplicitly;
-      const peopleChanged = newPeople && newPeople !== Number(r.people);
+      const peopleChanged = newPeople && Number(newPeople) !== Number(r.people);
 
       if (!dateChanged && !timeChanged && !peopleChanged && !newName) {
         this._say('Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?');
         return;
       }
+
+      // ─── RECAP + CONFIRM prima di eseguire ───────────────────────────────────
+      // Invece di eseguire direttamente, mostriamo un recap e chiediamo conferma.
+      // Questo rende il modify regolare identico a SMART MODIFY nell'UX.
+      {
+        const mergedNotes = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
+        const rNotesArr = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
+        const mergedArr = mergedNotes ? mergedNotes.split('; ').map(s => s.trim()).filter(Boolean) : [];
+        const addedNotes = mergedArr.filter(n => !rNotesArr.includes(n));
+        const newNotesStr = addedNotes.length > 0 ? addedNotes.join(', ') : null;
+        this._smartModifyParams = { r, updDate, updTime, updPeople: Number(updPeople), mergedNotes };
+        this.modifyState = 'awaiting_smart_confirm';
+        const msg = this._buildSmartModifyMsg(r, updDate, updTime, Number(updPeople), false, newNotesStr);
+        console.log(`🤖 MODIFY→SMART recap: ${updDate} ${updTime} ${updPeople}pax`);
+        this._say(msg);
+        return;
+      }
+      // ─── (il codice sotto è ora raggiunto solo da _handleSmartModifyConfirm) ─
 
       // Lock anti-double: impedisce al secondo GPT trigger di eseguire un altro MODIFY
       this._processingModify = true;
@@ -2270,7 +2296,9 @@ export class OpenAIRealtimeClient {
   async _trySmartModify(r, newDate, newTime, newPeople) {
     const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || null);
 
-    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people) && this._peopleChange === true;
+    // FIX: non dipendere da _peopleChange flag (spesso non settato da IntentDetector)
+    // Confronto deterministico: se PeopleManager ha estratto un numero diverso → cambia
+    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people);
     const timeChanged   = newTime   && newTime !== timeOrig;
     const dateChanged   = newDate   && newDate !== r.date;
     const hasNewNotes   = !!(this.data.notes && this.data.notes.length > 0);
@@ -2834,8 +2862,9 @@ export class OpenAIRealtimeClient {
       /\bdolci\b/,          // categoria
       /\bantipasti\b/,      // categoria
       /\bsenza\s+glut/,     // "senza glutine"
-      /\bvegan[oi]\b/,
-      /\bvegetar/,
+      // vegan[oi] e vegetar rimossi — sono NOTE sulla prenotazione, non info query
+      // Se qualcuno chiede "avete piatti vegani?" viene catturato da "fate/avete" o "menu"
+      /\bvegetar.*\?/,  // solo se domanda esplicita (punto interrogativo)
       /\bparcheggio\b/,
       /\bindirizzo\b/,
       /\borari\b/,
