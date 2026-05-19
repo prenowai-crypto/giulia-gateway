@@ -1124,11 +1124,14 @@ export class OpenAIRealtimeClient {
       }
 
       // FIX 3: domande informative sul locale (seggiolone, menu, ecc.) → _handleInfoQuery
-      // GUARD: se è una domanda sulle NOTE della prenotazione → NON mandare a _handleInfoQuery
-      // "avete ancora segnata la celiachia?" → nota prenotazione (non menu)
-      // "avete il seggiolone?" → domanda sul locale (menu)
+      // GUARD: se è una domanda sulle NOTE della prenotazione → vai direttamente al note recall
+      // Salta sia _handleInfoQuery che _checkInfoQuestion per evitare "Per informazioni sul locale"
       const _isNoteRecallQ = /\b(?:segnato|annotato|segnalato|ancora\s+segnata?|ancora\s+annotata?|ancora\s+assegnata?|hai\s+segnato|avete\s+segnato|l'avete|l'hai|avete\s+ancora\s+(?:la|il|i|le)\s+\w)/i.test(this.lastTranscript || '');
-      if (!_isNoteRecallQ && this._isInformationalQuery(this.lastTranscript || '') &&
+
+      // _isNoteRecallQ: ora gestito da _handleInfoQuery con contesto completo
+      // GPT risponde sia a domande sulle note che sul ristorante
+      if (this._isInformationalQuery(this.lastTranscript || '') ||
+          _isNoteRecallQ) {
           this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
         const _handled = await this._handleInfoQuery(this.lastTranscript || '');
         if (_handled) return;
@@ -2361,6 +2364,14 @@ Esempio output:
         // si attivi quando l'utente fa domande post-modifica (es: "hai segnato le note?")
         this.intent = 'done_modify';
         this._say(`Perfetto ${firstName}! Ho aggiornato la prenotazione: ${dateDisplay} alle ${timeDisplay} per ${updPeople} persone. Ti aspettiamo!`);
+
+        // FIX: se la conferma conteneva anche una domanda sulle note, rispondi subito
+        const _confirmTxt = this.lastTranscript || '';
+        const _hadNoteQ = /\b(?:segnato|annotato|segnalato|ancora\s+segnata?|ancora\s+annotata?|ancora\s+assegnata?|hai\s+segnato|avete\s+segnato|l'avete|l'hai)/i.test(_confirmTxt);
+        if (_hadNoteQ && this.lastReservation?.notes) {
+          const _notesTxt = this._notesForClient(this.lastReservation.notes);
+          if (_notesTxt) setTimeout(() => this._say(`Sì, ho ancora annotato: ${_notesTxt}.`), 1500);
+        }
       } else {
         this._say(`Mi dispiace, c'è stato un problema nell'aggiornamento. Può richiamare?`);
       }
@@ -3033,10 +3044,20 @@ Esempio output:
   // Ritorna true se ha risposto, false se non era una domanda sul locale
   async _handleInfoQuery(transcript) {
     const infoSection = this._buildInfoSection ? this._buildInfoSection() : '';
-    if (!infoSection || infoSection.trim().length < 20) {
-      this._say('Per informazioni sul locale la invito a contattare direttamente il ristorante.');
-      return true;
-    }
+
+    // Contesto prenotazione corrente (se esiste)
+    // GPT usa ENTRAMBI i contesti: info ristorante + note prenotazione
+    // Questo permette di rispondere a "avete segnata la celiachia?" senza regex
+    const _lr = this.lastReservation || this.foundReservation;
+    const _reservationContext = _lr ? `
+=== PRENOTAZIONE CORRENTE DEL CLIENTE ===
+- Nome: ${_lr.name || 'non specificato'}
+- Data: ${_lr.date ? DateManager.formatForDisplay(_lr.date) : 'non specificata'}
+- Orario: ${_lr.time ? TimeManager.formatForDisplay(_lr.time) : 'non specificato'}
+- Persone: ${_lr.people || 'non specificato'}
+- Note annotate: ${this._notesForClient(_lr.notes) || 'nessuna nota'}
+` : '';
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
@@ -3051,7 +3072,17 @@ Esempio output:
           messages: [
             {
               role: 'system',
-              content: `Sei l'assistente vocale di un ristorante. Rispondi a domande sul locale.\nREGOLE:\n1. Se la frase NON e' una domanda sul ristorante → rispondi esattamente: NOT_RESTAURANT\n2. Se e' domanda sul ristorante ma risposta non presente → rispondi esattamente: null\n3. Se e' domanda con risposta presente → max 2 frasi brevi in italiano. Non inventare.\n${infoSection}`
+              content: `Sei l'assistente vocale di un ristorante. Rispondi in modo naturale e conversazionale usando il contesto disponibile.
+
+REGOLE:
+1. Puoi rispondere su: info ristorante (menu, orari, servizi) E note sulla prenotazione del cliente
+2. Se la domanda riguarda le note della prenotazione (allergie, intolleranze, richieste speciali) → rispondi con quello che è annotato
+3. Se è una domanda sul ristorante → usa le info del locale
+4. Se non hai l'informazione richiesta → rispondi esattamente: null
+5. Se la frase non è una domanda su nulla di pertinente → rispondi esattamente: NOT_RELEVANT
+6. Massimo 2 frasi brevi in italiano. Non inventare nulla.
+${_reservationContext}
+${infoSection}`
             },
             { role: 'user', content: transcript }
           ]
@@ -3061,10 +3092,10 @@ Esempio output:
       const data = await response.json();
       const answer = data?.choices?.[0]?.message?.content?.trim();
       console.log(`ℹ️ Info query risposta: "${answer?.substring(0,60)}"`);
-      if (!answer || answer === 'NOT_RESTAURANT') {
-        console.log('🔍 _handleInfoQuery: NOT_RESTAURANT → risposta neutra');
-        this._say('Posso aiutarla con una prenotazione. Per quale giorno desidera?');
-        return true;
+
+      if (!answer || answer === 'NOT_RELEVANT') {
+        console.log('🔍 _handleInfoQuery: NOT_RELEVANT → return false');
+        return false;
       }
       if (answer.toLowerCase() === 'null') {
         this._say('Non ho questa informazione, le consiglio di contattare direttamente il ristorante.');
