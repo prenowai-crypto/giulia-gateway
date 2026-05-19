@@ -2427,32 +2427,41 @@ Esempio output:
    * Returns true se lo ha gestito, false se si deve passare al flusso classico.
    */
   async _trySmartModify(r, newDate, newTime, newPeople) {
-    const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || null);
+    // ══ PATCH SYSTEM al primo turno ══════════════════════════════════════════
+    // Invece di parser assoluti, GPT interpreta semanticamente il primo messaggio.
+    // "si sono aggiunte due persone" con 4 → delta +2 → 6 pax
+    // "spostare a sabato alle 21" → set date + set time
+    // Questo elimina il "Cosa vuole modificare?" nella maggior parte dei casi.
 
-    // FIX people: distingue cambio esplicito da rumore parser
-    // "ho UNA prenotazione" → newPeople=1 ma NON è un cambio esplicito
-    // "diventiamo quattro" / "siamo in 4" → cambio esplicito
+    const hasNewNotes = !!(this.data.notes && this.data.notes.length > 0);
+    const noteCheck   = this._noteCheck === true;
     const _transcript = this.lastTranscript || '';
-    const _explicitPeopleChange = /\bdiventiamo\b|\bsiamo\s+in\b|\bsaremo\b|\bsi\s+aggiunge\b|\bin\s+più\b|\bin\s+meno\b|\bpersone?\s+(?:in|total|\d)|\baggiungo\b|\baggiungiamo\b|\bun[oa]\s+in\s+più\b|\bsolo\s+\d/i.test(_transcript);
-    const _peopleExtractedExplicitly = this._peopleChange === true || _explicitPeopleChange;
-    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people) && _peopleExtractedExplicitly;
-    const timeChanged   = newTime   && newTime !== timeOrig;
-    const dateChanged   = newDate   && newDate !== r.date;
-    const hasNewNotes   = !!(this.data.notes && this.data.notes.length > 0);
-    const noteCheck     = this._noteCheck === true;
+    const timeOrig    = r.time?.length === 5 ? r.time + ':00' : (r.time || '21:00:00');
 
-    // Se non c'è nessuna informazione utile → flusso classico
-    if (!peopleChanged && !timeChanged && !dateChanged && !hasNewNotes && !noteCheck) {
+    // Chiama il patch system GPT
+    const patch = await this._resolveModifyPatch(_transcript, r);
+    const hasChanges = patch?.action === 'modify' &&
+                       patch.changes && Object.keys(patch.changes).length > 0;
+
+    // Se GPT non rileva nulla E non ci sono note → flusso classico (chiedi cosa modificare)
+    if (!hasChanges && !hasNewNotes && !noteCheck) {
       return false;
     }
 
-    // Calcola valori finali
-    const updDate   = (dateChanged ? newDate : r.date);
-    const updTime   = (timeChanged ? newTime : timeOrig);
-    const updPeople = Number(peopleChanged ? newPeople : r.people);
+    // Applica il patch
+    let updDate   = r.date;
+    let updTime   = timeOrig;
+    let updPeople = Number(r.people);
+
+    if (hasChanges) {
+      const applied = this._applyModifyPatch(r, patch);
+      updDate   = applied.updDate;
+      updTime   = applied.updTime;
+      updPeople = applied.updPeople;
+    }
 
     // Valida orario se cambiato
-    if (timeChanged && !ValidationPipeline.isValidTime(updTime, this.restaurantConfig)) {
+    if (updTime !== timeOrig && !ValidationPipeline.isValidTime(updTime, this.restaurantConfig)) {
       const rc = this.restaurantConfig;
       const lunch  = rc?.lunch_hours  || '12:00-14:30';
       const dinner = rc?.dinner_hours || '21:00-22:30';
@@ -2461,19 +2470,19 @@ Esempio output:
       return true;
     }
 
-    // Calcola note finali e note nuove (da annunciare nel recap)
+    // Note finali: merge note esistenti + nuove
     const mergedNotes = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
     const rNotesArr   = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
     const mergedArr   = mergedNotes ? mergedNotes.split('; ').map(s => s.trim()).filter(Boolean) : [];
     const addedNotes  = mergedArr.filter(n => !rNotesArr.includes(n));
     const newNotesStr = addedNotes.length > 0 ? addedNotes.join(', ') : null;
 
-    // Salva per l'esecuzione post-conferma
+    // Salva e mostra recap
     this._smartModifyParams = { r, updDate, updTime, updPeople, mergedNotes };
     this.modifyState = 'awaiting_smart_confirm';
 
     const msg = this._buildSmartModifyMsg(r, updDate, updTime, updPeople, noteCheck, newNotesStr);
-    console.log(`🤖 SMART MODIFY: recap pronto (people=${updPeople}, time=${updTime}, date=${updDate})`);
+    console.log(`🤖 SMART MODIFY patch: people=${updPeople}, time=${updTime}, date=${updDate}`);
     this._say(msg);
     return true;
   }
