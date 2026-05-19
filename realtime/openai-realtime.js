@@ -1122,8 +1122,11 @@ export class OpenAIRealtimeClient {
       }
 
       // FIX 3: domande informative sul locale (seggiolone, menu, ecc.) → _handleInfoQuery
-      // NON usare note recall per domande come "avete il seggiolone?"
-      if (this._isInformationalQuery(this.lastTranscript || '') &&
+      // GUARD: se è una domanda sulle NOTE della prenotazione → NON mandare a _handleInfoQuery
+      // "avete ancora segnata la celiachia?" → nota prenotazione (non menu)
+      // "avete il seggiolone?" → domanda sul locale (menu)
+      const _isNoteRecallQ = /\b(?:segnato|annotato|segnalato|ancora\s+segnata?|ancora\s+annotata?|ancora\s+assegnata?|hai\s+segnato|avete\s+segnato|l'avete|l'hai|avete\s+ancora\s+(?:la|il|i|le)\s+\w)/i.test(this.lastTranscript || '');
+      if (!_isNoteRecallQ && this._isInformationalQuery(this.lastTranscript || '') &&
           this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
         const _handled = await this._handleInfoQuery(this.lastTranscript || '');
         if (_handled) return;
