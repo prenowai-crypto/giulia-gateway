@@ -1128,10 +1128,9 @@ export class OpenAIRealtimeClient {
       // Salta sia _handleInfoQuery che _checkInfoQuestion per evitare "Per informazioni sul locale"
       const _isNoteRecallQ = /\b(?:segnato|annotato|segnalato|ancora\s+segnata?|ancora\s+annotata?|ancora\s+assegnata?|hai\s+segnato|avete\s+segnato|l'avete|l'hai|avete\s+ancora\s+(?:la|il|i|le)\s+\w)/i.test(this.lastTranscript || '');
 
-      // _isNoteRecallQ: ora gestito da _handleInfoQuery con contesto completo
-      // GPT risponde sia a domande sulle note che sul ristorante
-      if (this._isInformationalQuery(this.lastTranscript || '') ||
-          _isNoteRecallQ) {
+      // GPT risponde sia a domande sulle note della prenotazione che sul ristorante
+      // Usa contesto completo: menuDetails + note prenotazione corrente
+      if ((this._isInformationalQuery(this.lastTranscript || '') || _isNoteRecallQ) &&
           this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
         const _handled = await this._handleInfoQuery(this.lastTranscript || '');
         if (_handled) return;
