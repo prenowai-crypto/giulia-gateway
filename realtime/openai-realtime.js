@@ -3040,10 +3040,26 @@ Esempio output:
   // ── Info query detector — domande informative sul ristorante ───────────────
   _isInformationalQuery(transcript) {
     const t = transcript.toLowerCase();
-    if (/\b(?:carbonara|pizza|menu|menù|piatto|cucina|serv|prepar|vegano|vegetar|gluten|celiaco|pesce|carne|dolce|vino|birra)\b/.test(t)) return true;
+
+    // REGOLA FONDAMENTALE: deve essere una DOMANDA, non una dichiarazione
+    // "uno di noi è vegano" → dichiarazione → NOT info query
+    // "avete piatti vegani?" → domanda → info query
+    // Segnali interrogativi: punto interrogativo, verbi interrogativi, avverbi interrogativi
+    const _hasQuestionMark = transcript.includes('?');
+    const _hasInterrogativeVerb = /\b(?:avete|fate|c'è|ci sono|è possibile|si può|posso|potete|avete|offrite|servite|accettate|è disponibile|quando apre|quando chiude|siete aperti|quanto costa|quanto viene|come si arriva|dove siete|mi dite|mi sapete|sapete dirmi)\b/i.test(t);
+    const _hasInterrogativeWord = /\b(?:cosa|che cosa|come|dove|quando|quanto|quant[eo]|quali|quale|chi)\b/i.test(t);
+
+    const _isQuestion = _hasQuestionMark || _hasInterrogativeVerb || _hasInterrogativeWord;
+
+    // Se non è una domanda → non intercettare mai
+    if (!_isQuestion) return false;
+
+    // È una domanda: controlla se riguarda il ristorante o la prenotazione
+    if (/\b(?:menu|menù|piatt|cucina|carbonara|pizza|pasta|carne|pesce|dolce|vino|birra|vegan|vegetar|gluten|celiac|allergi|intolleran)/.test(t)) return true;
     if (/\b(?:dove siete|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
-    if (/\b(?:animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzina)\b/.test(t)) return true;
-    if (/\b(?:siete aperti|aprite|chiudete|orari|quando apre|quando chiude)\b/.test(t)) return true;
+    if (/\b(?:animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzina|seggiolone|bambini)\b/.test(t)) return true;
+    if (/\b(?:aperti|aprite|chiudete|orari|quando apre|quando chiude|coperto|prezzo|costo)\b/.test(t)) return true;
+    if (/\b(?:segnato|annotato|assegnato|ancora|nota|appuntat)\b/.test(t)) return true;
     return false;
   }
 
