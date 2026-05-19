@@ -196,9 +196,14 @@ export class OpenAIRealtimeClient {
     // Side channel: segnali strutturali forti (menu, seggiolone, orari)
     // Il pre-routing in _processExtraction gestisce i casi semantici (dolci, primi, ecc.)
     if (this._isInformationalQuery(transcript) && !this.modifyState && !this.cancelState && this.phase !== 'done') {
-      console.log('ℹ️ Info query strutturale → side channel risposta');
-      const _handled = await this._handleInfoQuery(transcript);
-      if (_handled) return;
+      // Guard: se contiene segnali booking chiari → NON intercettare
+      // "ho una prenotazione a nome Conti... posso spostarmi?" → è un modify, non info query
+      const _hasBookingSignal = /\bho\s+(?:già\s+)?prenotat|\bho\s+una\s+prenotazione|\bprenotazione\s+a\s+nome|\bvoglio\s+prenotare|\bvoglio\s+(?:spostare|modificare|cancellare|disdire)|\bposso\s+spostare|\bposso\s+modificare/i.test(transcript);
+      if (!_hasBookingSignal) {
+        console.log('ℹ️ Info query strutturale → side channel risposta');
+        const _handled = await this._handleInfoQuery(transcript);
+        if (_handled) return;
+      }
     }
     this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
@@ -2018,7 +2023,8 @@ Regole:
 - action="modify" se vuole cambiare qualcosa
 - action="reject" se rifiuta esplicitamente (solo "no grazie", "annulla", "lasci perdere")
 - action="no_change" se non si capisce cosa vuole modificare
-- people mode="delta": positivo=aggiunge, negativo=riduce (es: "aggiunte 2" → delta +2)
+- people mode="delta": positivo=aggiunge, negativo=riduce (es: "aggiunte 2 persone" → delta +2)
+- IMPORTANTE: "aggiungere" riferito ad allergie, intolleranze o note NON è un cambio persone. Solo "si uniscono", "diventiamo", "siamo in più", "aggiungiamo una persona" cambiano le persone.
 - people mode="set": numero finale assoluto (es: "diventiamo 6" → set 6)
 - time mode="set": orario finale HH:MM:SS
 - time mode="delta_minutes": minuti in più/meno (es: "mezz'ora dopo" → +30)
@@ -2499,7 +2505,23 @@ Esempio output:
     const no  = /\b(no|annulla|aspetta|fermati|stop|lascia perdere|cambia)\b/i.test(text);
 
     if (!yes && !no) {
-      this._say('Non ho capito. Confermo la modifica? Dica sì o no.');
+      // Non è un sì/no — potrebbe essere una correzione del recap
+      // Es: "Ma perché per cinque? Siamo in quattro!" → re-interpreta con patch system
+      const _correction = this._smartModifyParams?.r;
+      if (_correction && this.lastTranscript) {
+        const _corrPatch = await this._resolveModifyPatch(this.lastTranscript, _correction);
+        if (_corrPatch?.action === 'modify' && _corrPatch.changes && Object.keys(_corrPatch.changes).length > 0) {
+          const { updDate, updTime, updPeople } = this._applyModifyPatch(_correction, _corrPatch);
+          const _mergedNotes = this._smartModifyParams.mergedNotes;
+          this._smartModifyParams = { r: _correction, updDate, updTime, updPeople, mergedNotes: _mergedNotes };
+          this.modifyState = 'awaiting_smart_confirm';
+          const _msg = this._buildSmartModifyMsg(_correction, updDate, updTime, updPeople, false, null);
+          console.log(`🔄 SMART MODIFY correzione: ${_correction.people}→${updPeople}pax`);
+          this._say(_msg);
+          return;
+        }
+      }
+      this._say('Non ho capito. Vuole confermare la modifica o cambiare qualcosa?');
       return;
     }
 
