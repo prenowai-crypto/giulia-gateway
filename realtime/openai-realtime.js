@@ -2083,12 +2083,7 @@ export class OpenAIRealtimeClient {
       const r = this.foundReservation;
       if (!r) { this.modifyState = null; return; }
 
-      // Se PeopleManager non ha estratto un numero, prova GPT per espressioni relative
-      // "si sono aggiunte due persone", "altre due", "uno in meno", ecc.
-      if (!newPeople && this.lastTranscript) {
-        const _gptPeople = await this._extractPeopleGPT(this.lastTranscript, Number(r.people));
-        if (_gptPeople) newPeople = _gptPeople;
-      }
+
 
       // Guard v3.9.35: se l'utente fornisce un nome DIVERSO da quello trovato
       // (es: "No, io sono Rossi" dopo aver trovato "Sposta") → ri-cerca con il nome corretto
@@ -2139,6 +2134,27 @@ export class OpenAIRealtimeClient {
       const peopleChanged = newPeople && Number(newPeople) !== Number(r.people);
 
       if (!dateChanged && !timeChanged && !peopleChanged && !newName) {
+        // Ultima risorsa: GPT interpreta espressioni relative ("si sono aggiunte due", "altri due")
+        // PeopleManager può aver estratto il numero delta (es: "due" → 2) ma non il totale
+        if (this.lastTranscript && r) {
+          const _gptPeople = await this._extractPeopleGPT(this.lastTranscript, Number(r.people));
+          if (_gptPeople && _gptPeople !== Number(r.people)) {
+            newPeople = _gptPeople;
+            // Ricalcola con il valore GPT
+            const _updPeopleGPT = Number(newPeople);
+            const _mergedNotesGPT = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
+            const _rNotesArrGPT = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
+            const _mergedArrGPT = _mergedNotesGPT ? _mergedNotesGPT.split('; ').map(s => s.trim()).filter(Boolean) : [];
+            const _addedNotesGPT = _mergedArrGPT.filter(n => !_rNotesArrGPT.includes(n));
+            const _newNotesStrGPT = _addedNotesGPT.length > 0 ? _addedNotesGPT.join(', ') : null;
+            this._smartModifyParams = { r, updDate: r.date, updTime: r.time?.length === 5 ? r.time + ':00' : r.time, updPeople: _updPeopleGPT, mergedNotes: _mergedNotesGPT };
+            this.modifyState = 'awaiting_smart_confirm';
+            const _msgGPT = this._buildSmartModifyMsg(r, r.date, r.time?.length === 5 ? r.time + ':00' : r.time, _updPeopleGPT, false, _newNotesStrGPT);
+            console.log(\`🤖 MODIFY GPT people: \${r.people}→\${_updPeopleGPT}\`);
+            this._say(_msgGPT);
+            return;
+          }
+        }
         this._say('Non ho capito cosa vuole modificare. Vuole cambiare la data, l\'orario o il numero di persone?');
         return;
       }
