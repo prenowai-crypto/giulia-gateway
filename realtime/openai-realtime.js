@@ -2296,9 +2296,13 @@ export class OpenAIRealtimeClient {
   async _trySmartModify(r, newDate, newTime, newPeople) {
     const timeOrig = r.time?.length === 5 ? r.time + ':00' : (r.time || null);
 
-    // FIX: non dipendere da _peopleChange flag (spesso non settato da IntentDetector)
-    // Confronto deterministico: se PeopleManager ha estratto un numero diverso → cambia
-    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people);
+    // FIX people: distingue cambio esplicito da rumore parser
+    // "ho UNA prenotazione" → newPeople=1 ma NON è un cambio esplicito
+    // "diventiamo quattro" / "siamo in 4" → cambio esplicito
+    const _transcript = this.lastTranscript || '';
+    const _explicitPeopleChange = /\bdiventiamo\b|\bsiamo\s+in\b|\bsaremo\b|\bsi\s+aggiunge\b|\bin\s+più\b|\bin\s+meno\b|\bpersone?\s+(?:in|total|\d)|\baggiungo\b|\baggiungiamo\b|\bun[oa]\s+in\s+più\b|\bsolo\s+\d/i.test(_transcript);
+    const _peopleExtractedExplicitly = this._peopleChange === true || _explicitPeopleChange;
+    const peopleChanged = newPeople && Number(newPeople) !== Number(r.people) && _peopleExtractedExplicitly;
     const timeChanged   = newTime   && newTime !== timeOrig;
     const dateChanged   = newDate   && newDate !== r.date;
     const hasNewNotes   = !!(this.data.notes && this.data.notes.length > 0);
