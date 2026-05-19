@@ -1939,6 +1939,43 @@ export class OpenAIRealtimeClient {
     );
   }
 
+  // ── GPT people extractor per awaiting_changes ───────────────────────────────
+  // Gestisce espressioni relative: "si sono aggiunte due", "altre due", "uno in meno"
+  // PeopleManager non può fare aritmetica — GPT interpreta e ritorna il totale assoluto
+  async _extractPeopleGPT(transcript, currentPeople) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2000);
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          temperature: 0,
+          max_tokens: 5,
+          messages: [{
+            role: 'system',
+            content: `La prenotazione attuale è per ${currentPeople} persone. L'utente vuole modificare il numero. Rispondi SOLO con il numero intero totale finale. Se non capisci rispondi null.`
+          }, {
+            role: 'user', content: transcript
+          }]
+        })
+      });
+      clearTimeout(timeout);
+      const data = await response.json();
+      const raw = data?.choices?.[0]?.message?.content?.trim();
+      const num = parseInt(raw);
+      if (!isNaN(num) && num > 0 && num <= 50) {
+        console.log(`🧠 People GPT: "${raw}" → ${num} (da ${currentPeople})`);
+        return num;
+      }
+      return null;
+    } catch (err) {
+      return null;
+    }
+  }
+
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
     // Phase 1: primo messaggio modify → se contiene già nome e data, salta il prompt
     if (!this.modifyState) {
@@ -2045,6 +2082,13 @@ export class OpenAIRealtimeClient {
     if (this.modifyState === 'awaiting_changes') {
       const r = this.foundReservation;
       if (!r) { this.modifyState = null; return; }
+
+      // Se PeopleManager non ha estratto un numero, prova GPT per espressioni relative
+      // "si sono aggiunte due persone", "altre due", "uno in meno", ecc.
+      if (!newPeople && this.lastTranscript) {
+        const _gptPeople = await this._extractPeopleGPT(this.lastTranscript, Number(r.people));
+        if (_gptPeople) newPeople = _gptPeople;
+      }
 
       // Guard v3.9.35: se l'utente fornisce un nome DIVERSO da quello trovato
       // (es: "No, io sono Rossi" dopo aver trovato "Sposta") → ri-cerca con il nome corretto
@@ -2264,6 +2308,8 @@ export class OpenAIRealtimeClient {
       .split(';')
       .map(n => n.replace(/\s*\([^)]*\)/g, '').trim())
       .filter(n => n.length > 0)
+      // Filtra campi interni Apps Script che non vanno letti al cliente
+      .filter(n => !/^Gruppo\s*:/i.test(n) && !/^Group\s*:/i.test(n))
       .join('; ');
   }
 
