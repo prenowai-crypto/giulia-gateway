@@ -2150,7 +2150,7 @@ export class OpenAIRealtimeClient {
             this._smartModifyParams = { r, updDate: r.date, updTime: r.time?.length === 5 ? r.time + ':00' : r.time, updPeople: _updPeopleGPT, mergedNotes: _mergedNotesGPT };
             this.modifyState = 'awaiting_smart_confirm';
             const _msgGPT = this._buildSmartModifyMsg(r, r.date, r.time?.length === 5 ? r.time + ':00' : r.time, _updPeopleGPT, false, _newNotesStrGPT);
-            console.log(\`🤖 MODIFY GPT people: \${r.people}→\${_updPeopleGPT}\`);
+            console.log(`🤖 MODIFY GPT people: ${r.people}→${_updPeopleGPT}`);
             this._say(_msgGPT);
             return;
           }
