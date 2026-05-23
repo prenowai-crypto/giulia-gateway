@@ -32,12 +32,14 @@ export class ModifyEngine {
 
   // ─── Stato pubblico ───────────────────────────────────────────────────────
   reset() {
-    this.state          = 'IDLE';       // IDLE | SEARCH_BOOKING | MODIFY_ACTIVE | CONFIRM_PATCH | DONE
-    this.activeBooking  = null;         // prenotazione canonica trovata
-    this.pendingOps     = [];           // operations[] da applicare (pre-confirm)
-    this.pendingUpdate  = null;         // { updDate, updTime, updPeople, mergedNotes } calcolato
-    this.infoAnswers    = [];           // risposte info_query da dare insieme al recap
-    this._processing    = false;
+    this.state           = 'IDLE';       // IDLE | SEARCH_BOOKING | MODIFY_ACTIVE | CONFIRM_PATCH | DONE
+    this.activeBooking   = null;         // prenotazione canonica trovata
+    this.pendingOps      = [];           // operations[] da applicare (pre-confirm)
+    this.pendingUpdate   = null;         // { updDate, updTime, updPeople, mergedNotes } calcolato
+    this.infoAnswers     = [];           // risposte info_query da dare insieme al recap
+    this._processing     = false;
+    this._firstTranscript = null;        // primo transcript con la richiesta originale
+    this._allTranscripts  = [];          // tutti i transcript della sessione modify
   }
 
   get isDone()   { return this.state === 'DONE'; }
@@ -47,6 +49,12 @@ export class ModifyEngine {
   // Chiamato da _processExtraction ogni volta che intent=modify
   async handle(transcript, extractedData) {
     const { newDate, newTime, newPeople, newName } = extractedData;
+
+    // Accumula tutti i transcript della sessione modify
+    if (transcript && transcript.trim()) {
+      if (!this._firstTranscript) this._firstTranscript = transcript;
+      this._allTranscripts.push(transcript);
+    }
 
     switch (this.state) {
 
@@ -94,8 +102,10 @@ export class ModifyEngine {
       this.activeBooking = r;
       this.state = 'MODIFY_ACTIVE';
 
-      // Booking trovato: subito estrai operazioni dal primo transcript
-      await this._collectAndApply(transcript);
+      // Booking trovato: estrai operazioni dal transcript ORIGINALE (il primo con la richiesta)
+      // Non dal transcript corrente che potrebbe contenere solo nome/data
+      const _bestTranscript = this._firstTranscript || transcript;
+      await this._collectAndApply(_bestTranscript);
       return;
     }
 
