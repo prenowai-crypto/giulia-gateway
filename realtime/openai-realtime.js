@@ -71,7 +71,6 @@ export class OpenAIRealtimeClient {
     this.modifyState       = null;  // legacy — rimane per compatibilità cancel flow
     this._modifyEngine     = null;  // nuovo engine
     this.cancelState       = null;
-    this._smartModifyParams = null;
     this._noteCheck         = false;
     this.foundReservation  = null;
 
@@ -235,8 +234,9 @@ export class OpenAIRealtimeClient {
       await this._handleCancelConfirmText(transcript).catch(console.error);
       return;
     }
-    // Nuovo modifyEngine: se in CONFIRM_PATCH → passa direttamente al motore
-    if (this._modifyEngine?.state === 'CONFIRM_PATCH') {
+    // Nuovo modifyEngine: se in CONFIRM_PATCH o CONFIRM_BOOKING → passa direttamente al motore
+    if (this._modifyEngine?.state === 'CONFIRM_PATCH' ||
+        this._modifyEngine?.state === 'CONFIRM_BOOKING') {
       this.lastTranscript = transcript;
       await this._modifyEngine.handle(transcript, {}).catch(console.error);
       this.modifyState = this._modifyEngine.isDone ? 'done' : 'awaiting_changes';
@@ -771,15 +771,16 @@ export class OpenAIRealtimeClient {
 
     // ── Fix 1: CANCEL confirm intercetta anche qui (GPT più veloce di Whisper) ─
     if (this.cancelState === 'awaiting_confirm') {
-      // Non fare nulla — la conferma è gestita via testo in _onUserText
+      // Non fare nulla — la conferma è gestita in _onTurnReady via _handleCancelConfirmText
       // ma se GPT rileva un cancel/unknown, ignoriamo per non interferire
       return;
     }
 
     // 🆕 SMART MODIFY confirm: GPT ignorato durante attesa conferma
     // Il modifyEngine gestisce internamente il suo stato — nessun intercept necessario
-    if (this._modifyEngine?.state === 'CONFIRM_PATCH') {
-      console.log('🔒 GPT result ignorato: modifyEngine in CONFIRM_PATCH');
+    if (this._modifyEngine?.state === 'CONFIRM_PATCH' ||
+        this._modifyEngine?.state === 'CONFIRM_BOOKING') {
+      console.log(`🔒 GPT result ignorato: modifyEngine in ${this._modifyEngine.state}`);
       return;
     }
 
@@ -1387,7 +1388,7 @@ export class OpenAIRealtimeClient {
         await this._handleModifyFlow(newDate, newTime, newPeople, newName);
         return;
       }
-      // confirm phase gestita direttamente via testo in _onUserText
+      // confirm phase gestita in _onTurnReady via _handleCancelConfirmText
       if (this.cancelState !== 'awaiting_confirm') {
         await this._handleCancelFlow(newDate, newName);
       }
@@ -1678,138 +1679,6 @@ export class OpenAIRealtimeClient {
 
   // ── Core Logic Engine ─────────────────────────────────────────────────────
 
-  async _onUserText(text) {
-    if (this.checkingSlot) return;
-
-    // ── CANCEL: conferma sì/no via testo grezzo — intercetta PRIMA di tutto ──
-    if (this.cancelState === 'awaiting_confirm') {
-      await this._handleCancelConfirmText(text);
-      return;
-    }
-
-    // STEP 1: usa conversationLocked invece di phase=done come hard stop
-    // phase=done = "prenotazione esiste", conversationLocked = "conversazione chiusa"
-    if (this.conversationLocked) return;
-
-    // Rileva note e telefono alternativo su ogni messaggio
-    const _notesHandled2 = await this._detectNotesAndPhone(text);
-    if (_notesHandled2) return; // BUG 6: note già gestite
-
-    // Detect intent on first message
-    if (!this.intent) {
-      this.intent = IntentDetector.detect(text);
-      console.log(`🎯 Intent: ${this.intent}`);
-    }
-
-    // ── COLLECT PHASE ─────────────────────────────────────────────────────
-    if (this.phase === 'collecting') {
-      await this._processCollecting(text);
-    }
-    // ── NAMING PHASE (dopo check slot ok) ─────────────────────────────────
-    else if (this.phase === 'naming') {
-      this._processNaming(text);
-    }
-  }
-
-  async _processCollecting(text) {
-    const rc = this.restaurantConfig;
-
-    const prevDate = this.data.date;
-    const prevTime = this.data.time;
-
-    // Parse
-    const date   = DateManager.parseFromText(text);
-    const time   = TimeManager.parseFromText(text);
-    const people = PeopleManager.parseFromText(text);
-
-    if (date   && date   !== this.data.date)   { console.log(`📅 date:   ${this.data.date} → ${date}`);     this.data.date=date; }
-    if (time   && time   !== this.data.time)   { console.log(`⏰ time:   ${this.data.time} → ${time}`);     this.data.time=time; }
-    if (people && people !== this.data.people) { console.log(`👥 people: ${this.data.people} → ${people}`); this.data.people=people; }
-
-    // Estrai nome anticipato se già presente nel messaggio (es. "sabato alle 21 per 2, nome Luca")
-    if (!this.data.name) {
-      const earlyName = this._extractName(text);
-      if (earlyName) {
-        this.data.name = earlyName;
-        console.log(`👤 Nome anticipato: ${earlyName}`);
-      }
-    }
-
-    console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people}`);
-
-    // ① Check giorno chiuso
-    if (this.data.date && this.data.date !== prevDate) {
-      const msg = ValidationPipeline.getDayClosedMessage(this.data.date, rc);
-      if (msg) {
-        console.log(`🚫 Giorno chiuso: ${this.data.date}`);
-        this.data.date = null;
-        this._say(msg);
-        return;
-      }
-    }
-
-    // ②③ Check fascia oraria + pranzo/cena chiuso
-    if (this.data.date && this.data.time && this.data.time !== prevTime) {
-      if (!ValidationPipeline.isValidTime(this.data.time, rc)) {
-        const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
-        console.log(`🚫 Orario non valido: ${this.data.time}`);
-        this.data.time = null;
-        this._say(msg);
-        return;
-      }
-
-      // ② Check pranzo chiuso per quel giorno
-      const [h] = this.data.time.split(':').map(Number);
-      const isPranzo = h >= 10 && h <= 16;
-      if (isPranzo && ValidationPipeline.isLunchClosed(this.data.date, rc)) {
-        const dayName = DateManager.getDayName(this.data.date);
-        const ds = rc?.dinner_start || '21:00';
-        const de = rc?.dinner_end   || '22:30';
-        const msg = `Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`;
-        console.log(`🚫 Pranzo chiuso: ${this.data.date}`);
-        this.data.time = null;
-        this._say(msg);
-        return;
-      }
-
-      // ③ Check cena chiusa per quel giorno
-      const isCena = h >= 17 || h <= 3;
-      if (isCena && ValidationPipeline.isDinnerClosed(this.data.date, rc)) {
-        const dayName = DateManager.getDayName(this.data.date);
-        const ls = rc?.lunch_start || '12:00';
-        const le = rc?.lunch_end   || '14:30';
-        const msg = `Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`;
-        console.log(`🚫 Cena chiusa: ${this.data.date}`);
-        this.data.time = null;
-        this._say(msg);
-        return;
-      }
-
-      // Orario ok — se abbiamo anche le persone vai al check slot
-      if (this.data.people) {
-        await this._checkSlot();
-        return;
-      }
-      this._ask('people');
-      return;
-    }
-
-    // ④ Tutti e 3 → check slot
-    if (this.data.date && this.data.time && this.data.people && !this.checkingSlot) {
-      await this._checkSlot();
-      return;
-    }
-
-    // Chiedi dato mancante
-    if (!this.data.date) {
-      this._ask('date');
-    } else if (!this.data.time) {
-      this._ask('time');
-    } else if (!this.data.people) {
-      this._ask('people');
-    }
-  }
-
   _processNaming(text) {
     const rc = this.restaurantConfig;
 
@@ -1948,167 +1817,6 @@ export class OpenAIRealtimeClient {
     return null;
   }
 
-  // STEP 4: gestisci fuzzy candidate — chiedi conferma all'utente
-  _handleFuzzyCandidate(candidate, flowType) {
-    // flowType: 'modify' | 'cancel'
-    const timeNorm = candidate.time?.length === 5 ? candidate.time + ':00' : (candidate.time || '');
-    const dateDisplay = DateManager.formatForDisplay(candidate.date);
-    const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-    const action = flowType === 'cancel' ? 'cancellare' : 'modificare';
-
-    console.log(`🔍 Fuzzy confirm: ${candidate.name} (${candidate.fuzzyConfidence?.toFixed(2)})`);
-
-    // Salva il candidato e aspetta conferma
-    this.foundReservation = candidate;
-    if (flowType === 'modify') {
-      this.modifyState = 'awaiting_smart_confirm';
-      this._smartModifyParams = { date: candidate.date, time: candidate.time, people: candidate.people, name: candidate.name };
-    } else {
-      this.cancelState = 'awaiting_confirm';
-    }
-
-    this._say(
-      `Ho trovato una prenotazione a nome ${candidate.name}, ${dateDisplay} alle ${timeDisplay} per ${candidate.people} persone. ` +
-      `È quella che vuole ${action}?`
-    );
-  }
-
-  // ── GPT people extractor per awaiting_changes ───────────────────────────────
-  // Gestisce espressioni relative: "si sono aggiunte due", "altre due", "uno in meno"
-  // PeopleManager non può fare aritmetica — GPT interpreta e ritorna il totale assoluto
-  async _extractPeopleGPT(transcript, currentPeople) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 5,
-          messages: [{
-            role: 'system',
-            content: `La prenotazione attuale è per ${currentPeople} persone. L'utente vuole modificare il numero. Rispondi SOLO con il numero intero totale finale. Se non capisci rispondi null.`
-          }, {
-            role: 'user', content: transcript
-          }]
-        })
-      });
-      clearTimeout(timeout);
-      const data = await response.json();
-      const raw = data?.choices?.[0]?.message?.content?.trim();
-      const num = parseInt(raw);
-      if (!isNaN(num) && num > 0 && num <= 50) {
-        console.log(`🧠 People GPT: "${raw}" → ${num} (da ${currentPeople})`);
-        return num;
-      }
-      return null;
-    } catch (err) {
-      return null;
-    }
-  }
-
-  // ══ MODIFY PATCH SYSTEM (GPT semantic diff) ══════════════════════════════
-  // Invece di parsare entità assolute, GPT interpreta il DELTA rispetto alla prenotazione corrente.
-  // Output: { action, changes: { people: {mode,value}, time: {mode,value}, date: {mode,value} } }
-  // action: "modify" | "reject" | "no_change"
-  // mode: "delta" (relativo) | "set" (assoluto) | "delta_minutes" (per orario)
-  async _resolveModifyPatch(transcript, r) {
-    try {
-      const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-      const dateDisplay = DateManager.formatForDisplay(r.date);
-      const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 4000);
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 120,
-          messages: [{
-            role: 'system',
-            content: `Sei un interprete di modifiche a prenotazioni ristorante. Analizza il messaggio utente rispetto alla prenotazione corrente e rispondi SOLO con JSON valido, nient'altro.
-
-Prenotazione corrente:
-- nome: ${r.name}
-- persone: ${r.people}
-- giorno: ${dateDisplay}
-- orario: ${timeDisplay}
-
-Regole:
-- action="modify" se vuole cambiare qualcosa
-- action="reject" se rifiuta esplicitamente (solo "no grazie", "annulla", "lasci perdere")
-- action="no_change" se non si capisce cosa vuole modificare
-- people mode="delta": positivo=aggiunge, negativo=riduce (es: "aggiunte 2 persone" → delta +2)
-- IMPORTANTE: "aggiungere" riferito ad allergie, intolleranze o note NON è un cambio persone. Solo "si uniscono", "diventiamo", "siamo in più", "aggiungiamo una persona" cambiano le persone.
-- people mode="set": numero finale assoluto (es: "diventiamo 6" → set 6)
-- time mode="set": orario finale HH:MM:SS
-- time mode="delta_minutes": minuti in più/meno (es: "mezz'ora dopo" → +30)
-- date mode="set": data finale YYYY-MM-DD
-- Se una chiave non cambia, NON includerla in changes.
-
-Esempio output:
-{"action":"modify","changes":{"people":{"mode":"delta","value":2}}}`
-          }, {
-            role: 'user', content: transcript
-          }]
-        })
-      });
-      clearTimeout(timeout);
-      const data = await response.json();
-      const raw = data?.choices?.[0]?.message?.content?.trim();
-      const patch = JSON.parse(raw);
-      console.log(`🔧 ModifyPatch: ${JSON.stringify(patch)}`);
-      return patch;
-    } catch (err) {
-      console.log('⚠️ _resolveModifyPatch error:', err?.message);
-      return null;
-    }
-  }
-
-  // Applica il patch alla prenotazione corrente → ritorna valori aggiornati
-  _applyModifyPatch(r, patch) {
-    const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '21:00:00');
-    let updDate   = r.date;
-    let updTime   = timeNorm;
-    let updPeople = Number(r.people);
-
-    const changes = patch?.changes || {};
-
-    if (changes.people) {
-      if (changes.people.mode === 'delta') {
-        updPeople = Number(r.people) + Number(changes.people.value);
-      } else if (changes.people.mode === 'set') {
-        updPeople = Number(changes.people.value);
-      }
-      updPeople = Math.max(1, Math.min(50, updPeople)); // clamp 1-50
-    }
-
-    if (changes.time) {
-      if (changes.time.mode === 'set') {
-        updTime = changes.time.value;
-      } else if (changes.time.mode === 'delta_minutes') {
-        const [h, m] = timeNorm.split(':').map(Number);
-        const total = h * 60 + m + Number(changes.time.value);
-        const nh = Math.floor(total / 60) % 24;
-        const nm = total % 60;
-        updTime = `${String(nh).padStart(2,'0')}:${String(nm).padStart(2,'0')}:00`;
-      }
-    }
-
-    if (changes.date?.mode === 'set') {
-      updDate = changes.date.value;
-    }
-
-    return { updDate, updTime, updPeople };
-  }
-
   async _handleModifyFlow(newDate, newTime, newPeople, newName) {
     // ══ NUOVO MODIFY ENGINE ════════════════════════════════════════════════════
     // Inizializza il motore se non esiste o se era DONE/IDLE
@@ -2119,7 +1827,6 @@ Esempio output:
         buildInfoContext:            (r) => this._buildInfoContextForEngine(r),
         mergeNotesStr:               (a, b, c) => this._mergeNotesStr(a, b, c),
         findReservationWithFallback: (n, d, l) => this._findReservationWithFallback(n, d, l),
-        handleFuzzyCandidate:        (c, t) => this._handleFuzzyCandidate(c, t),
         formatForDisplay:            (d) => DateManager.formatForDisplay(d),
         formatTimeForDisplay:        (t) => TimeManager.formatForDisplay(t),
         isValidTime:                 (t, cfg) => ValidationPipeline.isValidTime(t, cfg),
@@ -2157,178 +1864,6 @@ Prenotazione corrente:
 - Nome: ${reservation.name}
 - Note: ${reservation.notes || 'nessuna'}` : '';
     return `${menuDetails}${resCtx}`;
-  }
-
-  async _trySmartModify(r, newDate, newTime, newPeople) {
-    // ══ PATCH SYSTEM al primo turno ══════════════════════════════════════════
-    // Invece di parser assoluti, GPT interpreta semanticamente il primo messaggio.
-    // "si sono aggiunte due persone" con 4 → delta +2 → 6 pax
-    // "spostare a sabato alle 21" → set date + set time
-    // Questo elimina il "Cosa vuole modificare?" nella maggior parte dei casi.
-
-    const hasNewNotes = !!(this.data.notes && this.data.notes.length > 0);
-    const noteCheck   = this._noteCheck === true;
-    const _transcript = this.lastTranscript || '';
-    const timeOrig    = r.time?.length === 5 ? r.time + ':00' : (r.time || '21:00:00');
-
-    // Chiama il patch system GPT
-    const patch = await this._resolveModifyPatch(_transcript, r);
-    const hasChanges = patch?.action === 'modify' &&
-                       patch.changes && Object.keys(patch.changes).length > 0;
-
-    // Se GPT non rileva nulla E non ci sono note → flusso classico (chiedi cosa modificare)
-    if (!hasChanges && !hasNewNotes && !noteCheck) {
-      return false;
-    }
-
-    // Applica il patch
-    let updDate   = r.date;
-    let updTime   = timeOrig;
-    let updPeople = Number(r.people);
-
-    if (hasChanges) {
-      const applied = this._applyModifyPatch(r, patch);
-      updDate   = applied.updDate;
-      updTime   = applied.updTime;
-      updPeople = applied.updPeople;
-    }
-
-    // Valida orario se cambiato
-    if (updTime !== timeOrig && !ValidationPipeline.isValidTime(updTime, this.restaurantConfig)) {
-      const rc = this.restaurantConfig;
-      const lunch  = rc?.lunch_hours  || '12:00-14:30';
-      const dinner = rc?.dinner_hours || '21:00-22:30';
-      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
-      this.modifyState = 'awaiting_changes';
-      return true;
-    }
-
-    // Note finali: merge note esistenti + nuove
-    const mergedNotes = this._mergeNotesStr(r.notes || '', this.data.notes || '', this.data.notesToRemove || []);
-    const rNotesArr   = r.notes ? r.notes.split('; ').map(s => s.trim()).filter(Boolean) : [];
-    const mergedArr   = mergedNotes ? mergedNotes.split('; ').map(s => s.trim()).filter(Boolean) : [];
-    const addedNotes  = mergedArr.filter(n => !rNotesArr.includes(n));
-    const newNotesStr = addedNotes.length > 0 ? addedNotes.join(', ') : null;
-
-    // Salva e mostra recap
-    this._smartModifyParams = { r, updDate, updTime, updPeople, mergedNotes };
-    this.modifyState = 'awaiting_smart_confirm';
-
-    const msg = this._buildSmartModifyMsg(r, updDate, updTime, updPeople, noteCheck, newNotesStr);
-    console.log(`🤖 SMART MODIFY patch: people=${updPeople}, time=${updTime}, date=${updDate}`);
-    this._say(msg);
-    return true;
-  }
-
-  /**
-   * Gestisce la risposta sì/no al recap del smart MODIFY.
-   * Chiamato dal transcript handler quando modifyState === 'awaiting_smart_confirm'.
-   */
-  async _handleSmartModifyConfirm(text) {
-    // ⚠️ \b non funziona con caratteri accentati (ì, è...) in JS — pattern espliciti per sì/si
-    const hasSi = /(^|[\s,!?])s[ìi]($|[\s,!?.,])/i.test(text) || /^s[ìi]$/i.test(text.trim());
-    const yes = hasSi
-             || /\b(certo|confermo|confermi|esatto|giusto|procedi|perfetto|aggiorna|va bene|ok|okay)\b/i.test(text);
-    const no  = /\b(no|annulla|aspetta|fermati|stop|lascia perdere|cambia)\b/i.test(text);
-
-    if (!yes && !no) {
-      // Non è un sì/no — potrebbe essere una correzione del recap
-      // Es: "Ma perché per cinque? Siamo in quattro!" → re-interpreta con patch system
-      const _correction = this._smartModifyParams?.r;
-      if (_correction && this.lastTranscript) {
-        const _corrPatch = await this._resolveModifyPatch(this.lastTranscript, _correction);
-        if (_corrPatch?.action === 'modify' && _corrPatch.changes && Object.keys(_corrPatch.changes).length > 0) {
-          const { updDate, updTime, updPeople } = this._applyModifyPatch(_correction, _corrPatch);
-          const _mergedNotes = this._smartModifyParams.mergedNotes;
-          this._smartModifyParams = { r: _correction, updDate, updTime, updPeople, mergedNotes: _mergedNotes };
-          this.modifyState = 'awaiting_smart_confirm';
-          const _msg = this._buildSmartModifyMsg(_correction, updDate, updTime, updPeople, false, null);
-          console.log(`🔄 SMART MODIFY correzione: ${_correction.people}→${updPeople}pax`);
-          this._say(_msg);
-          return;
-        }
-      }
-      this._say('Non ho capito. Vuole confermare la modifica o cambiare qualcosa?');
-      return;
-    }
-
-    const params = this._smartModifyParams;
-    this.modifyState       = null;
-    this._smartModifyParams = null;
-
-    if (no) {
-      this._say('Ok, la sua prenotazione rimane invariata.');
-      this.phase = 'done';
-      return;
-    }
-
-    // ── Esegui la modifica ──────────────────────────────────────────
-    const { r, updDate, updTime, updPeople, mergedNotes } = params;
-    const timeOrig   = r.time?.length === 5 ? r.time + ':00' : (r.time || null);
-    const slotChanged = updDate !== r.date || updTime !== timeOrig;
-
-    this._processingModify = true;
-
-    if (slotChanged) {
-      this._say('Un attimo che verifico la disponibilità...');
-      const checkResult = await this._callAppsScript({
-        action: 'check_availability',
-        data:   updDate,
-        ora:    updTime,
-        persone: updPeople,
-        existingPeople: 0,
-      });
-
-      if (!checkResult?.success && checkResult?.reason !== 'slot_available') {
-        this._processingModify = false;
-        if (checkResult?.reason === 'day_closed') {
-          const dayName = DateManager.getDayName(updDate) || 'quel giorno';
-          this._say(`Mi dispiace, il ${dayName} siamo chiusi. Vuole provare un altro giorno?`);
-        } else {
-          this._say(`Mi dispiace, quell'orario non è disponibile. Vuole provare un altro orario?`);
-        }
-        // Ripristina per eventuale nuovo tentativo
-        this.modifyState    = 'awaiting_changes';
-        this.foundReservation = r;
-        return;
-      }
-    }
-
-    console.log(`✏️ SMART MODIFY esegue: eventId=${r.eventId} ${updDate} ${updTime} ${updPeople}pax`);
-    this._say('Perfetto, aggiorno subito...');
-
-    const updateResult = await this._callAppsScript({
-      action:   'update_reservation',
-      eventId:  r.eventId,
-      nome:     r.name,
-      data:     updDate,
-      ora:      updTime,
-      persone:  updPeople,
-      telefono: this.callerPhone || r.phone || '',
-      notes:    mergedNotes,
-    });
-
-    this._processingModify = false;
-    this.phase = 'done';
-
-    if (updateResult?.success) {
-      const dateDisplay = DateManager.formatForDisplay(updDate);
-      const timeDisplay = TimeManager.formatForDisplay(updTime);
-      this.lastReservation = {
-        eventId: r.eventId,
-        name:    r.name,
-        date:    updDate,
-        time:    updTime,
-        people:  updPeople,
-        notes:   mergedNotes,
-        phone:   this.callerPhone || r.phone || '',
-        status:  'CONFIRMED',
-      };
-      console.log(`💾 lastReservation aggiornato dopo SMART MODIFY: eventId=${r.eventId}`);
-      this._say(`Perfetto ${r.name}! Ho aggiornato la prenotazione: ${dateDisplay} alle ${timeDisplay} per ${updPeople} person${updPeople === 1 ? 'a' : 'e'}. Ti aspettiamo!`);
-    } else {
-      this._say(`Mi dispiace, errore durante l'aggiornamento. Riprovi più tardi.`);
-    }
   }
 
   async _handleCancelFlow(newDate, newName) {
