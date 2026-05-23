@@ -5,7 +5,7 @@
  *   1 transcript = N operazioni strutturate
  *
  * State machine pulita:
- *   IDLE → SEARCH_BOOKING → MODIFY_ACTIVE → CONFIRM_PATCH → DONE
+ *   IDLE → SEARCH_BOOKING → CONFIRM_BOOKING → MODIFY_ACTIVE → CONFIRM_PATCH → DONE
  *
  * Ogni transcript produce operations[], non un singolo intent.
  * GPT estrae operazioni. Il motore decide il flow.
@@ -13,26 +13,54 @@
 
 export class ModifyEngine {
 
-  constructor({ callAppsScript, say, buildInfoContext, mergeNotesStr, findReservationWithFallback, handleFuzzyCandidate, formatForDisplay, formatTimeForDisplay, isValidTime, restaurantConfig, apiKey }) {
+  constructor({ callAppsScript, say, buildInfoContext, mergeNotesStr, findReservationWithFallback, formatForDisplay, formatTimeForDisplay, isValidTime, restaurantConfig, apiKey, gptComplete }) {
     // Dependencies injected
     this._callAppsScript              = callAppsScript;
     this._say                         = say;
     this._buildInfoContext             = buildInfoContext;
     this._mergeNotesStr               = mergeNotesStr;
     this._findReservationWithFallback = findReservationWithFallback;
-    this._handleFuzzyCandidate        = handleFuzzyCandidate;
     this._formatDate                  = formatForDisplay;
     this._formatTime                  = formatTimeForDisplay;
     this._isValidTime                 = isValidTime;
     this._restaurantConfig            = restaurantConfig;
     this._apiKey                      = apiKey;
 
+    // gptComplete: chiamata GPT iniettabile (per test offline).
+    // Se non iniettata → default = fetch reale a OpenAI (produzione invariata).
+    // Firma: async (messages, { model, temperature, max_tokens, timeoutMs }) → string|null
+    this._gptComplete = gptComplete || this._defaultGptComplete.bind(this);
+
     this.reset();
+  }
+
+  // ─── Default GPT completion — fetch reale a OpenAI ─────────────────────────
+  // Unico punto HTTP verso OpenAI nell'engine. Ritorna il contenuto del messaggio
+  // (stringa trimmata) oppure null su errore/timeout. I caller fanno il parsing.
+  async _defaultGptComplete(messages, opts = {}) {
+    const { model = 'gpt-4o-mini', temperature = 0, max_tokens = 200, timeoutMs = 5000 } = opts;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this._apiKey}` },
+        body: JSON.stringify({ model, temperature, max_tokens, messages }),
+      });
+      clearTimeout(timeout);
+      const data = await response.json();
+      return data?.choices?.[0]?.message?.content?.trim() ?? null;
+    } catch (err) {
+      clearTimeout(timeout);
+      console.log('⚠️ gptComplete error:', err?.message);
+      return null;
+    }
   }
 
   // ─── Stato pubblico ───────────────────────────────────────────────────────
   reset() {
-    this.state           = 'IDLE';       // IDLE | SEARCH_BOOKING | MODIFY_ACTIVE | CONFIRM_PATCH | DONE
+    this.state           = 'IDLE';       // IDLE | SEARCH_BOOKING | CONFIRM_BOOKING | MODIFY_ACTIVE | CONFIRM_PATCH | DONE
     this.activeBooking   = null;         // prenotazione canonica trovata
     this.pendingOps      = [];           // operations[] da applicare (pre-confirm)
     this.pendingUpdate   = null;         // { updDate, updTime, updPeople, mergedNotes } calcolato
@@ -61,6 +89,10 @@ export class ModifyEngine {
       case 'IDLE':
       case 'SEARCH_BOOKING':
         await this._searchBooking(transcript, newName, newDate, newTime, newPeople);
+        break;
+
+      case 'CONFIRM_BOOKING':
+        await this._handleBookingConfirmation(transcript, newName, newDate);
         break;
 
       case 'MODIFY_ACTIVE':
@@ -95,7 +127,11 @@ export class ModifyEngine {
       }
 
       if (r.requiresConfirmation) {
-        this._handleFuzzyCandidate(r.fuzzyCandidate, 'modify');
+        const c = r.fuzzyCandidate;
+        this.activeBooking = c;            // provvisorio fino a conferma
+        this.state = 'CONFIRM_BOOKING';
+        const timeNorm = c.time?.length === 5 ? c.time + ':00' : (c.time || '');
+        this._say(`Ho trovato una prenotazione a nome ${c.name}, ${this._formatDate(c.date)} alle ${this._formatTime(timeNorm)} per ${c.people} persone. È quella che vuole modificare?`);
         return;
       }
 
@@ -204,6 +240,32 @@ export class ModifyEngine {
     }
   }
 
+  // ─── FASE 1b: Conferma "è questa la prenotazione?" (fuzzy match) ───────────
+  async _handleBookingConfirmation(transcript, newName, newDate) {
+    const responseType = await this._classifyResponse(transcript);
+    console.log(`🔍 Booking confirmation type: ${responseType}`);
+
+    if (responseType === 'confirm') {
+      // Confermata: applica la richiesta di modifica ORIGINALE
+      // (non il "sì" corrente, che non contiene operazioni)
+      this.state = 'MODIFY_ACTIVE';
+      await this._collectAndApply(this._firstTranscript || transcript);
+      return;
+    }
+
+    if (responseType === 'reject') {
+      this.activeBooking = null;
+      this.state = 'SEARCH_BOOKING';
+      this._say('Va bene. A che nome è la prenotazione e per quale data?');
+      return;
+    }
+
+    // Correzione (es. "no, è a nome Bianchi") → nuovo tentativo di ricerca
+    this.activeBooking = null;
+    this.state = 'SEARCH_BOOKING';
+    await this._searchBooking(transcript, newName || null, newDate || null, null, null);
+  }
+
   // ─── Esecuzione finale ────────────────────────────────────────────────────
   async _executeUpdate() {
     if (this._processing) return;
@@ -289,20 +351,9 @@ export class ModifyEngine {
       const dateDisplay = this._formatDate(r.date);
       const timeDisplay = this._formatTime(timeNorm);
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this._apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 200,
-          messages: [{
-            role: 'system',
-            content: `Sei un estrattore di operazioni per un sistema prenotazioni ristorante.
+      const raw = await this._gptComplete([{
+        role: 'system',
+        content: `Sei un estrattore di operazioni per un sistema prenotazioni ristorante.
 
 Prenotazione attuale:
 - Nome: ${r.name}
@@ -332,16 +383,12 @@ Tipi disponibili:
 
 Rispondi SOLO con: {"operations": [...]}
 Se nessuna operazione chiara: {"operations": []}`
-          }, {
-            role: 'user',
-            content: transcript
-          }]
-        })
-      });
+      }, {
+        role: 'user',
+        content: transcript
+      }], { max_tokens: 200, timeoutMs: 5000 });
 
-      clearTimeout(timeout);
-      const data = await response.json();
-      const raw  = data?.choices?.[0]?.message?.content?.trim();
+      if (!raw) return [];
       const parsed = JSON.parse(raw);
       return parsed?.operations || [];
 
@@ -363,7 +410,9 @@ Se nessuna operazione chiara: {"operations": []}`
     if (isExplicitNo)  return 'reject';
 
     // Se contiene nuovi numeri, date, nomi o note → quasi certamente correzione
+    // Numeri sia in cifre che in lettere ("siamo in quattro" è una correzione, non un rifiuto)
     const hasNewEntity = /\b\d+\b/.test(transcript) ||
+                         /\b(una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici)\b/i.test(transcript) ||
                          /\b(lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica)\b/i.test(transcript) ||
                          /\b(allergi|intolleran|celiac|vegano|seggiolone|bambino)\b/i.test(transcript);
 
@@ -374,27 +423,13 @@ Se nessuna operazione chiara: {"operations": []}`
 
     // GPT per i casi ambigui
     try {
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(), 2000);
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this._apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 10,
-          messages: [{
-            role: 'system',
-            content: 'Il sistema ha mostrato un recap di modifica prenotazione. Classifica la risposta utente. Rispondi SOLO con una parola: confirm, reject, o correction.'
-          }, {
-            role: 'user',
-            content: transcript
-          }]
-        })
-      });
-      const data = await response.json();
-      const r = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
+      const r = (await this._gptComplete([{
+        role: 'system',
+        content: 'Il sistema ha mostrato un recap di modifica prenotazione. Classifica la risposta utente. Rispondi SOLO con una parola: confirm, reject, o correction.'
+      }, {
+        role: 'user',
+        content: transcript
+      }], { max_tokens: 10, timeoutMs: 2000 }))?.toLowerCase();
       if (['confirm','reject','correction'].includes(r)) return r;
     } catch {}
 
@@ -439,27 +474,13 @@ Se nessuna operazione chiara: {"operations": []}`
   async _answerInfoQuery(topic, r) {
     try {
       const context = this._buildInfoContext ? this._buildInfoContext(r) : '';
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(), 3000);
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this._apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 80,
-          messages: [{
-            role: 'system',
-            content: `Rispondi brevemente a questa domanda sul ristorante. Max 1 frase. Se non hai l'informazione, rispondi null.\n${context}`
-          }, {
-            role: 'user',
-            content: topic
-          }]
-        })
-      });
-      const data = await response.json();
-      const ans  = data?.choices?.[0]?.message?.content?.trim();
+      const ans = await this._gptComplete([{
+        role: 'system',
+        content: `Rispondi brevemente a questa domanda sul ristorante. Max 1 frase. Se non hai l'informazione, rispondi null.\n${context}`
+      }, {
+        role: 'user',
+        content: topic
+      }], { max_tokens: 80, timeoutMs: 3000 });
       return (ans && ans.toLowerCase() !== 'null') ? ans : null;
     } catch {
       return null;
