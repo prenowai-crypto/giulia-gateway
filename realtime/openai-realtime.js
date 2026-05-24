@@ -2995,6 +2995,18 @@ ${infoSection}`
       lines.join('\n') + '\n' + sep;
   }
 
+  // Pulisce le note per la lettura al cliente: rimuove le annotazioni interne
+  // tra parentesi (es. "(verifica con cliente)") che non vanno dette ad alta voce.
+  // Accetta una stringa di note separate da ';' e ritorna stringa pulita (o '').
+  _notesForClient(notes) {
+    if (!notes) return '';
+    return notes
+      .split(';')
+      .map(n => n.replace(/\s*\([^)]*\)/g, '').trim())
+      .filter(n => n.length > 0)
+      .join('; ');
+  }
+
   // notesToRemove: array di stringhe da escludere dal merge (es. ['Tavolo esterno/terrazza'])
   _mergeNotesStr(existing, newNotes, notesToRemove) {
     let eArr = existing ? existing.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
