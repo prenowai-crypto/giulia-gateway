@@ -398,6 +398,26 @@ export class OpenAIRealtimeClient {
       }
     }
 
+    // ── Ricerca prenotazione (MODIFY/CANCEL): nome in frase naturale ──────────
+    // In questo contesto il cliente sta IDENTIFICANDO una prenotazione: il nome
+    // arriva come "sono Ferrari ... intollerante" (frase lunga + nota) o
+    // "Ferrari per venerdì" (breve + data). Gli estrattori a pattern falliscono
+    // qui (esclusione "sono X", nessun marker, fallback ancorato, blocco-nota).
+    // GPT lo estrae bene e SAPPIAMO che è un nome. Scatta SOLO in ricerca
+    // prenotazione → il flusso CREATE non è toccato.
+    if (!name) {
+      const _intentNow = IntentDetector.detect(transcript);
+      const _inBookingSearch =
+        _intentNow === 'modify' || _intentNow === 'cancel' ||
+        this.intent === 'modify' || this.intent === 'cancel' ||
+        this._modifyEngine?.state === 'SEARCH_BOOKING' ||
+        this.cancelState === 'awaiting_search';
+      if (_inBookingSearch) {
+        name = await this._extractNameWithGPT(transcript).catch(() => null);
+        if (name) console.log(`👤 Nome (GPT, ricerca prenotazione): ${name}`);
+      }
+    }
+
     // Penalizza campi non attesi su risposte brevi con contesto noto
     const extracted = { date, time, people, name };
     if (pq && isShort) {
