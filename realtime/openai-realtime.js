@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v14-PHONE-NULLFIX-2026-05-24 caricato');
+console.log('🟢 openai-realtime.js v16-HASEGNATO-PHONEMOD-2026-05-24 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -178,8 +178,13 @@ export class OpenAIRealtimeClient {
   // ── Bridge TurnManager → business logic ─────────────────────────────────
   // Chiamato da TurnManager quando il turno è finalizzato.
   async _onTurnReady(transcript) {
-    // Filtro primo turno troppo breve (rumore di fondo)
-    const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name;
+    // Filtro primo turno troppo breve (rumore di fondo a inizio chiamata fresca).
+    // NB: scatta SOLO a chiamata davvero nuova. Durante un MODIFY/CANCEL `this.data`
+    // resta vuoto (i dati vivono nell'engine/cancelState), quindi senza queste guardie
+    // il filtro ingoiava conferme brevi legittime ("Sì, perfetto") dentro un modify.
+    // La protezione anti-allucinazione (sottotitoli/Amara) vive in _isLowInformationTranscript.
+    const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name
+      && !this._modifyEngine && !this.cancelState && this.phase !== 'done';
     if (_isFirstTurn && transcript.split(/\s+/).length < 3) {
       console.log(`🛡️ Primo turno troppo breve → ignorato: "${transcript}"`);
       return;
@@ -1608,7 +1613,7 @@ export class OpenAIRealtimeClient {
 
     // 🆕 FIX 3B: se il cliente sta CHIEDENDO di note già esistenti → non rilevare note
     // Distingue "sono celiaco" (dichiarazione) da "avete segnato la celiachia?" (domanda)
-    const _isNoteQuestion = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(text);
+    const _isNoteQuestion = /(?:\bmi\s+ha\b|\bm['']ha\b|\bha\b|\bhai\b|\bavete\b|\bavevate\b|\baveva\b|\bavevi\b|\bhanno\b)\s+(?:\w+\s+){0,2}(?:segnat|annotat|scritt|indicat|aggiunt|inserit|registrat)|risulta\s+(?:ancora\s+)?(?:segnat|annotat)|è\s+(?:ancora\s+)?(?:segnat|annotat)/i.test(text);
 
     // Pattern domanda info vegan/vegetariano: "avete piatti vegani?" → NON è nota
     const _isVeganInfoQuestion = /avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|c.è.{0,15}vegan|ci sono.{0,15}vegan|offrite.{0,15}vegan|servite.{0,15}vegan/i.test(text);
@@ -1616,6 +1621,21 @@ export class OpenAIRealtimeClient {
     if (_isNoteQuestion) {
       console.log(`📋 Domanda su note esistenti → skip rilevamento nota: "${text.substring(0,60)}"`);
       // Non rilevare nuove note ma non uscire — continuiamo per il telefono alternativo
+
+      // ── Risposta diretta a "avete/ha segnato X?" quando la prenotazione è nota ──
+      // Intercetta QUI (prima del labirinto phase=done) ed evita la deflection
+      // "contatta il locale". Risponde dalle note della prenotazione che abbiamo.
+      if (this.phase === 'done' && this.lastReservation?.eventId) {
+        const _notesClean = this._notesForClient(this.lastReservation.notes || '');
+        if (_notesClean) {
+          this._say(`Sì, risulta annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
+        } else {
+          this._say(`Al momento non risulta nessuna nota particolare sulla sua prenotazione. C'è altro che posso fare per lei?`);
+        }
+        this._lastTopic = 'notes';
+        console.log(`📋 Domanda-nota in phase=done → risposta dalle note: "${_notesClean || '(nessuna)'}"`);
+        return true; // turno gestito → niente deflection
+      }
     }
 
     const newNotes = [];
@@ -1885,7 +1905,9 @@ export class OpenAIRealtimeClient {
                      : 'awaiting_changes'; // qualsiasi stato attivo
 
     await this._modifyEngine.handle(this.lastTranscript || '', {
-      newDate, newTime, newPeople, newName
+      newDate, newTime, newPeople, newName,
+      // telefono alternativo rilevato a voce → nota forzata (GPT non lo estrae)
+      forcedNote: this.data.alternativePhone ? `Tel. alternativo: ${this.data.alternativePhone}` : null,
     });
 
     // Aggiorna modifyState legacy dopo l'esecuzione
