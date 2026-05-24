@@ -11,6 +11,8 @@
  * GPT estrae operazioni. Il motore decide il flow.
  */
 
+console.log('🟢 modify-engine.js v17-CANCELEXIT-2026-05-24 caricato');
+
 export class ModifyEngine {
 
   constructor({ callAppsScript, say, buildInfoContext, mergeNotesStr, findReservationWithFallback, formatForDisplay, formatTimeForDisplay, isValidTime, restaurantConfig, apiKey, gptComplete, parseDate }) {
