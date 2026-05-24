@@ -493,6 +493,25 @@ Se nessuna operazione chiara: {"operations": []}`
 
   // ─── Risposta info query ──────────────────────────────────────────────────
   async _answerInfoQuery(topic, r) {
+    // ── 1) Note-recall: "avete segnato X?" è una domanda su cosa è registrato
+    //    SU QUESTA prenotazione → rispondi dalle note (r.notes), non dalla GPT
+    //    info-ristorante (che torna null/"Null" perché non è info del locale).
+    const notes = (r && r.notes ? String(r.notes) : '').trim();
+    if (notes) {
+      const topicNorm = (topic || '').toLowerCase();
+      // richiesta generica di note/allergie, oppure topic specifico già presente nelle note
+      const _generic = /\bnot[ae]\b|allerg|intoller|segnat|annotat|\bdieta\b|celiac|vegan|vegetar/.test(topicNorm);
+      const notesNorm = notes.toLowerCase();
+      const _topicHit = topicNorm.split(/\s+/).filter(w => w.length >= 4)
+        .some(w => notesNorm.includes(w.slice(0, 5)));
+      if (_generic || _topicHit) {
+        // pulizia note per il cliente: togli annotazioni interne tra parentesi
+        const clean = notes.replace(/\s*\([^)]*\)/g, '').replace(/\s*;\s*/g, '; ').trim();
+        return clean ? `Sì, risulta annotato: ${clean}.` : null;
+      }
+    }
+
+    // ── 2) Altrimenti è una domanda sul locale → GPT, con guard null ROBUSTO
     try {
       const context = this._buildInfoContext ? this._buildInfoContext(r) : '';
       const ans = await this._gptComplete([{
@@ -502,7 +521,10 @@ Se nessuna operazione chiara: {"operations": []}`
         role: 'user',
         content: topic
       }], { max_tokens: 80, timeoutMs: 3000 });
-      return (ans && ans.toLowerCase() !== 'null') ? ans : null;
+      // guard robusto: strip punteggiatura/spazi finali, poi confronta con "null"
+      const cleaned = (ans || '').trim().replace(/[.!?\s]+$/, '');
+      if (!cleaned || /^null$/i.test(cleaned)) return null;
+      return ans;
     } catch {
       return null;
     }
