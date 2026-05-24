@@ -73,6 +73,7 @@ export class ModifyEngine {
     this._processing     = false;
     this._firstTranscript = null;        // primo transcript con la richiesta originale
     this._allTranscripts  = [];          // tutti i transcript della sessione modify
+    this._pendingForcedNote = null;      // nota forzata (telefono) da iniettare in _collectAndApply
   }
 
   get isDone()   { return this.state === 'DONE'; }
@@ -81,7 +82,12 @@ export class ModifyEngine {
   // ─── Entry point principale ────────────────────────────────────────────────
   // Chiamato da _processExtraction ogni volta che intent=modify
   async handle(transcript, extractedData) {
-    const { newDate, newTime, newPeople, newName } = extractedData;
+    const { newDate, newTime, newPeople, newName, forcedNote } = extractedData;
+
+    // Nota forzata dall'orchestratore (es. telefono alternativo rilevato in modo
+    // deterministico, che GPT non estrae come operazione). Verrà iniettata come
+    // add_note in _collectAndApply.
+    if (forcedNote) this._pendingForcedNote = forcedNote;
 
     // Accumula tutti i transcript della sessione modify
     if (transcript && transcript.trim()) {
@@ -160,7 +166,7 @@ export class ModifyEngine {
     if (!r) { this.reset(); return; }
 
     // Estrai operazioni dal transcript
-    const ops = await this._extractOperations(transcript, r);
+    let ops = await this._extractOperations(transcript, r);
     console.log(`🔧 Operations: ${JSON.stringify(ops)}`);
 
     // ── AUTORITÀ DATE: il parser deterministico vince su GPT ──────────────────
@@ -176,6 +182,21 @@ export class ModifyEngine {
             op.value = _parsedDate;
           }
         }
+      }
+    }
+
+    // ── Nota forzata (telefono alternativo) → add_note ────────────────────────
+    // L'orchestratore rileva il telefono in modo deterministico; GPT non lo estrae
+    // come operazione. Lo aggiungiamo qui, in modo idempotente (no doppioni).
+    if (this._pendingForcedNote) {
+      const _fn = this._pendingForcedNote;
+      this._pendingForcedNote = null;
+      const _alreadyInNotes = String(r.notes || '').includes('Tel. alternativo');
+      const _alreadyInOps = (ops || []).some(o => o.type === 'add_note' && o.value === _fn);
+      if (!_alreadyInNotes && !_alreadyInOps) {
+        if (!ops) ops = [];
+        ops.push({ type: 'add_note', value: _fn });
+        console.log(`📞 Nota forzata aggiunta alle operations: "${_fn}"`);
       }
     }
 
