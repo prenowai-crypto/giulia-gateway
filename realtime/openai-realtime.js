@@ -1063,6 +1063,26 @@ export class OpenAIRealtimeClient {
         if (!_hasBookingData) {
           console.log('💬 Phase=done: intent create senza dati → probabile domanda/follow-up');
 
+          const _t = this.lastTranscript || '';
+          // Distingui: richiamo alle NOTE della prenotazione vs domanda sul RISTORANTE.
+          // "avete SEGNATO il seggiolone?" → nota loro prenotazione
+          // "avete il seggiolone?"          → il locale ce l'ha? (info ristorante)
+          const _isNoteRecall = /(?:segnato|annotato|annotata|registrat|risulta|nelle?\s+not|sulle?\s+not|\bla\s+not|ancora\s+(?:segnat|annotat))/i.test(_t);
+          if (!_isNoteRecall) {
+            // 1) Risposta deterministica da restaurantInfo (seggiolone, menu, orari, ecc.)
+            const _infoAns = this._checkInfoQuestion(_t);
+            if (_infoAns !== null) {
+              console.log('📋 Phase=done no-data: domanda info ristorante → risposta deterministica');
+              this._say(_infoAns);
+              return;
+            }
+            // 2) Fallback GPT su restaurantInfo per fraseggi non coperti dai pattern
+            if (this._isInformationalQuery(_t) && this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
+              const _handled = await this._handleInfoQuery(_t);
+              if (_handled) return;
+            }
+          }
+
           // STEP 3 (GPT): Topic memory — se l'ultimo topic era 'notes' e la frase è
           // breve/interrogativa, è un follow-up sulle note senza ripetere le keyword
           const _wordCount3 = (this.lastTranscript || '').trim().split(/\s+/).length;
