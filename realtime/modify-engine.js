@@ -13,7 +13,7 @@
 
 export class ModifyEngine {
 
-  constructor({ callAppsScript, say, buildInfoContext, mergeNotesStr, findReservationWithFallback, formatForDisplay, formatTimeForDisplay, isValidTime, restaurantConfig, apiKey, gptComplete }) {
+  constructor({ callAppsScript, say, buildInfoContext, mergeNotesStr, findReservationWithFallback, formatForDisplay, formatTimeForDisplay, isValidTime, restaurantConfig, apiKey, gptComplete, parseDate }) {
     // Dependencies injected
     this._callAppsScript              = callAppsScript;
     this._say                         = say;
@@ -25,6 +25,11 @@ export class ModifyEngine {
     this._isValidTime                 = isValidTime;
     this._restaurantConfig            = restaurantConfig;
     this._apiKey                      = apiKey;
+
+    // parseDate: parser deterministico delle date (DateManager.parseFromText).
+    // È l'AUTORITÀ sulle date — come in CREATE. GPT non deve calcolare i giorni
+    // relativi (sbaglia: "sabato" → giovedì). Se non iniettato, nessun override.
+    this._parseDate = parseDate || (() => null);
 
     // gptComplete: chiamata GPT iniettabile (per test offline).
     // Se non iniettata → default = fetch reale a OpenAI (produzione invariata).
@@ -157,6 +162,22 @@ export class ModifyEngine {
     // Estrai operazioni dal transcript
     const ops = await this._extractOperations(transcript, r);
     console.log(`🔧 Operations: ${JSON.stringify(ops)}`);
+
+    // ── AUTORITÀ DATE: il parser deterministico vince su GPT ──────────────────
+    // GPT sbaglia il calcolo dei giorni relativi ("sabato" → giovedì). Come in
+    // CREATE, la data corretta la calcola DateManager dal transcript. Se il parser
+    // trova una data, sovrascrive quella (eventualmente errata) prodotta da GPT.
+    if (ops && ops.length > 0) {
+      const _parsedDate = this._parseDate(transcript);
+      if (_parsedDate) {
+        for (const op of ops) {
+          if (op.type === 'update_date' && op.mode === 'set' && op.value !== _parsedDate) {
+            console.log(`📅 Date override: GPT="${op.value}" → parser="${_parsedDate}"`);
+            op.value = _parsedDate;
+          }
+        }
+      }
+    }
 
     if (!ops || ops.length === 0) {
       this._say('Non ho capito cosa vuole modificare. Vuole cambiare data, orario o numero di persone?');
