@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v16-HASEGNATO-PHONEMOD-2026-05-24 caricato');
+console.log('🟢 openai-realtime.js v17-CANCELEXIT-2026-05-24 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -816,7 +816,19 @@ export class OpenAIRealtimeClient {
     const _engineActive = this._modifyEngine?.isActive && !this._modifyEngine?.isDone;
     if (_engineActive) {
       const _explicitExit = /\b(?:nuova\s+prenotazione|voglio\s+prenotare\s+(?:un|un')\s+altro|annulla\s+tutto|lasci\s+stare|ripartiamo|lasciate?\s+perdere)\b/i.test(this.lastTranscript || '');
-      if (_explicitExit) {
+      // 🆕 TEST 4: uscita verso CANCEL. Dentro un modify il cliente può chiedere
+      // esplicitamente di cancellare ("voglio cancellarla", "voglio disdire").
+      // Richiede una forma verbale chiara → niente falsi positivi su cognomi
+      // ("Cancelleri", "Disdri"). Agganciato al transcript: scavalca anche un
+      // eventuale errore di GPT che classifica "voglio cancellare" come modify.
+      const _explicitCancel = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion/i.test(this.lastTranscript || '');
+      if (_explicitCancel) {
+        console.log('🔓 HARD LOCK: intent cancel esplicito → switch a CANCEL');
+        this._modifyEngine.reset();
+        this.modifyState = null;
+        this.intent = 'cancel';
+        args.intent = 'cancel';
+      } else if (_explicitExit) {
         console.log('🔓 HARD LOCK: exit phrase → reset modify engine');
         this._modifyEngine.reset();
         this.modifyState = null;
@@ -1253,8 +1265,8 @@ export class OpenAIRealtimeClient {
       this.intentLocked = false;
     }
 
-    // Override locale: frasi implicite di cancellazione che GPT classifica come modify
-    const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)/i;
+    // Override locale: frasi implicite di cancellazione che GPT classifica come modify/create
+    const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)|\b(?:voglio|vorrei|devo|posso|vorremmo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion/i;
     if (!this.intentLocked && this.lastTranscript && _impliedCancelPat.test(this.lastTranscript)) {
       if (args.intent !== 'cancel') {
         console.log(`🎯 Intent override: ${args.intent} → cancel (frase implicita cancellazione)`);
