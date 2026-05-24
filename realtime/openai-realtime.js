@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v13-NAMEFIX-2026-05-24 caricato');
+console.log('🟢 openai-realtime.js v14-PHONE-NULLFIX-2026-05-24 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -1672,6 +1672,24 @@ export class OpenAIRealtimeClient {
       }
     }
 
+    // ── Telefono alternativo → NOTA ───────────────────────────────────────────
+    // Decisione di prodotto: il numero alternativo dettato a voce ("contattatemi
+    // al 333…") si salva come NOTA. Spingendolo in `newNotes` sfrutta la stessa
+    // pipeline (dedup + conferma vocale + push update_notes su Calendar in
+    // phase=done). Richiede parola-contesto + 8-16 cifre → niente falsi positivi
+    // su "siamo in 4" o "alle 9".
+    {
+      const phoneMatch = text.match(/(?:numero|telefono|cell(?:ulare)?|phone|contatt|chiama).*?(\+?\d[\d\s\-]{6,14}\d)/i);
+      if (phoneMatch && !(this.data.notes && this.data.notes.includes('Tel. alternativo'))
+          && !newNotes.some(n => n.startsWith('Tel. alternativo'))) {
+        const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
+        this.data.alternativePhone = phoneNumber;
+        newNotes.push(`Tel. alternativo: ${phoneNumber}`);
+        console.log(`📞 Telefono alternativo → nota: "${phoneNumber}"`);
+        this._lastTopic = 'notes';
+      }
+    }
+
     if (newNotes.length > 0) {
       const toAdd = newNotes.join('; ');
       this.data.notes = this.data.notes
@@ -1700,21 +1718,6 @@ export class OpenAIRealtimeClient {
       }
     }
     return false; // nessuna gestione speciale
-
-    // ── Telefono alternativo ─────────────────────────────────────────────────
-    const phonePattern = /(?:numero|telefono|cell(?:ulare)?|phone|contatt).*?(\+?\d[\d\s\-]{6,14}\d)/i;
-    const phoneMatch = text.match(phonePattern);
-    if (phoneMatch && !this.data.alternativePhone) {
-      const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
-      this.data.alternativePhone = phoneNumber;
-      const phoneNote = `Tel. alternativo: ${phoneNumber}`;
-      console.log(`📞 Telefono alternativo: "${phoneNumber}"`);
-      if (!this.data.notes || !this.data.notes.includes('Tel. alternativo')) {
-        this.data.notes = this.data.notes
-          ? `${this.data.notes}; ${phoneNote}`
-          : phoneNote;
-      }
-    }
   }
 
   // ── Core Logic Engine ─────────────────────────────────────────────────────
