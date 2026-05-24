@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v11.DUAL-2026-05-15 caricato');
+console.log('🟢 openai-realtime.js v13-NAMEFIX-2026-05-24 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
