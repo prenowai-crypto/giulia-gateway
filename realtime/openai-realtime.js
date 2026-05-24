@@ -1850,6 +1850,7 @@ export class OpenAIRealtimeClient {
         formatForDisplay:            (d) => DateManager.formatForDisplay(d),
         formatTimeForDisplay:        (t) => TimeManager.formatForDisplay(t),
         isValidTime:                 (t, cfg) => ValidationPipeline.isValidTime(t, cfg),
+        parseDate:                   (t) => DateManager.parseFromText(t),
         restaurantConfig:            this.restaurantConfig,
         apiKey:                      this.apiKey,
       });
