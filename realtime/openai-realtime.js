@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v18-PHONEUPD-2026-05-24 caricato');
+console.log('🟢 openai-realtime.js v19-CANCELSW-2026-05-25 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -243,6 +243,29 @@ export class OpenAIRealtimeClient {
     if (this._modifyEngine?.state === 'CONFIRM_PATCH' ||
         this._modifyEngine?.state === 'CONFIRM_BOOKING') {
       this.lastTranscript = transcript;
+      // 🆕 Uscita verso CANCEL DURANTE la conferma. "Sì, cancello" / "voglio cancellare"
+      // non devono essere letti come conferma della modifica: qui l'engine classifica
+      // il "sì" come confirm. Intercetto il cancel esplicito PRIMA di delegare al motore.
+      const _cancelDuringConfirm = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i.test(transcript || '');
+      if (_cancelDuringConfirm) {
+        const _ab = this._modifyEngine.activeBooking;
+        console.log('🔓 CONFIRM → cancel esplicito → switch a CANCEL');
+        this._modifyEngine.reset();
+        this.modifyState = null;
+        this.intent = 'cancel';
+        if (_ab?.eventId) {
+          // Prenotazione già individuata → vai diretto alla conferma cancellazione
+          this.foundReservation = _ab;
+          const _tn = _ab.time?.length === 5 ? _ab.time + ':00' : (_ab.time || '');
+          this.cancelState = 'awaiting_confirm';
+          this._say(`Ho trovato: ${_ab.name}, ${DateManager.formatForDisplay(_ab.date)} alle ${TimeManager.formatForDisplay(_tn)} per ${_ab.people} persone. Conferma la cancellazione?`);
+        } else {
+          this.cancelState = null;
+          this.foundReservation = null;
+          this._say('Certo! A che nome è la prenotazione e per quale data?');
+        }
+        return;
+      }
       await this._modifyEngine.handle(transcript, {}).catch(console.error);
       this.modifyState = this._modifyEngine.isDone ? 'done' : 'awaiting_changes';
       if (this._modifyEngine.isDone && this._modifyEngine.activeBooking) {
@@ -619,8 +642,13 @@ export class OpenAIRealtimeClient {
     const lang = this.language || 'it';
     this._ttsPlaying = true;
 
+    // Run di 7+ cifre (telefoni/ID): la TTS li legge cifra-per-cifra, così non
+    // salta/fonde cifre. NON tocca la nota salvata (questo è solo il parlato),
+    // né anni (4 cifre), orari o conteggi.
+    const spoken = this._speakNumbers(text);
+
     if (lang === 'it') {
-      this.ttsSession.speak(text, 'it');
+      this.ttsSession.speak(spoken, 'it');
       return;
     }
 
@@ -632,7 +660,13 @@ export class OpenAIRealtimeClient {
     }
 
     // Frase dinamica → TTS con traduzione
-    this.ttsSession.speakTranslated(text, lang);
+    this.ttsSession.speakTranslated(spoken, lang);
+  }
+
+  // Separa cifra-per-cifra i run lunghi (≥7) per una lettura TTS affidabile.
+  _speakNumbers(text) {
+    if (!text) return text;
+    return String(text).replace(/\d{7,}/g, (m) => m.split('').join(' '));
   }
 
   // Compatibilità con il vecchio codice che usa _sayDirect
