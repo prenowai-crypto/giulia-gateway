@@ -11,7 +11,7 @@
  * GPT estrae operazioni. Il motore decide il flow.
  */
 
-console.log('🟢 modify-engine.js v17-CANCELEXIT-2026-05-24 caricato');
+console.log('🟢 modify-engine.js v18-PHONEUPD-2026-05-24 caricato');
 
 export class ModifyEngine {
 
@@ -189,13 +189,16 @@ export class ModifyEngine {
 
     // ── Nota forzata (telefono alternativo) → add_note ────────────────────────
     // L'orchestratore rileva il telefono in modo deterministico; GPT non lo estrae
-    // come operazione. Lo aggiungiamo qui, in modo idempotente (no doppioni).
+    // come operazione. Lo aggiungiamo qui. Skippa SOLO se la nota identica (stesso
+    // numero) è già presente: un numero NUOVO deve essere applicato (sostituirà il
+    // vecchio nel merge sotto). Il bug precedente: il check generico "Tel. alternativo"
+    // bloccava l'aggiornamento quando esisteva già un telefono diverso.
     if (this._pendingForcedNote) {
       const _fn = this._pendingForcedNote;
       this._pendingForcedNote = null;
-      const _alreadyInNotes = String(r.notes || '').includes('Tel. alternativo');
+      const _sameAlready = String(r.notes || '').includes(_fn);
       const _alreadyInOps = (ops || []).some(o => o.type === 'add_note' && o.value === _fn);
-      if (!_alreadyInNotes && !_alreadyInOps) {
+      if (!_sameAlready && !_alreadyInOps) {
         if (!ops) ops = [];
         ops.push({ type: 'add_note', value: _fn });
         console.log(`📞 Nota forzata aggiunta alle operations: "${_fn}"`);
@@ -221,7 +224,18 @@ export class ModifyEngine {
 
     // Accumula note
     const newNotesStr = noteOps.map(o => o.value).filter(Boolean).join('; ');
-    const mergedNotes = this._mergeNotesStr(r.notes || '', newNotesStr, []);
+    // Telefono alternativo: un nuovo numero SOSTITUISCE quello esistente (non si
+    // accumula). Se le nuove note contengono un "Tel. alternativo:", rimuovo quello
+    // vecchio dalla base prima del merge.
+    let _baseNotes = r.notes || '';
+    if (/Tel\.\s*alternativo:/i.test(newNotesStr)) {
+      _baseNotes = _baseNotes
+        .replace(/Tel\.\s*alternativo:[^;]*/gi, '')
+        .replace(/;\s*;/g, ';')
+        .replace(/^\s*;\s*|\s*;\s*$/g, '')
+        .trim();
+    }
+    const mergedNotes = this._mergeNotesStr(_baseNotes, newNotesStr, []);
 
     // Se ci sono solo info query e note, senza slot changes
     if (slotOps.length === 0) {
