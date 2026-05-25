@@ -11,7 +11,7 @@
  * GPT estrae operazioni. Il motore decide il flow.
  */
 
-console.log('🟢 modify-engine.js v18-PHONEUPD-2026-05-24 caricato');
+console.log('🟢 modify-engine.js v19-CANCELSW-2026-05-25 caricato');
 
 export class ModifyEngine {
 
