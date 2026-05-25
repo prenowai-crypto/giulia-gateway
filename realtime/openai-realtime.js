@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v19-CANCELSW-2026-05-25 caricato');
+console.log('🟢 openai-realtime.js v20-CANCELINTERCEPT-2026-05-25 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -272,6 +272,39 @@ export class OpenAIRealtimeClient {
         this.lastReservation = { ...this._modifyEngine.activeBooking, status: 'CONFIRMED' };
         this.phase = 'done';
       }
+      return;
+    }
+
+    // ── Intercetto richiesta ESPLICITA di cancellazione (da QUALSIASI stato) ────
+    // Una frase chiara "voglio cancellare/disdire" deve passare al CANCEL anche se
+    // siamo dentro un CREATE in raccolta, un MODIFY, o phase=done. Senza questo, la
+    // raccolta guidata del CREATE intrappola il turno e continua a chiedere giorno/ora,
+    // ignorando il cancel (l'override su args.intent non basta: this.intent resta 'create').
+    // I passi di conferma (cancellazione awaiting_confirm, conferma engine) sono già
+    // gestiti sopra e ritornano prima di qui, quindi non interferiscono.
+    const _explicitCancelNow = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i;
+    if (this.intent !== 'cancel' && _explicitCancelNow.test(transcript)) {
+      console.log(`🔓 Cancel esplicito intercettato (stato: ${this.intent || 'idle'}, phase: ${this.phase}) → switch a CANCEL`);
+      if (this._modifyEngine?.isActive) this._modifyEngine.reset();
+      this.modifyState = null;
+      this._pendingQuestion = null;
+      this.intent = 'cancel';
+      this.cancelState = null;
+      // Se la prenotazione è già nota (appena creata/modificata) → conferma diretta
+      const _known = this.lastReservation?.eventId ? this.lastReservation
+                   : (this.foundReservation?.eventId ? this.foundReservation : null);
+      if (_known?.eventId && this.phase === 'done') {
+        this.foundReservation = _known;
+        const _tn = _known.time?.length === 5 ? _known.time + ':00' : (_known.time || '');
+        this.cancelState = 'awaiting_confirm';
+        this._say(`Ho trovato: ${_known.name}, ${DateManager.formatForDisplay(_known.date)} alle ${TimeManager.formatForDisplay(_tn)} per ${_known.people} persone. Conferma la cancellazione?`);
+        return;
+      }
+      // Altrimenti estrai nome/data dal turno (fallback su quanto già noto / telefono) e cerca
+      const _a = await this._extractFromTranscript(transcript);
+      const _nm = (_a?.name && _a.name !== 'null') ? _a.name : (this.data?.name || null);
+      const _dt = (_a?.date && _a.date !== 'null') ? _a.date : (this.data?.date || null);
+      await this._handleCancelFlow(_dt, _nm).catch(console.error);
       return;
     }
 
