@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v17-CANCELEXIT-2026-05-24 caricato');
+console.log('🟢 openai-realtime.js v18-PHONEUPD-2026-05-24 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -821,7 +821,7 @@ export class OpenAIRealtimeClient {
       // Richiede una forma verbale chiara → niente falsi positivi su cognomi
       // ("Cancelleri", "Disdri"). Agganciato al transcript: scavalca anche un
       // eventuale errore di GPT che classifica "voglio cancellare" come modify.
-      const _explicitCancel = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion/i.test(this.lastTranscript || '');
+      const _explicitCancel = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i.test(this.lastTranscript || '');
       if (_explicitCancel) {
         console.log('🔓 HARD LOCK: intent cancel esplicito → switch a CANCEL');
         this._modifyEngine.reset();
@@ -1266,7 +1266,7 @@ export class OpenAIRealtimeClient {
     }
 
     // Override locale: frasi implicite di cancellazione che GPT classifica come modify/create
-    const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)|\b(?:voglio|vorrei|devo|posso|vorremmo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion/i;
+    const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)|\b(?:voglio|vorrei|devo|posso|vorremmo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i;
     if (!this.intentLocked && this.lastTranscript && _impliedCancelPat.test(this.lastTranscript)) {
       if (args.intent !== 'cancel') {
         console.log(`🎯 Intent override: ${args.intent} → cancel (frase implicita cancellazione)`);
@@ -1916,10 +1916,12 @@ export class OpenAIRealtimeClient {
                      : this._modifyEngine.state === 'IDLE'   ? null
                      : 'awaiting_changes'; // qualsiasi stato attivo
 
+    const _forcedNote = this.data.alternativePhone ? `Tel. alternativo: ${this.data.alternativePhone}` : null;
+    console.log(`🔧 _handleModifyFlow → forcedNote=${_forcedNote || 'null'}`);
     await this._modifyEngine.handle(this.lastTranscript || '', {
       newDate, newTime, newPeople, newName,
       // telefono alternativo rilevato a voce → nota forzata (GPT non lo estrae)
-      forcedNote: this.data.alternativePhone ? `Tel. alternativo: ${this.data.alternativePhone}` : null,
+      forcedNote: _forcedNote,
     });
 
     // Aggiorna modifyState legacy dopo l'esecuzione
