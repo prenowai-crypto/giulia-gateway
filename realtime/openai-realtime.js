@@ -20,7 +20,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v20-CANCELINTERCEPT-2026-05-25 caricato');
+console.log('🟢 openai-realtime.js v21-CANCELSEARCH-2026-05-25 caricato');
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
@@ -239,6 +239,24 @@ export class OpenAIRealtimeClient {
       await this._handleCancelConfirmText(transcript).catch(console.error);
       return;
     }
+    // 🆕 Risposta a "A che nome / quale data?" durante una cancellazione in corso.
+    // Senza questo, una frase tipo "a nome Carta per sabato" (nome+data) viene riletta
+    // da GPT come CREATE — sia dal dispatcher phase=done sia dalla guardia intent-switch —
+    // e il cancel viene abbandonato. Qui la trattiamo come la risposta che è.
+    if (this.cancelState === 'awaiting_search') {
+      this.lastTranscript = transcript;
+      // Escape: se l'utente cambia idea esplicitamente (modifica/nuova prenotazione), lascia
+      // proseguire la pipeline normale per gestire lo switch.
+      const _switchAway = /\b(?:voglio|vorrei|posso|devo)\s+(?:prenotar|spostar|cambiar|modificar|anticipar|posticipar)\w*|\bnuova\s+prenotazione\b/i.test(transcript || '');
+      if (!_switchAway) {
+        const _a = await this._extractFromTranscript(transcript);
+        const _nm = (_a?.name && _a.name !== 'null') ? _a.name : (this.data?.name || null);
+        const _dt = (_a?.date && _a.date !== 'null') ? _a.date : (this.data?.date || null);
+        this.intent = 'cancel';
+        await this._handleCancelFlow(_dt, _nm).catch(console.error);
+        return;
+      }
+    }
     // Nuovo modifyEngine: se in CONFIRM_PATCH o CONFIRM_BOOKING → passa direttamente al motore
     if (this._modifyEngine?.state === 'CONFIRM_PATCH' ||
         this._modifyEngine?.state === 'CONFIRM_BOOKING') {
@@ -260,7 +278,7 @@ export class OpenAIRealtimeClient {
           this.cancelState = 'awaiting_confirm';
           this._say(`Ho trovato: ${_ab.name}, ${DateManager.formatForDisplay(_ab.date)} alle ${TimeManager.formatForDisplay(_tn)} per ${_ab.people} persone. Conferma la cancellazione?`);
         } else {
-          this.cancelState = null;
+          this.cancelState = 'awaiting_search'; // blocca l'intent: il prossimo turno è la risposta
           this.foundReservation = null;
           this._say('Certo! A che nome è la prenotazione e per quale data?');
         }
