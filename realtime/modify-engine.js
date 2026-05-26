@@ -11,7 +11,7 @@
  * GPT estrae operazioni. Il motore decide il flow.
  */
 
-console.log('🟢 modify-engine.js v20-CANCELINTERCEPT-2026-05-25 caricato');
+console.log('🟢 modify-engine.js v21-CANCELSEARCH-2026-05-25 caricato');
 
 export class ModifyEngine {
 
