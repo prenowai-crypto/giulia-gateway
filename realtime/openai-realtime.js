@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC5-S2S-GA-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC6-S2S-GA-2026-05-27 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
