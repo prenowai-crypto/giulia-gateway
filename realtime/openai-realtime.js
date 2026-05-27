@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC3-S2S-GA-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC4-S2S-GA-2026-05-27 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -239,26 +239,30 @@ export class OpenAIRealtimeClient {
     });
   }
 
-  // ── Configurazione iniziale della sessione ───────────────────────────────
+  // ── Configurazione iniziale della sessione (struttura GA, non beta) ──────
   _sendSessionUpdate() {
     const sessionConfig = {
       type: 'realtime',
-      modalities: ['audio', 'text'],
       instructions: this._buildSystemPrompt(),
-      voice: this.restaurantConfig?.voice || 'coral',
-      input_audio_format:  'g711_ulaw',  // Telnyx PCMU 8kHz pass-through
-      output_audio_format: 'g711_ulaw',
-      input_audio_transcription: { model: 'whisper-1' }, // per log testuali
-      turn_detection: {
-        type: 'semantic_vad',
-        eagerness: 'auto',
-        create_response: true,
-        interrupt_response: true,
-      },
-      input_audio_noise_reduction: { type: 'far_field' },
       tools: FUNCTIONS,
       tool_choice: 'auto',
-      temperature: 0.7,
+      audio: {
+        input: {
+          format: { type: 'g711_ulaw' },           // Telnyx PCMU 8kHz pass-through
+          transcription: { model: 'whisper-1' },   // trascrizione utente per log
+          turn_detection: {
+            type: 'semantic_vad',
+            eagerness: 'auto',
+            create_response: true,
+            interrupt_response: true,
+          },
+          noise_reduction: { type: 'far_field' },
+        },
+        output: {
+          format: { type: 'g711_ulaw' },
+          voice: this.restaurantConfig?.voice || 'coral',
+        },
+      },
     };
 
     this._send({ type: 'session.update', session: sessionConfig });
@@ -323,17 +327,17 @@ export class OpenAIRealtimeClient {
         }
         break;
 
-      // Audio del modello → forward a Telnyx
-      case 'response.audio.delta':
+      // Audio del modello → forward a Telnyx (nome evento GA: output_audio)
+      case 'response.output_audio.delta':
         if (msg.delta) this.onAudioDelta(msg.delta);
         break;
 
-      case 'response.audio.done':
+      case 'response.output_audio.done':
         // model finito di parlare per questa response
         break;
 
       // Trascrizione di ciò che il modello dice (per log)
-      case 'response.audio_transcript.done':
+      case 'response.output_audio_transcript.done':
         if (msg.transcript) {
           console.log(`💬 [AI]: ${msg.transcript}`);
           this.onTranscript(msg.transcript, 'assistant');
