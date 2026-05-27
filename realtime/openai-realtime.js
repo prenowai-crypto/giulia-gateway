@@ -23,7 +23,7 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vB1-AGENT-2026-05-26 caricato');
+console.log('🟢 openai-realtime.js vB2-FILLER-2026-05-27 caricato');
 
 // ─── Modello del "cervello" ──────────────────────────────────────────────────
 // gpt-4o-mini è il default sicuro (tool calling + italiano collaudati su Chat
@@ -33,6 +33,19 @@ console.log('🟢 openai-realtime.js vB1-AGENT-2026-05-26 caricato');
 const BRAIN_MODEL = process.env.BRAIN_MODEL || 'gpt-4o-mini';
 const MAX_TOOL_ROUNDS = 5;     // sicurezza anti-loop nel ciclo agente
 const HISTORY_TURNS   = 8;     // ultimi 8 messaggi (~4 turni) per tenere basso il costo
+
+// ─── Riempitivi vocali ───────────────────────────────────────────────────────
+// Tutti i tool toccano Apps Script (4–8s di attesa, soprattutto la create).
+// Prima di eseguirli Giulia dice una frase breve per coprire il silenzio.
+// REGOLA: le frasi annunciano l'AZIONE, non l'ESITO (così restano corrette
+// anche se il tool poi fallisce o dà esito negativo).
+const FILLERS = {
+  trova_prenotazione:      ['Un attimo, controllo…', 'Vediamo, cerco la prenotazione…'],
+  controlla_disponibilita: ['Un attimo, verifico la disponibilità…', 'Controllo subito…'],
+  crea_prenotazione:       ['Un attimo, procedo con la prenotazione…', 'Perfetto, registro subito…'],
+  modifica_prenotazione:   ['Un attimo, aggiorno la prenotazione…', 'Va bene, modifico subito…'],
+  cancella_prenotazione:   ['Un attimo, procedo…', 'Va bene, sistemo subito…'],
+};
 
 // ─── Definizione dei 5 tool (i "pulsanti" dell'agente) ───────────────────────
 // IMPORTANTE: per data e ora il modello passa il testo COSÌ COME lo dice il
@@ -142,6 +155,7 @@ export class OpenAIRealtimeClient {
     this._lastFound      = null;  // ultima prenotazione trovata/creata (per modifica/cancella)
     this._restaurantInfo = null;  // info locale (menu/orari) caricate async
     this._busy           = false; // un turno per volta
+    this._lastFiller     = '';    // evita di ripetere lo stesso riempitivo di fila
   }
 
   // ── Connessione: STT → TTS → info locale → saluto ─────────────────────────
@@ -214,6 +228,9 @@ export class OpenAIRealtimeClient {
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         messages.push(msg); // l'assistant con le tool_calls DEVE precedere i risultati
+        // Riempitivo vocale: copre il silenzio mentre Apps Script lavora.
+        // Parte in parallelo (fire-and-forget), poi eseguiamo il tool.
+        this._sayFiller(msg.tool_calls[0]?.function?.name);
         for (const tc of msg.tool_calls) {
           let args = {};
           try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
@@ -472,6 +489,19 @@ export class OpenAIRealtimeClient {
   }
   // legge cifra-per-cifra i numeri lunghi (telefoni) per una TTS affidabile
   _speakNumbers(text) { return String(text).replace(/\d{7,}/g, (m) => m.split('').join(' ')); }
+
+  // pronuncia un riempitivo per il tool in arrivo (se previsto), senza ripetere
+  // due volte di fila la stessa frase
+  _sayFiller(toolName) {
+    const opts = FILLERS[toolName];
+    if (!opts || !opts.length) return;
+    let phrase = opts[Math.floor(Math.random() * opts.length)];
+    if (phrase === this._lastFiller && opts.length > 1) {
+      phrase = opts[(opts.indexOf(phrase) + 1) % opts.length];
+    }
+    this._lastFiller = phrase;
+    this._say(phrase);
+  }
 
   // ── Helper di normalizzazione (DateManager/TimeManager = autorità) ─────────
   _normDate(s) {
