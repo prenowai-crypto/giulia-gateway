@@ -1,139 +1,191 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v5.0 — OPZIONE B: AGENTE A TOOL CALLING
+// PRENOW REALTIME v6.0 — SPEECH-TO-SPEECH (gpt-realtime-mini)
 //
-// Cambio di paradigma rispetto all'orchestratore precedente:
-//   PRIMA:  il codice decide il flow, GPT riempie i buchi (3200 righe, 17 punti
-//           di decisione, regex intent, state machine, cancelState/modifyState…)
-//   ORA:    il modello decide il flow chiamando 5 tool; il codice esegue soltanto.
+// Cambio di paradigma: una sola WebSocket verso OpenAI Realtime API.
+// Audio Telnyx (g711/PCMU 8kHz) → OpenAI → audio di ritorno. Niente STT/TTS
+// separati, niente cervello di testo. Le 7 function girano native sul modello.
 //
-//   STT (invariato) → AGENTE (gpt-4o-mini, tool calling) → TOOL → TTS (invariato)
-//
-// File invariati e RIUSATI: parsers.js, stt-session.js, tts-session.js,
-//   media-stream.js, index.js, Apps Script. Stesse export e stessa interfaccia
-//   di classe (OpenAIRealtimeClient + DateManager) → niente altro da toccare.
+// Il file mantiene la stessa interfaccia di classe (OpenAIRealtimeClient +
+// DateManager) per non rompere media-stream.js: cambia tutto dentro, niente fuori.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+import WebSocket from 'ws';
 import { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying } from './parsers.js';
-import { STTSession }   from './stt-session.js';
-import { TTSSession }   from './tts-session.js';
-import { TurnManager }  from './turn-manager.js';
 
-// Re-export per compatibilità con media-stream.js (che importa anche DateManager)
+// Re-export per compatibilità con media-stream.js
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vB3-GUARDS-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC1-S2S-2026-05-27 caricato');
 
-// ─── Modello del "cervello" ──────────────────────────────────────────────────
-// gpt-5.4-mini: famiglia GPT-5, gira su Chat Completions + function calling.
-// La chiamata in _chat è scritta per adattarsi da sola ai parametri che il
-// modello accetta (temperature / max_tokens vs max_completion_tokens), quindi
-// si può cambiare modello via env BRAIN_MODEL (es. 'gpt-4o-mini') senza toccare
-// il codice.
-const BRAIN_MODEL = process.env.BRAIN_MODEL || 'gpt-5.4-mini';
-const MAX_TOOL_ROUNDS = 5;     // sicurezza anti-loop nel ciclo agente
-const HISTORY_TURNS   = 8;     // ultimi 8 messaggi (~4 turni) per tenere basso il costo
+// ─── Modello e endpoint ──────────────────────────────────────────────────────
+const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
+const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
 
-// ─── Riempitivi vocali ───────────────────────────────────────────────────────
-// Tutti i tool toccano Apps Script (4–8s di attesa, soprattutto la create).
-// Prima di eseguirli Giulia dice una frase breve per coprire il silenzio.
-// REGOLA: le frasi annunciano l'AZIONE, non l'ESITO (così restano corrette
-// anche se il tool poi fallisce o dà esito negativo).
-const FILLERS = {
-  trova_prenotazione:      ['Un attimo, controllo…', 'Vediamo, cerco la prenotazione…'],
-  controlla_disponibilita: ['Un attimo, verifico la disponibilità…', 'Controllo subito…'],
-  crea_prenotazione:       ['Un attimo, procedo con la prenotazione…', 'Perfetto, registro subito…'],
-  modifica_prenotazione:   ['Un attimo, aggiorno la prenotazione…', 'Va bene, modifico subito…'],
-  cancella_prenotazione:   ['Un attimo, procedo…', 'Va bene, sistemo subito…'],
-};
-
-// ─── Definizione dei 5 tool (i "pulsanti" dell'agente) ───────────────────────
-// IMPORTANTE: per data e ora il modello passa il testo COSÌ COME lo dice il
-// cliente ("sabato", "domani", "alle 21"); la normalizzazione la fa il codice
-// con DateManager/TimeManager → il parser resta l'autorità sulle date.
-const TOOLS = [
+// ─── Le 7 function: ESATTAMENTE come nei file forniti ────────────────────────
+const FUNCTIONS = [
   {
     type: 'function',
-    function: {
-      name: 'trova_prenotazione',
-      description: 'Cerca una prenotazione esistente. Usalo quando il cliente vuole modificare o cancellare, o nomina una prenotazione già fatta. Restituisce i dettagli da leggere al cliente per conferma.',
-      parameters: {
-        type: 'object',
-        properties: {
-          nome: { type: 'string', description: 'Nome o cognome sulla prenotazione' },
-          data: { type: 'string', description: "Data come detta dal cliente, es. 'sabato', 'domani', '15 giugno'. Opzionale." },
-        },
-        required: ['nome'],
+    name: 'trova_prenotazione',
+    description: 'Cerca una prenotazione esistente dato il nome fornito dal cliente e, opzionalmente, una data.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nome: { type: 'string', description: 'Nome o cognome sulla prenotazione' },
+        data: { type: 'string', description: "Data indicata dal cliente, ad esempio 'sabato' o 'domani'. Opzionale." },
       },
+      required: ['nome', 'data'],
+      additionalProperties: false,
     },
   },
   {
     type: 'function',
-    function: {
-      name: 'controlla_disponibilita',
-      description: 'Verifica se è possibile prenotare/spostare a una certa data, ora e numero di persone. Applica giorni di chiusura, orari, capienza e gruppi grandi. Chiamalo SEMPRE prima di creare o di applicare una modifica di data/ora/persone, ma SOLO quando hai data, ora e persone detti davvero dal cliente. Fidati del suo esito.',
-      parameters: {
-        type: 'object',
-        properties: {
-          data:    { type: 'string', description: "Data come detta dal cliente, es. 'sabato'" },
-          ora:     { type: 'string', description: "Ora come detta dal cliente, es. 'alle 21', '21:30'" },
-          persone: { type: 'integer', description: 'Numero di persone (totale finale)' },
-        },
-        required: [],
+    name: 'controlla_disponibilita',
+    description: 'Verifica se è possibile prenotare o spostare a una certa data, ora e numero di persone.',
+    parameters: {
+      type: 'object',
+      properties: {
+        data:    { type: 'string',  description: "Data come detta dal cliente, es. 'sabato'" },
+        ora:     { type: 'string',  description: "Ora come detta dal cliente, es. 'alle 21'" },
+        persone: { type: 'integer', description: 'Numero totale di persone' },
       },
+      required: ['data', 'ora', 'persone'],
+      additionalProperties: false,
     },
   },
   {
     type: 'function',
-    function: {
-      name: 'crea_prenotazione',
-      description: 'Crea una nuova prenotazione. Chiamalo solo dopo che controlla_disponibilita ha dato esito libero (o gruppo_grande) e hai il nome.',
-      parameters: {
-        type: 'object',
-        properties: {
-          nome:    { type: 'string' },
-          data:    { type: 'string', description: "Come detta dal cliente, es. 'sabato'" },
-          ora:     { type: 'string', description: "Come detta dal cliente, es. 'alle 21'" },
-          persone: { type: 'integer' },
-          note:    { type: 'string', description: 'Allergie, seggiolone, occasioni, tavolo, ecc. Opzionale.' },
-        },
-        required: [],
+    name: 'crea_prenotazione',
+    description: 'Crea una nuova prenotazione utilizzando i dati forniti dal cliente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nome:    { type: 'string',  description: 'Nome del cliente fornito dal cliente' },
+        data:    { type: 'string',  description: "Data della prenotazione come detta dal cliente, ad esempio 'sabato'" },
+        ora:     { type: 'string',  description: "Ora della prenotazione come detta dal cliente, ad esempio 'alle 21'" },
+        persone: { type: 'integer', description: 'Numero di persone per la prenotazione' },
+        note:    { type: 'string',  description: 'Note opzionali come allergie, intolleranze, seggiolone, occasione speciale o richiesta tavolo particolare' },
       },
+      required: ['nome', 'data', 'ora', 'persone', 'note'],
+      additionalProperties: false,
     },
   },
   {
     type: 'function',
-    function: {
-      name: 'modifica_prenotazione',
-      description: "Applica una modifica a una prenotazione già trovata con trova_prenotazione. Passa SOLO i campi che cambiano, in valore FINALE (se il cliente dice 'si aggiungono due' e ne aveva 4, passa persone: 6 — l'aritmetica la fai tu).",
-      parameters: {
-        type: 'object',
-        properties: {
-          data:    { type: 'string', description: "Nuova data, come detta dal cliente. Opzionale." },
-          ora:     { type: 'string', description: 'Nuova ora. Opzionale.' },
-          persone: { type: 'integer', description: 'Nuovo numero finale di persone. Opzionale.' },
-          note:    { type: 'string', description: 'Nota da aggiungere. Opzionale.' },
-        },
-        required: [],
+    name: 'modifica_prenotazione',
+    description: 'Applica una modifica ai campi specificati di una prenotazione esistente, passando solo i valori finali aggiornati dei campi da cambiare.',
+    parameters: {
+      type: 'object',
+      properties: {
+        data:    { type: 'string',  description: 'Nuova data della prenotazione, se modificata (formato YYYY-MM-DD).' },
+        ora:     { type: 'string',  description: 'Nuova ora della prenotazione, se modificata (formato HH:MM).' },
+        persone: { type: 'integer', description: 'Nuovo numero totale di persone per la prenotazione, se modificato.' },
+        note:    { type: 'string',  description: 'Nuova nota aggiuntiva da associare alla prenotazione, se modificata.' },
       },
+      required: ['data', 'ora', 'persone', 'note'],
+      additionalProperties: false,
     },
   },
   {
     type: 'function',
-    function: {
-      name: 'cancella_prenotazione',
-      description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamalo solo dopo che il cliente ha confermato la cancellazione.',
-      parameters: { type: 'object', properties: {}, required: [] },
+    name: 'cancella_prenotazione',
+    description: 'Cancella la prenotazione trovata con trova_prenotazione dopo la conferma del cliente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        Placeholder1: { type: 'string', description: 'Placeholder - replace with the strict field you want' },
+      },
+      required: ['Placeholder1'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'info_locale',
+    description: 'Risponde a domande sul ristorante riguardo menu, piatti, opzioni alimentari, parcheggio, accessibilità, pagamenti e dehors.',
+    parameters: {
+      type: 'object',
+      properties: {
+        argomento: { type: 'string', description: "Cosa chiede il cliente, ad esempio 'menu', 'vegano', 'parcheggio', 'pagamenti', 'accessibilità'" },
+      },
+      required: ['argomento'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'richiedi_evento',
+    description: 'Registra una richiesta per un evento di gruppo molto grande e avvisa il ristorante, che ricontatterà il cliente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nome:    { type: 'string',  description: 'Nome del richiedente' },
+        data:    { type: 'string',  description: "Data dell'evento come detta dal cliente" },
+        ora:     { type: 'string',  description: "Ora dell'evento come detta dal cliente" },
+        persone: { type: 'integer', description: "Numero di persone stimate per l'evento" },
+        note:    { type: 'string',  description: "Dettagli aggiuntivi relativi all'evento. Opzionale." },
+      },
+      required: ['nome', 'data', 'ora', 'persone', 'note'],
+      additionalProperties: false,
     },
   },
 ];
+
+// ─── System prompt: multi-tenant, NIENTE hardcoded ──────────────────────────
+// I {{...}} vengono sostituiti per ogni telefonata dal restaurantConfig.
+const SYSTEM_PROMPT_TEMPLATE = `Act as Giulia, the automated phone receptionist for {{RESTAURANT_NAME}}, helping customers create, modify, or cancel reservations by calling appropriate tools based on their intent. Speak only Italian, use a warm, friendly, professional, and quick tone. Keep every response short, with a maximum of 1–2 sentences. Never invent or assume details the customer hasn't provided—always explicitly ask for missing information, especially date, time, number of people, or name as needed, before calling any tool. For confirmations of bookings, modifications, or cancellations, only give these after the appropriate tool returns a result.
+
+Today is {{TODAY_HUMAN}} ({{TODAY_ISO}}). Opening hours: lunch {{LUNCH_START}}–{{LUNCH_END}}, dinner {{DINNER_START}}–{{DINNER_END}}. Closed on {{CLOSED_DAYS_HUMAN}}.
+
+At the very start of each call, identify yourself as an automated voice assistant (legal requirement under the EU AI Act). Use a natural phrasing in Italian, for example: "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?"
+
+When you need to check availability, create, modify, or cancel a reservation, always say a short filler phrase to cover the silence while the tool is working. Always announce the action being taken, not the outcome, before the result is known.
+
+Do not handle normalizations of date or time—pass the customer's wording directly to the tools (e.g. "sabato", "alle 21", "domani"). The gateway normalizes them. Do not proceed if you are missing any critical information; instead, pause and ask for it.
+
+For modifications or cancellations, first find the reservation using trova_prenotazione, then read back the found details and ask for confirmation before proceeding. If the found reservation uses a different name but was matched via the customer's phone number, state this explicitly and confirm it is theirs before continuing.
+
+For changes in people numbers, do the math yourself to calculate the final total, based on the current reservation, when the customer says things like "add two" or "one less."
+
+For any question about the restaurant itself — menu, dishes, vegan/vegetarian/gluten-free options, parking, accessibility, payment methods, outdoor seating — call info_locale with the topic as argomento. Respond only with what info_locale returns. If the requested detail isn't available, invite the customer to contact the restaurant — never invent.
+
+For very large group requests (events, typically 45+ people) — when controlla_disponibilita returns esito "evento" — call richiedi_evento to register the request, then tell the customer the restaurant will get back to them.
+
+Always pronounce long numbers such as phone numbers digit-by-digit for clarity.
+
+Never yield the conversation to the user without either resolving their request or clearly stating what additional information you need.
+
+# Tool Usage
+- Only call tools after gathering all necessary customer information. Never call tools such as controlla_disponibilita or crea_prenotazione with invented data.
+- Respect tool error messages (e.g., manca_ora, manca_persone, manca_data, manca:"nome")—never retry with invented values, always ask the user to provide the exact missing data.
+
+# Audio Output Constraints
+- Keep all spoken responses short and conversational (5–20 words).
+- Prefer breaking multi-step explanations into short back-and-forth dialogue.
+- After outputting each short answer, yield to the user for the next turn unless explicitly waiting for a tool call result.
+- Never string together three or more sentences in a single answer.
+- Always use lively and emotive intonation, speaking quickly and clearly.
+
+# Notes
+- Always ask for exact missing values; never try to "guess" or fill them in.
+- For modifications or cancellations, always confirm details found via trova_prenotazione with the customer before proceeding.
+- Stick to Italian, friendly and professional tone, short sentences, and a natural phone pace.
+- Only offer information actually present in info_locale's response.
+- If a user changes their mind mid-process (e.g., "no, cancella invece"), follow their instruction—don't force a restart.
+- When the tool returns an error due to missing data, repeat the specific question for the missing piece.
+- "Cliente" is not a valid name; always ask for a real name.`;
+
+const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+const MONTH_NAMES = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
+
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
     this.apiKey           = opts.apiKey;
     this.restaurantConfig = opts.restaurantConfig || {};
-    this.systemPrompt     = opts.systemPrompt || ''; // base da media-stream (non usato direttamente)
+    // opts.systemPrompt non usato: lo costruiamo internamente dal registry
 
     this.onAudioDelta = opts.onAudioDelta || (() => {});
     this.onTranscript = opts.onTranscript || (() => {});
@@ -144,201 +196,255 @@ export class OpenAIRealtimeClient {
     const raw = opts.callerPhone || '';
     this.callerPhone = raw && !raw.startsWith('+') ? '+' + raw : raw;
 
-    // Sessioni audio
-    this.sttSession  = null;
-    this.ttsSession  = null;
-    this.turnManager = null;
-    this._ttsPlaying = false;
-    this._sessionReady = false;
-
-    // Stato agente (minimale!)
-    this._history        = [];    // [{role:'user'|'assistant', content}] — solo conversazione, pulita
-    this._lastFound      = null;  // ultima prenotazione trovata/creata (per modifica/cancella)
-    this._restaurantInfo = null;  // info locale (menu/orari) caricate async
-    this._busy           = false; // un turno per volta
-    this._lastFiller     = '';    // evita di ripetere lo stesso riempitivo di fila
+    // Stato
+    this._ws               = null;
+    this._sessionReady     = false;
+    this._lastFound        = null;   // ultima prenotazione trovata/creata (modify/cancel)
+    this._restaurantInfo   = null;   // info locale (per info_locale)
+    this._responseInFlight = false;  // c'è una response.create attiva → per gestione interruzioni
   }
 
-  // ── Connessione: STT → TTS → info locale → saluto ─────────────────────────
+  // ── Connessione: apre WS verso OpenAI Realtime, configura sessione ────────
   async connect() {
-    this.turnManager = new TurnManager({
-      slidingMs: 1800,
-      onTurnReady: (t) => this._onTurnReady(t),
-      onInterrupt: () => {
-        if (this._ttsPlaying) { this.ttsSession?.cancel(); this._ttsPlaying = false; }
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(REALTIME_URL, {
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'OpenAI-Beta':   'realtime=v1',
+        },
+      });
+      this._ws = ws;
+
+      const onceOpen = () => {
+        console.log(`🎙️  Realtime WS aperta (model: ${REALTIME_MODEL})`);
+        this._sendSessionUpdate();
+        this._fetchRestaurantInfo(); // background
+        resolve();
+      };
+
+      ws.once('open', onceOpen);
+      ws.on('message', (data) => this._onMessage(data));
+      ws.on('error', (err) => {
+        console.error('❌ Realtime WS error:', err?.message);
+        this.onError(err);
+      });
+      ws.on('close', (code) => {
+        console.log(`🔴 Realtime WS chiusa (${code})`);
+        this.onClose(code);
+      });
+
+      // timeout di sicurezza sull'open
+      setTimeout(() => {
+        if (ws.readyState !== WebSocket.OPEN) reject(new Error('Realtime WS open timeout'));
+      }, 10000);
+    });
+  }
+
+  // ── Configurazione iniziale della sessione ───────────────────────────────
+  _sendSessionUpdate() {
+    const sessionConfig = {
+      modalities: ['audio', 'text'],
+      instructions: this._buildSystemPrompt(),
+      voice: this.restaurantConfig?.voice || 'coral',
+      input_audio_format:  'g711_ulaw',  // Telnyx PCMU 8kHz pass-through
+      output_audio_format: 'g711_ulaw',
+      input_audio_transcription: { model: 'whisper-1' }, // per log testuali
+      turn_detection: {
+        type: 'semantic_vad',
+        eagerness: 'auto',
+        create_response: true,
+        interrupt_response: true,
+      },
+      input_audio_noise_reduction: { type: 'far_field' },
+      tools: FUNCTIONS,
+      tool_choice: 'auto',
+      temperature: 0.7,
+    };
+
+    this._send({ type: 'session.update', session: sessionConfig });
+  }
+
+  // ── Costruzione system prompt multi-tenant ───────────────────────────────
+  _buildSystemPrompt() {
+    const rc = this.restaurantConfig || {};
+    const now = new Date();
+
+    const todayHuman = `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
+    const todayIso   = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+
+    const closedCsv = rc.closed_days || '1';
+    const closedHuman = String(closedCsv).split(',')
+      .map(s => parseInt(s.trim(), 10))
+      .filter(n => !isNaN(n) && n >= 0 && n <= 6)
+      .map(i => DAY_NAMES[i])
+      .join(', ') || 'lunedì';
+
+    return SYSTEM_PROMPT_TEMPLATE
+      .replace(/\{\{RESTAURANT_NAME\}\}/g, rc.restaurant_name || 'il ristorante')
+      .replace(/\{\{TODAY_HUMAN\}\}/g,     todayHuman)
+      .replace(/\{\{TODAY_ISO\}\}/g,       todayIso)
+      .replace(/\{\{LUNCH_START\}\}/g,     rc.lunch_start  || '12:30')
+      .replace(/\{\{LUNCH_END\}\}/g,       rc.lunch_end    || '14:30')
+      .replace(/\{\{DINNER_START\}\}/g,    rc.dinner_start || '19:30')
+      .replace(/\{\{DINNER_END\}\}/g,      rc.dinner_end   || '23:00')
+      .replace(/\{\{CLOSED_DAYS_HUMAN\}\}/g, closedHuman);
+  }
+
+  // ── Gestione eventi dalla Realtime API ───────────────────────────────────
+  _onMessage(raw) {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); }
+    catch (e) { return console.error('❌ JSON parse:', e?.message); }
+
+    switch (msg.type) {
+
+      case 'session.created':
+        console.log(`📋 session.created: ${msg.session?.id}`);
+        break;
+
+      case 'session.updated':
+        if (!this._sessionReady) {
+          this._sessionReady = true;
+          console.log('✅ session.updated → richiedo saluto iniziale');
+          // Triggera il modello a parlare: il system prompt gli dice di salutare per primo
+          this._send({ type: 'response.create' });
+          this._responseInFlight = true;
+        }
+        break;
+
+      // Trascrizione del cliente (per log)
+      case 'conversation.item.input_audio_transcription.completed':
+        if (msg.transcript) {
+          const t = msg.transcript.trim();
+          if (!this._isGarbage(t)) {
+            console.log(`💬 [user]: ${t}`);
+            this.onTranscript(t, 'user');
+          }
+        }
+        break;
+
+      // Audio del modello → forward a Telnyx
+      case 'response.audio.delta':
+        if (msg.delta) this.onAudioDelta(msg.delta);
+        break;
+
+      case 'response.audio.done':
+        // model finito di parlare per questa response
+        break;
+
+      // Trascrizione di ciò che il modello dice (per log)
+      case 'response.audio_transcript.done':
+        if (msg.transcript) {
+          console.log(`💬 [AI]: ${msg.transcript}`);
+          this.onTranscript(msg.transcript, 'assistant');
+        }
+        break;
+
+      // Il modello vuole chiamare una function
+      case 'response.function_call_arguments.done':
+        this._handleFunctionCall(msg);
+        break;
+
+      // Inizio risposta
+      case 'response.created':
+        this._responseInFlight = true;
+        break;
+
+      case 'response.done':
+        this._responseInFlight = false;
+        // log token usage se presente
+        if (msg.response?.usage) {
+          const u = msg.response.usage;
+          console.log(`📊 tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
+        }
+        break;
+
+      // Cliente inizia a parlare mentre il bot parla → semantic VAD gestisce
+      // l'interruzione automaticamente (interrupt_response: true).
+      case 'input_audio_buffer.speech_started':
+        // niente: configurazione VAD lo fa già
+        break;
+
+      case 'error':
+        console.error('❌ Realtime error:', JSON.stringify(msg.error || msg));
+        break;
+
+      default:
+        // eventi minori: input_audio_buffer.committed, conversation.item.created, ecc.
+        // li ignoriamo per non sporcare i log
+        break;
+    }
+  }
+
+  // ── Handler function call: esegue il tool e ritorna l'output al modello ──
+  async _handleFunctionCall(msg) {
+    const callId = msg.call_id;
+    const name   = msg.name;
+    let args = {};
+    try { args = JSON.parse(msg.arguments || '{}'); }
+    catch (e) { console.error('❌ args parse:', e?.message); }
+
+    console.log(`🔧 tool ${name}(${JSON.stringify(args)})`);
+
+    let result;
+    try {
+      result = await this._execTool(name, args);
+    } catch (e) {
+      console.error('❌ tool error:', e?.message);
+      result = { errore: e?.message || 'errore interno' };
+    }
+
+    console.log(`✅ tool result: ${JSON.stringify(result).substring(0, 200)}`);
+
+    // 1) Crea l'item function_call_output nella conversazione
+    this._send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'function_call_output',
+        call_id: callId,
+        output: JSON.stringify(result),
       },
     });
 
-    this.sttSession = new STTSession(this.apiKey, {
-      language: 'it',
-      onDelta:         (d) => this.turnManager.onDelta(d),
-      onCompleted:     (t) => this.turnManager.onCompleted(t),
-      onSpeechStarted: ()  => this.turnManager.onSpeechStarted(),
-      onError:         (e) => this.onError(e),
-      onClose:         (c) => { if (c !== 1000) this.onClose(c); },
-    });
-    await this.sttSession.connect();
-
-    this.ttsSession = new TTSSession(this.apiKey, {
-      voice: this.restaurantConfig?.voice || 'coral',
-      onAudioDelta: (chunk) => this.onAudioDelta(chunk),
-      onAudioDone:  ()      => { this._ttsPlaying = false; },
-      onError:      (e)     => this.onError(e),
-    });
-    await this.ttsSession.connect();
-
-    this._fetchRestaurantInfo(); // background, non blocca
-
-    if (!this._sessionReady) {
-      this._sessionReady = true;
-      const nome = this.restaurantConfig?.restaurant_name || 'ristorante';
-      // Disclosure AI (EU AI Act, ago 2026) integrata nel saluto.
-      this._say(`Salve, sono l'assistente vocale automatico di ${nome}. Come posso aiutarla?`);
-    }
+    // 2) Triggera il modello a continuare con il risultato
+    this._send({ type: 'response.create' });
   }
 
-  // ── Turno utente → ciclo agente ───────────────────────────────────────────
-  async _onTurnReady(transcript) {
-    if (this._isGarbage(transcript)) return;
-    if (this._busy) { console.log('⏳ turno ignorato: agente occupato'); return; }
-
-    console.log(`💬 [user]: ${transcript}`);
-    this.onTranscript(transcript, 'user');
-    this._busy = true;
-    try {
-      await this._runAgent(transcript);
-    } catch (e) {
-      console.error('❌ _runAgent:', e);
-      this._say('Mi scusi, può ripetere?');
-    } finally {
-      this._busy = false;
-    }
-  }
-
-  // ── Il ciclo agente: 1 pensata → eventuali tool → risposta ────────────────
-  async _runAgent(transcript) {
-    this._history.push({ role: 'user', content: transcript });
-    this._trimHistory();
-
-    // messages locali a questo turno: system + storia pulita + i round-trip dei tool
-    const messages = [{ role: 'system', content: this._buildSystemPrompt() }, ...this._history];
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const msg = await this._chat(messages);
-      if (!msg) { this._say('Mi scusi, può ripetere?'); return; }
-
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        messages.push(msg); // l'assistant con le tool_calls DEVE precedere i risultati
-        // Riempitivo vocale: copre il silenzio mentre Apps Script lavora.
-        // Parte in parallelo (fire-and-forget), poi eseguiamo il tool.
-        this._sayFiller(msg.tool_calls[0]?.function?.name);
-        for (const tc of msg.tool_calls) {
-          let args = {};
-          try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
-          const result = await this._execTool(tc.function.name, args);
-          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
-        }
-        continue; // ripensa con i risultati dei tool
-      }
-
-      // Nessun tool → risposta finale da pronunciare
-      const text = (msg.content || '').trim();
-      if (text) {
-        this._history.push({ role: 'assistant', content: text }); // solo il testo finale entra in storia
-        this._say(text);
-      }
-      return;
-    }
-    this._say('Mi scusi, può ripetere?'); // troppi round → sicurezza
-  }
-
-  // ── Chiamata al modello (Chat Completions + tool calling) ─────────────────
-  // I modelli GPT-5/o-series possono rifiutare temperature≠1 e vogliono
-  // max_completion_tokens al posto di max_tokens. Proviamo prima i parametri
-  // ottimali; se il modello li rifiuta, riproviamo una volta in modalità
-  // compatibile. Così funziona con gpt-5.4-mini e con gpt-4o-mini senza branch.
-  async _chat(messages) {
-    const buildBody = (conservative) => {
-      const body = { model: BRAIN_MODEL, messages, tools: TOOLS, tool_choice: 'auto' };
-      if (conservative) {
-        body.max_completion_tokens = 800; // largo: i reasoning model contano qui anche il "pensiero"
-      } else {
-        body.temperature = 0.2;
-        body.max_tokens = 300;
-      }
-      return body;
-    };
-
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const conservative = attempt === 1;
-      const controller = new AbortController();
-      const to = setTimeout(() => controller.abort(), 12000);
-      try {
-        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
-          body: JSON.stringify(buildBody(conservative)),
-        });
-        clearTimeout(to);
-        const data = await resp.json();
-        if (data?.error) {
-          const m = String(data.error?.message || '');
-          // errore di parametro → riprova una volta in modalità compatibile
-          if (attempt === 0 && /temperature|max_tokens|max_completion_tokens|unsupported|not supported/i.test(m)) {
-            console.log('⚠️ brain param error, riprovo compatibile:', m);
-            continue;
-          }
-          console.log('⚠️ brain error:', m);
-          return null;
-        }
-        const u = data?.usage;
-        if (u) console.log(`📊 tokens: in=${u.prompt_tokens} out=${u.completion_tokens}`);
-        return data?.choices?.[0]?.message || null;
-      } catch (e) {
-        clearTimeout(to);
-        console.log('⚠️ brain exception:', e?.message);
-        return null;
-      }
-    }
-    return null;
-  }
-
-  // ── Dispatcher tool ───────────────────────────────────────────────────────
+  // ── Dispatcher tool ──────────────────────────────────────────────────────
   async _execTool(name, args) {
-    console.log(`🔧 tool ${name}(${JSON.stringify(args)})`);
-    try {
-      switch (name) {
-        case 'trova_prenotazione':      return await this._toolTrova(args);
-        case 'controlla_disponibilita': return await this._toolControlla(args);
-        case 'crea_prenotazione':       return await this._toolCrea(args);
-        case 'modifica_prenotazione':   return await this._toolModifica(args);
-        case 'cancella_prenotazione':   return await this._toolCancella(args);
-        default: return { errore: 'tool sconosciuto' };
-      }
-    } catch (e) {
-      console.log('⚠️ tool error:', e?.message);
-      return { errore: e?.message || 'errore interno' };
+    switch (name) {
+      case 'trova_prenotazione':      return await this._toolTrova(args);
+      case 'controlla_disponibilita': return await this._toolControlla(args);
+      case 'crea_prenotazione':       return await this._toolCrea(args);
+      case 'modifica_prenotazione':   return await this._toolModifica(args);
+      case 'cancella_prenotazione':   return await this._toolCancella(args);
+      case 'info_locale':             return await this._toolInfoLocale(args);
+      case 'richiedi_evento':         return await this._toolRichiediEvento(args);
+      default: return { errore: 'tool sconosciuto: ' + name };
     }
   }
 
-  // ─── TOOL 1: trova_prenotazione (fallback a 4 stadi: nome+data → nome → telefono)
+  // ─── TOOL 1: trova_prenotazione (fallback nome+data → nome → telefono) ───
   async _toolTrova({ nome, data }) {
+    const cleanName = nome && String(nome).trim();
+    const cleanDate = data && String(data).trim();
+    if (!cleanName) return { trovata: false, motivo: 'manca:"nome"' };
+
     const phone   = this.callerPhone || '';
-    const dateISO = data ? this._normDate(data) : null;
+    const dateISO = cleanDate ? this._normDate(cleanDate) : null;
     const ok = (r) => r && r.name && r.date && r.name !== 'null' && r.date !== 'null';
 
-    if (nome && dateISO) {
-      const r = await this._callAppsScript({ action: 'find_reservation', nome, data: dateISO, sheet: 'Prenotazioni' });
-      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, nome);
+    if (cleanName && dateISO) {
+      const r = await this._callAppsScript({ action: 'find_reservation', nome: cleanName, data: dateISO, sheet: 'Prenotazioni' });
+      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, cleanName);
     }
-    if (nome) {
-      const r = await this._callAppsScript({ action: 'find_reservation', nome, sheet: 'Prenotazioni' });
-      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, nome);
+    if (cleanName) {
+      const r = await this._callAppsScript({ action: 'find_reservation', nome: cleanName, sheet: 'Prenotazioni' });
+      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, cleanName);
     }
     if (phone) {
       const r = await this._callAppsScript({ action: 'find_reservation', telefono: phone, sheet: 'Prenotazioni' });
-      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, nome);
+      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, cleanName);
     }
     return { trovata: false };
   }
@@ -354,18 +460,19 @@ export class OpenAIRealtimeClient {
       ora:     TimeManager.formatForDisplay(tn),
       persone: res.people,
       note:    res.notes || 'nessuna',
-      // se trovata tramite numero ma con nome diverso da quello cercato → avvisa il cliente
       nome_diverso_dal_cercato: !!(searchedName && res.name && res.name.toLowerCase() !== String(searchedName).toLowerCase()),
     };
   }
 
-  // ─── TOOL 2: controlla_disponibilita (business rules + Apps Script)
+  // ─── TOOL 2: controlla_disponibilita ─────────────────────────────────────
   async _toolControlla({ data, ora, persone }) {
     const rc = this.restaurantConfig;
     const dateISO = this._normDate(data);
     const timeN   = this._normTime(ora);
     const ppl     = parseInt(persone, 10) || 0;
 
+    // Guard difensivi anti-invenzione: anche se schema obbliga, se il valore
+    // è vuoto o non parsabile, chiediamo invece di procedere.
     if (!dateISO) return { esito: 'manca_data' };
     if (!timeN)   return { esito: 'manca_ora' };
     if (!ppl)     return { esito: 'manca_persone' };
@@ -375,8 +482,8 @@ export class OpenAIRealtimeClient {
     }
     if (timeN && !ValidationPipeline.isValidTime(timeN, rc)) {
       return { esito: 'fuori_orario',
-               pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
-               cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}` };
+               pranzo: `${rc?.lunch_start || '12:30'}-${rc?.lunch_end || '14:30'}`,
+               cena:   `${rc?.dinner_start || '19:30'}-${rc?.dinner_end || '23:00'}` };
     }
     if (timeN) {
       const h = parseInt(timeN.split(':')[0], 10);
@@ -401,12 +508,12 @@ export class OpenAIRealtimeClient {
         .slice(0, 3).map(s => s.time.substring(0, 5));
       return { esito: 'pieno', alternative_stesso_giorno: sameDay };
     }
-    return { esito: 'libero' }; // check incerto → procedi
+    return { esito: 'libero' };
   }
 
-  // ─── TOOL 3: crea_prenotazione
+  // ─── TOOL 3: crea_prenotazione ───────────────────────────────────────────
   async _toolCrea({ nome, data, ora, persone, note }) {
-    // Guard anti-invenzione: niente creazione finché non ci sono i dati veri.
+    // Guard anti-invenzione: nome 'Cliente' (o vuoto) NON è valido
     const nomeOk = nome && String(nome).trim() && !/^(cliente|sconosciuto|n\.?d\.?)$/i.test(String(nome).trim());
     if (!nomeOk) return { creata: false, manca: 'nome' };
     const dateISO = this._normDate(data);
@@ -415,7 +522,8 @@ export class OpenAIRealtimeClient {
     if (!dateISO) return { creata: false, manca: 'data' };
     if (!timeN)   return { creata: false, manca: 'ora' };
     if (!ppl)     return { creata: false, manca: 'persone' };
-    const tel     = this.callerPhone || '';
+
+    const tel = this.callerPhone || '';
     const r = await this._callAppsScript({
       source: 'telnyx', nome, persone: ppl, data: dateISO, ora: timeN,
       telefono: tel, notes: note || '', forceNew: true,
@@ -428,15 +536,22 @@ export class OpenAIRealtimeClient {
     return { creata: false };
   }
 
-  // ─── TOOL 4: modifica_prenotazione (merge sui campi non cambiati)
+  // ─── TOOL 4: modifica_prenotazione ───────────────────────────────────────
+  // Schema strict richiede tutti i campi: trattiamo "" / 0 / valori uguali al
+  // base come "non cambia" → merge sull'ultima prenotazione trovata.
   async _toolModifica({ data, ora, persone, note }) {
     const base = this._lastFound;
     if (!base?.eventId) return { aggiornata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
 
-    const newDate   = data    != null ? this._normDate(data) : base.date;
-    const newTime   = ora     != null ? this._normTime(ora)  : (base.time?.length === 5 ? base.time + ':00' : base.time);
-    const newPeople = persone != null ? parseInt(persone, 10) : base.people;
-    const newNotes  = note    != null ? this._mergeNotes(base.notes, note) : (base.notes || '');
+    const hasData = data    != null && String(data).trim() !== '';
+    const hasOra  = ora     != null && String(ora).trim()  !== '';
+    const hasPpl  = persone != null && parseInt(persone, 10) > 0;
+    const hasNote = note    != null && String(note).trim() !== '';
+
+    const newDate   = hasData ? this._normDate(data)    : base.date;
+    const newTime   = hasOra  ? this._normTime(ora)     : (base.time?.length === 5 ? base.time + ':00' : base.time);
+    const newPeople = hasPpl  ? parseInt(persone, 10)   : base.people;
+    const newNotes  = hasNote ? this._mergeNotes(base.notes, note) : (base.notes || '');
 
     const r = await this._callAppsScript({
       action: 'update_reservation', eventId: base.eventId,
@@ -445,14 +560,17 @@ export class OpenAIRealtimeClient {
     });
     if (r?.success !== false) {
       this._lastFound = { ...base, date: newDate, time: newTime, people: newPeople, notes: newNotes };
-      return { aggiornata: true, data: DateManager.formatForDisplay(newDate),
-               ora: TimeManager.formatForDisplay(newTime), persone: newPeople };
+      return { aggiornata: true,
+               data: DateManager.formatForDisplay(newDate),
+               ora: TimeManager.formatForDisplay(newTime),
+               persone: newPeople };
     }
     return { aggiornata: false };
   }
 
-  // ─── TOOL 5: cancella_prenotazione
-  async _toolCancella() {
+  // ─── TOOL 5: cancella_prenotazione ───────────────────────────────────────
+  // Ignora Placeholder1 (residuo schema): opera sull'ultima prenotazione trovata.
+  async _toolCancella(_args) {
     const r = this._lastFound;
     if (!r?.name || !r?.date) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
     const tn = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
@@ -464,103 +582,128 @@ export class OpenAIRealtimeClient {
     return { cancellata: false };
   }
 
-  // ── System prompt (snello = qualità intento + costo basso) ────────────────
-  _buildSystemPrompt() {
-    const rc = this.restaurantConfig;
-    const now = DateManager.getNow();
-    const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
-
-    const closedDays = rc?.closed_days ? String(rc.closed_days).split(',').map(Number) : [1];
-    const closedTxt  = closedDays.map(d => dayNames[d]).join(', ');
-    const ls = rc?.lunch_start || '12:00', le = rc?.lunch_end || '14:30';
-    const ds = rc?.dinner_start || '19:00', de = rc?.dinner_end || '22:30';
-    const nome = rc?.restaurant_name || 'ristorante';
-
-    // Info locale (trim per non gonfiare il prompt). Lo zoccolo del costo: tienilo corto.
+  // ─── TOOL 6: info_locale ─────────────────────────────────────────────────
+  // Restituisce solo il pezzo richiesto (cost-efficient), o tutto se argomento
+  // generico. Usa la cache _restaurantInfo caricata al connect.
+  async _toolInfoLocale({ argomento }) {
+    if (!this._restaurantInfo) await this._fetchRestaurantInfo();
     const info = this._restaurantInfo || {};
-    const infoLines = [];
-    if (info.cuisine)        infoLines.push(`Cucina: ${info.cuisine}`);
-    if (info.parking)        infoLines.push(`Parcheggio: ${info.parking}`);
-    if (info.highchair)      infoLines.push(`Seggiolone: ${info.highchair}`);
-    if (info.accessibility)  infoLines.push(`Accessibilità: ${info.accessibility}`);
-    if (info.vegan)          infoLines.push(`Vegano/vegetariano: ${info.vegan}`);
-    if (info.glutenFree)     infoLines.push(`Senza glutine: ${info.glutenFree}`);
-    if (info.paymentMethods) infoLines.push(`Pagamenti: ${info.paymentMethods}`);
-    if (info.menuDetails)    infoLines.push(`Menu:\n${String(info.menuDetails).slice(0, 1400)}`);
+    const arg = String(argomento || '').toLowerCase().trim();
 
-    return [
-      `Sei Giulia, receptionist vocale di ${nome}. Parli italiano, frasi brevi (max 2), tono cordiale e professionale.`,
-      `Oggi è ${dayNames[now.getDay()]} ${todayISO}.`,
-      `Orari: pranzo ${ls}-${le}, cena ${ds}-${de}. Chiuso il ${closedTxt}.`,
-      ``,
-      `Il tuo compito: aiutare il cliente a CREARE, MODIFICARE o CANCELLARE una prenotazione, usando SEMPRE gli strumenti. Non confermare mai una prenotazione, modifica o cancellazione, né una disponibilità, senza aver chiamato il tool corrispondente. Non inventare.`,
-      ``,
-      `Regole:`,
-      `- MAI inventare dati che il cliente non ha detto. Per controllare la disponibilità servono data, ora e numero di persone; per CREARE serve anche il nome. Se manca anche solo uno di questi, CHIEDILO al cliente e NON chiamare ancora il tool. Non scegliere tu un orario, una data, un numero di persone o un nome di tua iniziativa. "Cliente" non è un nome valido: chiedi il nome vero.`,
-      `- Se un tool risponde con "manca_ora", "manca_persone", "manca_data" o manca:"nome", significa che quel dato non c'è: chiedilo al cliente, non riprovare con un valore inventato.`,
-      `- Per data e ora passa ai tool il testo COSÌ COME lo dice il cliente ("sabato", "domani", "alle 21"): al calcolo ci pensa il sistema.`,
-      `- Per modificare o cancellare: prima chiama trova_prenotazione, poi LEGGI al cliente cosa hai trovato (nome, data, ora, persone) e chiedi conferma prima di procedere. Se nome_diverso_dal_cercato è true, di' che l'hai trovata tramite il suo numero e chiedi se è la sua.`,
-      `- Persone: se il cliente dice "si aggiungono due" o "uno in meno", calcola TU il totale finale partendo dalle persone della prenotazione trovata, e passa il numero finale.`,
-      `- Prima di creare o di applicare un cambio di data/ora/persone chiama controlla_disponibilita e rispetta l'esito (giorno_chiuso, fuori_orario, solo_cena/solo_pranzo, pieno con alternative, gruppo_grande = soggetto a conferma del ristorante, evento = invita a scrivere all'email).`,
-      `- Leggi i numeri di telefono cifra per cifra.`,
-      `- Le note (allergie, intolleranze, seggiolone, occasioni, tavolo) vanno nel campo "note" dei tool.`,
-      `- Se il cliente cambia idea a metà (es. "no, anzi cancellala"), assecondalo chiamando il tool giusto: non serve ricominciare.`,
-      `- Domande sul locale: rispondi con le informazioni qui sotto. Se non le hai, invita a contattare il ristorante. Non inventare.`,
-      infoLines.length ? `\nInformazioni sul locale:\n${infoLines.join('\n')}` : '',
-    ].join('\n');
-  }
+    const filtered = {};
+    const wants = (keys) => keys.some(k => arg.includes(k));
 
-  // ── TTS ───────────────────────────────────────────────────────────────────
-  _say(text) {
-    if (!text) return;
-    console.log(`💉 [say]: ${text.substring(0, 120)}`);
-    this._ttsPlaying = true;
-    this.ttsSession?.speak(this._speakNumbers(text), 'it');
-  }
-  // legge cifra-per-cifra i numeri lunghi (telefoni) per una TTS affidabile
-  _speakNumbers(text) { return String(text).replace(/\d{7,}/g, (m) => m.split('').join(' ')); }
+    if (wants(['menu','piatti','primi','secondi','antipasti','dolci','specialità']))
+      filtered.menu = info.menuDetails || info.menuText || null;
+    if (wants(['vegan','vegetar']))
+      filtered.vegano = info.vegan || null;
+    if (wants(['glutine','celiac','celia']))
+      filtered.senza_glutine = info.glutenFree || null;
+    if (wants(['parcheggio','parking']))
+      filtered.parcheggio = info.parking || null;
+    if (wants(['accessib','disab','sedia','rotelle']))
+      filtered.accessibilita = info.accessibility || null;
+    if (wants(['pag','carta','bancomat','contant']))
+      filtered.pagamenti = info.paymentMethods || null;
+    if (wants(['dehor','esterno','fuori','giardino','tavoli fuori']))
+      filtered.dehors = info.outdoorSeating || null;
+    if (wants(['seggiolone','bambin']))
+      filtered.seggiolone = info.highchair || null;
+    if (wants(['prezz','costo','quanto cost']))
+      filtered.prezzi = info.prices || null;
+    if (wants(['cucina','tipo','specialit']))
+      filtered.cucina = info.cuisine || null;
+    if (wants(['indirizz','dove','via']))
+      filtered.indirizzo = info.address || null;
+    if (wants(['telefono','contatt','numero']))
+      filtered.telefono = info.phone || null;
 
-  // pronuncia un riempitivo per il tool in arrivo (se previsto), senza ripetere
-  // due volte di fila la stessa frase
-  _sayFiller(toolName) {
-    const opts = FILLERS[toolName];
-    if (!opts || !opts.length) return;
-    let phrase = opts[Math.floor(Math.random() * opts.length)];
-    if (phrase === this._lastFiller && opts.length > 1) {
-      phrase = opts[(opts.indexOf(phrase) + 1) % opts.length];
+    // Se nessuna keyword ha matchato, ritorna un set base
+    if (Object.keys(filtered).length === 0) {
+      filtered.cucina       = info.cuisine        || null;
+      filtered.parcheggio   = info.parking        || null;
+      filtered.vegano       = info.vegan          || null;
+      filtered.pagamenti    = info.paymentMethods || null;
     }
-    this._lastFiller = phrase;
-    this._say(phrase);
+
+    // Pulisci null espliciti per chiarezza
+    const out = {};
+    for (const k of Object.keys(filtered)) if (filtered[k]) out[k] = filtered[k];
+
+    if (Object.keys(out).length === 0) return { informazione_non_disponibile: true };
+    return out;
   }
 
-  // ── Helper di normalizzazione (DateManager/TimeManager = autorità) ─────────
+  // ─── TOOL 7: richiedi_evento ─────────────────────────────────────────────
+  async _toolRichiediEvento({ nome, data, ora, persone, note }) {
+    const cleanName = nome && String(nome).trim();
+    const dateISO   = this._normDate(data);
+    const timeN     = this._normTime(ora);
+    const ppl       = parseInt(persone, 10) || 0;
+    if (!cleanName) return { registrata: false, manca: 'nome' };
+    if (!dateISO)   return { registrata: false, manca: 'data' };
+    if (!timeN)     return { registrata: false, manca: 'ora' };
+    if (!ppl)       return { registrata: false, manca: 'persone' };
+
+    const r = await this._callAppsScript({
+      action: 'notify_big_event',
+      source: 'telnyx',
+      nome: cleanName,
+      data: dateISO,
+      ora: timeN,
+      persone: ppl,
+      telefono: this.callerPhone || '',
+      notes: note || '',
+    });
+    if (r?.success) return { registrata: true, stato: r.status || 'EVENT_REQUEST' };
+    return { registrata: false };
+  }
+
+  // ── Audio Telnyx → Realtime ──────────────────────────────────────────────
+  sendAudio(pcmuBase64) {
+    if (this._ws?.readyState !== WebSocket.OPEN) return;
+    this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
+  }
+
+  // ── Chiusura ─────────────────────────────────────────────────────────────
+  close() {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      try { this._ws.close(1000); } catch {}
+    }
+  }
+
+  // ── Send helper ──────────────────────────────────────────────────────────
+  _send(event) {
+    if (this._ws?.readyState !== WebSocket.OPEN) return;
+    try { this._ws.send(JSON.stringify(event)); }
+    catch (e) { console.error('❌ WS send:', e?.message); }
+  }
+
+  // ── Helper: normalizzazione date/ora (DateManager/TimeManager = autorità) ─
   _normDate(s) {
     if (!s) return null;
     const t = String(s).trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;        // già ISO
+    if (!t) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
     return DateManager.parseFromText(t);
   }
   _normTime(s) {
     if (!s) return null;
     const t = String(s).trim();
+    if (!t) return null;
     const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
     if (m) return `${m[1].padStart(2, '0')}:${m[2]}:00`;
     return TimeManager.parseFromText(t);
   }
   _mergeNotes(existing, add) {
     const arr = existing ? String(existing).split(/;\s*/).map(x => x.trim()).filter(Boolean) : [];
-    String(add).split(/;\s*/).map(x => x.trim()).filter(Boolean).forEach(n => { if (!arr.includes(n)) arr.push(n); });
+    String(add).split(/;\s*/).map(x => x.trim()).filter(Boolean).forEach(n => {
+      if (!arr.includes(n)) arr.push(n);
+    });
     return arr.join('; ');
   }
 
-  _trimHistory() {
-    if (this._history.length > HISTORY_TURNS) {
-      this._history.splice(0, this._history.length - HISTORY_TURNS);
-    }
-  }
-
-  // ── Filtro allucinazioni Whisper (audio corto/silenzio PSTN) ──────────────
+  // ── Filtro allucinazioni nelle trascrizioni Whisper ──────────────────────
   _isGarbage(t) {
     if (!t) return true;
     const s = t.trim().toLowerCase();
@@ -571,18 +714,18 @@ export class OpenAIRealtimeClient {
     return words.length === 0;
   }
 
-  // ── Info locale (Apps Script) ─────────────────────────────────────────────
+  // ── Info locale dal backend (per il tool info_locale) ────────────────────
   async _fetchRestaurantInfo() {
     try {
       const r = await this._callAppsScript({ action: 'get_restaurant_info' });
       if (r?.success && r.info) {
         this._restaurantInfo = r.info;
-        console.log(`📋 Info locale caricata (menu: ${r.info.menuDetails ? r.info.menuDetails.length : 0} chars)`);
+        console.log(`📋 Info locale caricata`);
       }
     } catch (e) { console.log('⚠️ info locale:', e?.message); }
   }
 
-  // ── Apps Script ─────────────────────────────────────────────────────────
+  // ── Apps Script ──────────────────────────────────────────────────────────
   async _callAppsScript(payload) {
     const url = this.restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
     if (!url) return null;
@@ -591,7 +734,8 @@ export class OpenAIRealtimeClient {
     try {
       const resp = await fetch(url, {
         method: 'POST', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
       clearTimeout(to);
       const txt = await resp.text();
@@ -601,15 +745,5 @@ export class OpenAIRealtimeClient {
       if (e.name === 'AbortError') { console.error('❌ Apps Script timeout'); return { success: false, reason: 'timeout' }; }
       throw e;
     }
-  }
-
-  // ── Audio Telnyx → STT ────────────────────────────────────────────────────
-  sendAudio(pcmuBase64) { this.sttSession?.sendAudio(pcmuBase64); }
-
-  // ── Chiusura ────────────────────────────────────────────────────────────
-  close() {
-    this.turnManager?.reset();
-    this.sttSession?.close();
-    this.ttsSession?.close();
   }
 }
