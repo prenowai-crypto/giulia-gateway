@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC4-S2S-GA-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC5-S2S-GA-2026-05-27 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -248,7 +248,7 @@ export class OpenAIRealtimeClient {
       tool_choice: 'auto',
       audio: {
         input: {
-          format: { type: 'g711_ulaw' },           // Telnyx PCMU 8kHz pass-through
+          format: { type: 'audio/pcmu' },           // Telnyx PCMU 8kHz pass-through
           transcription: { model: 'whisper-1' },   // trascrizione utente per log
           turn_detection: {
             type: 'semantic_vad',
@@ -259,7 +259,7 @@ export class OpenAIRealtimeClient {
           noise_reduction: { type: 'far_field' },
         },
         output: {
-          format: { type: 'g711_ulaw' },
+          format: { type: 'audio/pcmu' },
           voice: this.restaurantConfig?.voice || 'coral',
         },
       },
