@@ -1,3217 +1,554 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v4.0 — OpenAI Realtime Client (Dual Session)
+// PRENOW REALTIME v5.0 — OPZIONE B: AGENTE A TOOL CALLING
 //
-// Architettura file separati:
-//   parsers.js      → DateManager, TimeManager, PeopleManager, ValidationPipeline
-//   stt-session.js  → STTSession  (gpt-realtime-whisper, trascrizione PCMU)
-//   tts-session.js  → TTSSession  (gpt-realtime-mini, TTS deterministico)
-//   turn-manager.js → TurnManager (sliding timer, filtri allucinazioni, turn ID)
-//   openai-realtime.js → OpenAIRealtimeClient (orchestrazione + business logic)
+// Cambio di paradigma rispetto all'orchestratore precedente:
+//   PRIMA:  il codice decide il flow, GPT riempie i buchi (3200 righe, 17 punti
+//           di decisione, regex intent, state machine, cancelState/modifyState…)
+//   ORA:    il modello decide il flow chiamando 5 tool; il codice esegue soltanto.
+//
+//   STT (invariato) → AGENTE (gpt-4o-mini, tool calling) → TOOL → TTS (invariato)
+//
+// File invariati e RIUSATI: parsers.js, stt-session.js, tts-session.js,
+//   media-stream.js, index.js, Apps Script. Stesse export e stessa interfaccia
+//   di classe (OpenAIRealtimeClient + DateManager) → niente altro da toccare.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import WebSocket from 'ws';
 import { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying } from './parsers.js';
 import { STTSession }   from './stt-session.js';
-import { ModifyEngine } from './modify-engine.js';
 import { TTSSession }   from './tts-session.js';
 import { TurnManager }  from './turn-manager.js';
 
+// Re-export per compatibilità con media-stream.js (che importa anche DateManager)
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js v21-CANCELSEARCH-2026-05-25 caricato');
+console.log('🟢 openai-realtime.js vB1-AGENT-2026-05-26 caricato');
+
+// ─── Modello del "cervello" ──────────────────────────────────────────────────
+// gpt-4o-mini è il default sicuro (tool calling + italiano collaudati su Chat
+// Completions). Per passare a gpt-5.4-mini basta impostare la variabile BRAIN_MODEL
+// su Render — nessuna modifica al codice. Se gpt-5.4-mini desse errore con questo
+// endpoint, torna a gpt-4o-mini.
+const BRAIN_MODEL = process.env.BRAIN_MODEL || 'gpt-4o-mini';
+const MAX_TOOL_ROUNDS = 5;     // sicurezza anti-loop nel ciclo agente
+const HISTORY_TURNS   = 8;     // ultimi 8 messaggi (~4 turni) per tenere basso il costo
+
+// ─── Definizione dei 5 tool (i "pulsanti" dell'agente) ───────────────────────
+// IMPORTANTE: per data e ora il modello passa il testo COSÌ COME lo dice il
+// cliente ("sabato", "domani", "alle 21"); la normalizzazione la fa il codice
+// con DateManager/TimeManager → il parser resta l'autorità sulle date.
+const TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'trova_prenotazione',
+      description: 'Cerca una prenotazione esistente. Usalo quando il cliente vuole modificare o cancellare, o nomina una prenotazione già fatta. Restituisce i dettagli da leggere al cliente per conferma.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nome: { type: 'string', description: 'Nome o cognome sulla prenotazione' },
+          data: { type: 'string', description: "Data come detta dal cliente, es. 'sabato', 'domani', '15 giugno'. Opzionale." },
+        },
+        required: ['nome'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'controlla_disponibilita',
+      description: 'Verifica se è possibile prenotare/spostare a una certa data, ora e numero di persone. Applica giorni di chiusura, orari, capienza e gruppi grandi. Chiamalo SEMPRE prima di creare o di applicare una modifica di data/ora/persone. Fidati del suo esito.',
+      parameters: {
+        type: 'object',
+        properties: {
+          data:    { type: 'string', description: "Data come detta dal cliente, es. 'sabato'" },
+          ora:     { type: 'string', description: "Ora come detta dal cliente, es. 'alle 21', '21:30'" },
+          persone: { type: 'integer', description: 'Numero di persone (totale finale)' },
+        },
+        required: ['data', 'ora', 'persone'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'crea_prenotazione',
+      description: 'Crea una nuova prenotazione. Chiamalo solo dopo che controlla_disponibilita ha dato esito libero (o gruppo_grande) e hai il nome.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nome:    { type: 'string' },
+          data:    { type: 'string', description: "Come detta dal cliente, es. 'sabato'" },
+          ora:     { type: 'string', description: "Come detta dal cliente, es. 'alle 21'" },
+          persone: { type: 'integer' },
+          note:    { type: 'string', description: 'Allergie, seggiolone, occasioni, tavolo, ecc. Opzionale.' },
+        },
+        required: ['nome', 'data', 'ora', 'persone'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'modifica_prenotazione',
+      description: "Applica una modifica a una prenotazione già trovata con trova_prenotazione. Passa SOLO i campi che cambiano, in valore FINALE (se il cliente dice 'si aggiungono due' e ne aveva 4, passa persone: 6 — l'aritmetica la fai tu).",
+      parameters: {
+        type: 'object',
+        properties: {
+          data:    { type: 'string', description: "Nuova data, come detta dal cliente. Opzionale." },
+          ora:     { type: 'string', description: 'Nuova ora. Opzionale.' },
+          persone: { type: 'integer', description: 'Nuovo numero finale di persone. Opzionale.' },
+          note:    { type: 'string', description: 'Nota da aggiungere. Opzionale.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancella_prenotazione',
+      description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamalo solo dopo che il cliente ha confermato la cancellazione.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+];
 
 export class OpenAIRealtimeClient {
   constructor(opts = {}) {
     this.apiKey           = opts.apiKey;
-    this.systemPrompt     = opts.systemPrompt || '';
     this.restaurantConfig = opts.restaurantConfig || {};
+    this.systemPrompt     = opts.systemPrompt || ''; // base da media-stream (non usato direttamente)
 
-    // Callbacks verso media-stream.js
     this.onAudioDelta = opts.onAudioDelta || (() => {});
     this.onTranscript = opts.onTranscript || (() => {});
     this.onError      = opts.onError      || console.error;
     this.onClose      = opts.onClose      || (() => {});
 
-    // Normalizza callerPhone
-    const _rawPhone = opts.callerPhone || '';
-    this.callerPhone = _rawPhone && !_rawPhone.startsWith('+') ? '+' + _rawPhone : _rawPhone;
+    // Normalizza callerPhone con +
+    const raw = opts.callerPhone || '';
+    this.callerPhone = raw && !raw.startsWith('+') ? '+' + raw : raw;
 
-    // ── Sessioni OpenAI ──────────────────────────────────────────────────────
-    this.sttSession = null;
-    this.ttsSession = null;
-    this._ttsPlaying   = false;  // TTS sta riproducendo audio
-    this._lastSaidAt   = 0;      // timestamp fine audio TTS (per deaf period)
+    // Sessioni audio
+    this.sttSession  = null;
+    this.ttsSession  = null;
+    this.turnManager = null;
+    this._ttsPlaying = false;
+    this._sessionReady = false;
 
-    // ── Turn management (delegato a TurnManager) ───────────────────────────
-    this.turnManager = null;   // istanziato in connect()
-    // Nota: accumulazione transcript rimossa — TurnManager usa completed event
-
-    // ── Stato business logic (invariato dal beta) ────────────────────────────
-    this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
-    // FIX 5: entity provenance — traccia la sorgente di ogni campo
-    // 'parser' = estratto deterministicamente | 'gpt' = gap fill da ambiguity resolver
-    this._meta = { dateSource: null, timeSource: null, peopleSource: null, nameSource: null };
-    this.phase         = 'collecting';
-    this.intent        = null;
-    this.existingRes   = null;
-    this.availDone     = false;
-    this.checkingSlot  = false;
-
-    // Dialog state: context-aware parsing
-    this._pendingQuestion = null; // 'date'|'time'|'people'|'name'|null
-
-    // STEP 1: conversationLocked separato da phase=done (GPT suggestion)
-    // phase=done = "esiste una prenotazione" — NON = "hard stop globale"
-    // conversationLocked = true solo quando la conversazione è davvero chiusa
-    this.conversationLocked = false;
-
-    // MODIFY / CANCEL state machine
-    this.modifyState       = null;  // legacy — rimane per compatibilità cancel flow
-    this._modifyEngine     = null;  // nuovo engine
-    this.cancelState       = null;
-    this._noteCheck         = false;
-    this.foundReservation  = null;
-
-    // Anti-loop flags
-    this._sessionReady     = false;
-    this._processingModify = false;
-
-    // STEP 6: Interrupt safety
-    // true quando l'utente ha parlato sopra il bot — invalida la domanda corrente
-    this.interrupted = false;
-
-    // GPT name fallback cache — evita doppie inferenze su stesso transcript
-    this._gptNameCache = new Map();
-
-    // Conversational history buffer (ultimi 3 turni = 6 messaggi max)
-    // Pattern GPT: "cosa significa questa frase nel contesto" → state machine decide
-    this._conversationHistory = [];
-    this._historyMaxTurns = 3;
-
-    // FIX 4: Dedup anti-loop — evita re-resolution continua sullo stesso contesto
-    // TTL breve: 2 turni — dopo di che il contesto è cambiato abbastanza
-    this._lastAmbiguityResolution = null; // { transcript, result, turn }
-    this._ambiguityTurnCounter = 0;
-
-    // STEP 1 (GPT): Intent lock — quando siamo in modify/cancel flow attivo
-    // l'intent globale NON deve mai sovrascrivere lo stato locale
-    // flow state > transcript intent (regola fondamentale dialog engine)
-    this.intentLocked = false;
-
-    // STEP 3 (GPT): Topic memory — per follow-up su note senza ripetere keyword
-    // es: "lo avete?" dopo aver parlato di seggiolone → risponde sulle note
-    this._lastTopic = null; // 'notes' | 'date' | 'time' | 'people' | null
-
-    // Lingua
-    this.language = 'it';
-
-    // Info ristorante (caricata async)
-    this._restaurantInfo = null;
+    // Stato agente (minimale!)
+    this._history        = [];    // [{role:'user'|'assistant', content}] — solo conversazione, pulita
+    this._lastFound      = null;  // ultima prenotazione trovata/creata (per modifica/cancella)
+    this._restaurantInfo = null;  // info locale (menu/orari) caricate async
+    this._busy           = false; // un turno per volta
   }
 
-  // ── Connect: crea le due sessioni in sequenza ─────────────────────────────
-  //
-  // ORDINE CRITICO:
-  //   1. STT pronta → routing audio attivo
-  //   2. TTS pronta → greeting inviato
-  //
-  // Se TTS parte prima che STT sia pronta → timeout STT (bug noto con Twilio/Telnyx)
-
+  // ── Connessione: STT → TTS → info locale → saluto ─────────────────────────
   async connect() {
-    // 1. STT Session
-    // ── TurnManager: sliding timer + filtri ──────────────────────────────
     this.turnManager = new TurnManager({
-      slidingMs:   1800,
-      onTurnReady:  (transcript) => this._onTurnReady(transcript),
+      slidingMs: 1800,
+      onTurnReady: (t) => this._onTurnReady(t),
       onInterrupt: () => {
-        // STEP 6: utente parla sopra il bot — cancella TTS e setta flag interrupted
-        if (this._ttsPlaying) {
-          this.ttsSession?.cancel();
-          this._ttsPlaying = false;
-        }
-        if (!this.interrupted) {
-          this.interrupted = true;
-          console.log('🛑 Interrupt: utente parla sopra bot');
-        }
+        if (this._ttsPlaying) { this.ttsSession?.cancel(); this._ttsPlaying = false; }
       },
     });
 
     this.sttSession = new STTSession(this.apiKey, {
       language: 'it',
-      onDelta:         (delta) => this.turnManager.onDelta(delta),
-      onCompleted:     (text)  => this.turnManager.onCompleted(text),
-      onSpeechStarted: ()      => this.turnManager.onSpeechStarted(),
-      onError:         (err)   => this.onError(err),
-      onClose:         (code)  => { if (code !== 1000) this.onClose(code); },
+      onDelta:         (d) => this.turnManager.onDelta(d),
+      onCompleted:     (t) => this.turnManager.onCompleted(t),
+      onSpeechStarted: ()  => this.turnManager.onSpeechStarted(),
+      onError:         (e) => this.onError(e),
+      onClose:         (c) => { if (c !== 1000) this.onClose(c); },
     });
     await this.sttSession.connect();
 
-    // 2. TTS Session
     this.ttsSession = new TTSSession(this.apiKey, {
       voice: this.restaurantConfig?.voice || 'coral',
       onAudioDelta: (chunk) => this.onAudioDelta(chunk),
-      onAudioDone:  ()      => {
-        this._ttsPlaying = false;
-        // Buffer 800ms: compensa latenza riproduzione Telnyx dopo generazione OpenAI
-        setTimeout(() => { this._lastSaidAt = Date.now(); }, 800);
-        console.log('🔊 [TTS] Fine audio');
-      },
-      onError: (err) => this.onError(err),
+      onAudioDone:  ()      => { this._ttsPlaying = false; },
+      onError:      (e)     => this.onError(e),
     });
     await this.ttsSession.connect();
 
-    // 3. Carica info ristorante in background (non blocca)
-    this._fetchAndInjectRestaurantInfo();
+    this._fetchRestaurantInfo(); // background, non blocca
 
-    // 4. Greeting — DOPO che entrambe le sessioni sono pronte
     if (!this._sessionReady) {
       this._sessionReady = true;
-      this._onSessionReady();
+      const nome = this.restaurantConfig?.restaurant_name || 'ristorante';
+      // Disclosure AI (EU AI Act, ago 2026) integrata nel saluto.
+      this._say(`Salve, sono l'assistente vocale automatico di ${nome}. Come posso aiutarla?`);
     }
   }
 
-  // ── Speech Started: nuovo turno in arrivo ────────────────────────────────
-  // Usato solo per preparare lo stato — il turno vero parte con il primo delta
-
-  // ── Bridge TurnManager → business logic ─────────────────────────────────
-  // Chiamato da TurnManager quando il turno è finalizzato.
+  // ── Turno utente → ciclo agente ───────────────────────────────────────────
   async _onTurnReady(transcript) {
-    // Filtro primo turno troppo breve (rumore di fondo a inizio chiamata fresca).
-    // NB: scatta SOLO a chiamata davvero nuova. Durante un MODIFY/CANCEL `this.data`
-    // resta vuoto (i dati vivono nell'engine/cancelState), quindi senza queste guardie
-    // il filtro ingoiava conferme brevi legittime ("Sì, perfetto") dentro un modify.
-    // La protezione anti-allucinazione (sottotitoli/Amara) vive in _isLowInformationTranscript.
-    const _isFirstTurn = !this.data.date && !this.data.time && !this.data.people && !this.data.name
-      && !this._modifyEngine && !this.cancelState && this.phase !== 'done';
-    if (_isFirstTurn && transcript.split(/\s+/).length < 3) {
-      console.log(`🛡️ Primo turno troppo breve → ignorato: "${transcript}"`);
-      return;
-    }
-
-    if (this._isLowInformationTranscript(transcript)) return;
-
-    // STEP 6: reset interrupted
-    this.interrupted = false;
+    if (this._isGarbage(transcript)) return;
+    if (this._busy) { console.log('⏳ turno ignorato: agente occupato'); return; }
 
     console.log(`💬 [user]: ${transcript}`);
-
-    // BUG 1: info query side channel — intercetta domande informative PRIMA del flow
-    // NON muta state, risponde e continua (se non in booking flow attivo)
-    // Side channel: segnali strutturali forti (menu, seggiolone, orari)
-    // Il pre-routing in _processExtraction gestisce i casi semantici (dolci, primi, ecc.)
-    if (this._isInformationalQuery(transcript) && !this.modifyState && !this.cancelState && this.phase !== 'done') {
-      // Guard: se contiene segnali booking chiari → NON intercettare
-      // "ho una prenotazione a nome Conti... posso spostarmi?" → è un modify, non info query
-      const _hasBookingSignal = /\bho\s+(?:già\s+)?prenotat|\bho\s+una\s+prenotazione|\bprenotazione\s+a\s+nome|\b(?:voglio|volevo|vorrei)\s+prenotare|\b(?:voglio|volevo|vorrei)\s+(?:spostare|modificare|cancellare|disdire)|\bposso\s+(?:spostare|modificare)/i.test(transcript);
-      if (!_hasBookingSignal) {
-        console.log('ℹ️ Info query strutturale → side channel risposta');
-        // Se il messaggio contiene anche dati booking (data/ora/persone),
-        // rispondi alla domanda info ma NON bloccare il booking flow
-        const _hasBookingData = /\b(?:lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica|domani|dopodomani|oggi|\d+\s+(?:gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre))\b/i.test(transcript) ||
-                                /\balle?\s+\d|\balle?\s+(?:una|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici)/i.test(transcript) ||
-                                /\b(?:per\s+)?\d+\s+person[ae]|\bsiamo\s+in\s+\d|\bper\s+(?:una|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\b/i.test(transcript);
-        const _handled = await this._handleInfoQuery(transcript);
-        if (_handled && !_hasBookingData) return; // blocca solo se NON c'è anche booking
-        // Se c'è booking data → continua con il flow normale (risposta già data come side effect)
-      }
-    }
-    this.lastTranscript = transcript;
     this.onTranscript(transcript, 'user');
+    this._busy = true;
+    try {
+      await this._runAgent(transcript);
+    } catch (e) {
+      console.error('❌ _runAgent:', e);
+      this._say('Mi scusi, può ripetere?');
+    } finally {
+      this._busy = false;
+    }
+  }
 
-    // Aggiorna history buffer — mantieni ultimi N turni
-    this._ambiguityTurnCounter++; // FIX 4: incrementa per dedup TTL
-    this._conversationHistory.push({ role: 'user', content: transcript });
-    if (this._conversationHistory.length > this._historyMaxTurns * 2) {
-      this._conversationHistory.splice(0, 2);
-    }
+  // ── Il ciclo agente: 1 pensata → eventuali tool → risposta ────────────────
+  async _runAgent(transcript) {
+    this._history.push({ role: 'user', content: transcript });
+    this._trimHistory();
 
-    // Aggiorna lingua rilevata
-    const detectedLang = this._detectLanguage(transcript);
-    if (detectedLang !== 'it' && transcript.split(/\s+/).length >= 3) {
-      this.language = detectedLang;
-      console.log(`🌐 Lingua rilevata: ${this.language}`);
-    }
+    // messages locali a questo turno: system + storia pulita + i round-trip dei tool
+    const messages = [{ role: 'system', content: this._buildSystemPrompt() }, ...this._history];
 
-    // Intercetta stati speciali PRIMA dell'estrazione
-    if (this.cancelState === 'awaiting_confirm') {
-      await this._handleCancelConfirmText(transcript).catch(console.error);
-      return;
-    }
-    // 🆕 Risposta a "A che nome / quale data?" durante una cancellazione in corso.
-    // Senza questo, una frase tipo "a nome Carta per sabato" (nome+data) viene riletta
-    // da GPT come CREATE — sia dal dispatcher phase=done sia dalla guardia intent-switch —
-    // e il cancel viene abbandonato. Qui la trattiamo come la risposta che è.
-    if (this.cancelState === 'awaiting_search') {
-      this.lastTranscript = transcript;
-      // Escape: se l'utente cambia idea esplicitamente (modifica/nuova prenotazione), lascia
-      // proseguire la pipeline normale per gestire lo switch.
-      const _switchAway = /\b(?:voglio|vorrei|posso|devo)\s+(?:prenotar|spostar|cambiar|modificar|anticipar|posticipar)\w*|\bnuova\s+prenotazione\b/i.test(transcript || '');
-      if (!_switchAway) {
-        const _a = await this._extractFromTranscript(transcript);
-        const _nm = (_a?.name && _a.name !== 'null') ? _a.name : (this.data?.name || null);
-        const _dt = (_a?.date && _a.date !== 'null') ? _a.date : (this.data?.date || null);
-        this.intent = 'cancel';
-        await this._handleCancelFlow(_dt, _nm).catch(console.error);
-        return;
-      }
-    }
-    // Nuovo modifyEngine: se in CONFIRM_PATCH o CONFIRM_BOOKING → passa direttamente al motore
-    if (this._modifyEngine?.state === 'CONFIRM_PATCH' ||
-        this._modifyEngine?.state === 'CONFIRM_BOOKING') {
-      this.lastTranscript = transcript;
-      // 🆕 Uscita verso CANCEL DURANTE la conferma. "Sì, cancello" / "voglio cancellare"
-      // non devono essere letti come conferma della modifica: qui l'engine classifica
-      // il "sì" come confirm. Intercetto il cancel esplicito PRIMA di delegare al motore.
-      const _cancelDuringConfirm = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i.test(transcript || '');
-      if (_cancelDuringConfirm) {
-        const _ab = this._modifyEngine.activeBooking;
-        console.log('🔓 CONFIRM → cancel esplicito → switch a CANCEL');
-        this._modifyEngine.reset();
-        this.modifyState = null;
-        this.intent = 'cancel';
-        if (_ab?.eventId) {
-          // Prenotazione già individuata → vai diretto alla conferma cancellazione
-          this.foundReservation = _ab;
-          const _tn = _ab.time?.length === 5 ? _ab.time + ':00' : (_ab.time || '');
-          this.cancelState = 'awaiting_confirm';
-          this._say(`Ho trovato: ${_ab.name}, ${DateManager.formatForDisplay(_ab.date)} alle ${TimeManager.formatForDisplay(_tn)} per ${_ab.people} persone. Conferma la cancellazione?`);
-        } else {
-          this.cancelState = 'awaiting_search'; // blocca l'intent: il prossimo turno è la risposta
-          this.foundReservation = null;
-          this._say('Certo! A che nome è la prenotazione e per quale data?');
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const msg = await this._chat(messages);
+      if (!msg) { this._say('Mi scusi, può ripetere?'); return; }
+
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        messages.push(msg); // l'assistant con le tool_calls DEVE precedere i risultati
+        for (const tc of msg.tool_calls) {
+          let args = {};
+          try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+          const result = await this._execTool(tc.function.name, args);
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
         }
-        return;
+        continue; // ripensa con i risultati dei tool
       }
-      await this._modifyEngine.handle(transcript, {}).catch(console.error);
-      this.modifyState = this._modifyEngine.isDone ? 'done' : 'awaiting_changes';
-      if (this._modifyEngine.isDone && this._modifyEngine.activeBooking) {
-        this.lastReservation = { ...this._modifyEngine.activeBooking, status: 'CONFIRMED' };
-        this.phase = 'done';
+
+      // Nessun tool → risposta finale da pronunciare
+      const text = (msg.content || '').trim();
+      if (text) {
+        this._history.push({ role: 'assistant', content: text }); // solo il testo finale entra in storia
+        this._say(text);
       }
       return;
     }
-
-    // ── Intercetto richiesta ESPLICITA di cancellazione (da QUALSIASI stato) ────
-    // Una frase chiara "voglio cancellare/disdire" deve passare al CANCEL anche se
-    // siamo dentro un CREATE in raccolta, un MODIFY, o phase=done. Senza questo, la
-    // raccolta guidata del CREATE intrappola il turno e continua a chiedere giorno/ora,
-    // ignorando il cancel (l'override su args.intent non basta: this.intent resta 'create').
-    // I passi di conferma (cancellazione awaiting_confirm, conferma engine) sono già
-    // gestiti sopra e ritornano prima di qui, quindi non interferiscono.
-    const _explicitCancelNow = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i;
-    if (this.intent !== 'cancel' && _explicitCancelNow.test(transcript)) {
-      console.log(`🔓 Cancel esplicito intercettato (stato: ${this.intent || 'idle'}, phase: ${this.phase}) → switch a CANCEL`);
-      if (this._modifyEngine?.isActive) this._modifyEngine.reset();
-      this.modifyState = null;
-      this._pendingQuestion = null;
-      this.intent = 'cancel';
-      this.cancelState = null;
-      // Se la prenotazione è già nota (appena creata/modificata) → conferma diretta
-      const _known = this.lastReservation?.eventId ? this.lastReservation
-                   : (this.foundReservation?.eventId ? this.foundReservation : null);
-      if (_known?.eventId && this.phase === 'done') {
-        this.foundReservation = _known;
-        const _tn = _known.time?.length === 5 ? _known.time + ':00' : (_known.time || '');
-        this.cancelState = 'awaiting_confirm';
-        this._say(`Ho trovato: ${_known.name}, ${DateManager.formatForDisplay(_known.date)} alle ${TimeManager.formatForDisplay(_tn)} per ${_known.people} persone. Conferma la cancellazione?`);
-        return;
-      }
-      // Altrimenti estrai nome/data dal turno (fallback su quanto già noto / telefono) e cerca
-      const _a = await this._extractFromTranscript(transcript);
-      const _nm = (_a?.name && _a.name !== 'null') ? _a.name : (this.data?.name || null);
-      const _dt = (_a?.date && _a.date !== 'null') ? _a.date : (this.data?.date || null);
-      await this._handleCancelFlow(_dt, _nm).catch(console.error);
-      return;
-    }
-
-    // Parsing locale + business logic
-    const _notesHandled = await this._detectNotesAndPhone(transcript);
-    if (_notesHandled) return; // BUG 6: note post-confirm già gestite con risposta — stop
-    const args = await this._extractFromTranscript(transcript);
-    await this._processExtraction(args).catch(err => console.error('❌ _processExtraction:', err));
+    this._say('Mi scusi, può ripetere?'); // troppi round → sicurezza
   }
 
-
-  // ── Filtro Whisper hallucination ─────────────────────────────────────────
-  // Whisper su audio corto/silenzioso "completa" con pattern frequenti nel
-  // training data (sottotitoli, watermark, ecc.). Questo filtro li scarta.
-  // ── _applyExtraction() — mutazione stato centralizzata (STEP 5) ──────────────
-  // Unico punto dove this.data viene aggiornato dai campi estratti.
-  // NON mutare this.data altrove per i campi principali — passa sempre di qui.
-  // Ritorna oggetto con i campi effettivamente cambiati per il logging.
-  _applyExtraction(extracted) {
-    const changed = {};
-    const rc = this.restaurantConfig;
-
-    // Date
-    if (extracted.date && extracted.date !== 'null' && extracted.date !== this.data.date) {
-      changed.date = { from: this.data.date, to: extracted.date };
-      this.data.date = extracted.date;
-      this._meta.dateSource = 'parser';
-      if (this._pendingQuestion === 'date') this._pendingQuestion = null;
+  // ── Chiamata al modello (Chat Completions + tool calling) ─────────────────
+  async _chat(messages) {
+    const controller = new AbortController();
+    const to = setTimeout(() => controller.abort(), 12000);
+    try {
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+        body: JSON.stringify({
+          model: BRAIN_MODEL,
+          messages,
+          tools: TOOLS,
+          tool_choice: 'auto',
+          temperature: 0.2,
+          max_tokens: 300,
+        }),
+      });
+      clearTimeout(to);
+      const data = await resp.json();
+      if (data?.error) { console.log('⚠️ brain error:', data.error?.message); return null; }
+      // Log token per stimare il costo reale (PARTE 6 della spec)
+      const u = data?.usage;
+      if (u) console.log(`📊 tokens: in=${u.prompt_tokens} out=${u.completion_tokens}`);
+      return data?.choices?.[0]?.message || null;
+    } catch (e) {
+      clearTimeout(to);
+      console.log('⚠️ brain exception:', e?.message);
+      return null;
     }
-
-    // Time
-    if (extracted.time && extracted.time !== 'null' && extracted.time !== this.data.time) {
-      changed.time = { from: this.data.time, to: extracted.time };
-      this.data.time = extracted.time;
-      this._meta.timeSource = 'parser';
-      if (this._pendingQuestion === 'time') this._pendingQuestion = null;
-    }
-
-    // People — con lock anti-overwrite
-    if (extracted.people && extracted.people !== 'null') {
-      const newP = parseInt(extracted.people, 10);
-      if (newP !== this.data.people) {
-        const transcriptPeople = this.lastTranscript ? PeopleManager.parseFromText(this.lastTranscript) : null;
-        if (transcriptPeople === null && this.data.people !== null) {
-          console.log(`🔒 People locked (${this.data.people}): transcript senza numeri espliciti`);
-        } else {
-          changed.people = { from: this.data.people, to: newP };
-          this.data.people = newP;
-          if (this._pendingQuestion === 'people') this._pendingQuestion = null;
-        }
-      }
-    }
-
-    // Name — con protezione anti-overwrite involontario
-    if (extracted.name && extracted.name !== 'null') {
-      if (!this.data.name) {
-        changed.name = { from: null, to: extracted.name };
-        this.data.name = extracted.name;
-        if (this._pendingQuestion === 'name') this._pendingQuestion = null;
-      } else if (extracted.name !== this.data.name && this.lastTranscript &&
-                 /\bmi chiamo\b|\bsono\b|\bil mio nome\b|\bno.*mi chiamo\b|\ba nome\b|\bchiamati\b/i.test(this.lastTranscript)) {
-        changed.name = { from: this.data.name, to: extracted.name };
-        this.data.name = extracted.name;
-        if (this._pendingQuestion === 'name') this._pendingQuestion = null;
-      }
-    }
-
-    // Log campi cambiati con provenance
-    for (const [field, val] of Object.entries(changed)) {
-      const icons = { date: '📅', time: '⏰', people: '👥', name: '👤' };
-      console.log(`${icons[field] || '•'} ${field}: ${val.from ?? 'null'} → ${val.to}`);
-    }
-
-    return changed;
   }
 
-  _isLowInformationTranscript(transcript) {
-    if (!transcript) return true;
-    const t = transcript.trim().toLowerCase();
-
-    // Pattern noti di Whisper hallucination su silenzio/rumore PSTN
-    const HALLUCINATION_PATTERNS = [
-      'amara.org', 'sottotitoli', 'subscri', 'grazie per aver guardato',
-      'iscriviti', 'metti mi piace', 'campana delle notifiche',
-      'all rights reserved', 'copyright', 'traduzione', 'sottotitolat',
-      'comunità amara', 'caption', 'transcript provided',
-    ];
-
-    for (const p of HALLUCINATION_PATTERNS) {
-      if (t.includes(p)) {
-        console.log('🚫 Hallucination filtrata: "' + transcript.substring(0, 60) + '"');
-        return true;
+  // ── Dispatcher tool ───────────────────────────────────────────────────────
+  async _execTool(name, args) {
+    console.log(`🔧 tool ${name}(${JSON.stringify(args)})`);
+    try {
+      switch (name) {
+        case 'trova_prenotazione':      return await this._toolTrova(args);
+        case 'controlla_disponibilita': return await this._toolControlla(args);
+        case 'crea_prenotazione':       return await this._toolCrea(args);
+        case 'modifica_prenotazione':   return await this._toolModifica(args);
+        case 'cancella_prenotazione':   return await this._toolCancella(args);
+        default: return { errore: 'tool sconosciuto' };
       }
+    } catch (e) {
+      console.log('⚠️ tool error:', e?.message);
+      return { errore: e?.message || 'errore interno' };
     }
-
-    // Testo troppo corto per avere significato reale (< 2 parole utili)
-    const words = t.replace(/[.,!?]/g, '').split(/\s+/).filter(w => w.length > 1);
-    if (words.length === 0) {
-      console.log('🚫 Transcript vuoto/minimo ignorato');
-      return true;
-    }
-
-    return false;
   }
 
-  async _extractFromTranscript(transcript) {
-    const pq = this._pendingQuestion;
-    const isShort = transcript.trim().split(/\s+/).length <= 3;
+  // ─── TOOL 1: trova_prenotazione (fallback a 4 stadi: nome+data → nome → telefono)
+  async _toolTrova({ nome, data }) {
+    const phone   = this.callerPhone || '';
+    const dateISO = data ? this._normDate(data) : null;
+    const ok = (r) => r && r.name && r.date && r.name !== 'null' && r.date !== 'null';
 
-    // PSTN normalization: Whisper su 8kHz trascrive "all'una" in vari modi
-    // Normalizziamo prima di passare a qualsiasi parser
-    let normalizedTranscript = transcript
-      .replace(/\ba\s+luna\b/gi, "all'una")       // "a luna" → "all'una"
-      .replace(/\balluna\b/gi, "all'una")            // "alluna" → "all'una"
-      .replace(/\ball'\s*una\b/gi, "all'una")       // "all' una" → "all'una"
-      .replace(/\bal\s+una\b/gi, "all'una");        // "al una" → "all'una"
-
-    // FIX 4: pre-normalizza orari ambigui prima di passare a PeopleManager
-    // "all'una" / "alle undici" / "all'una e mezza" contengono numeri che
-    // PeopleManager potrebbe catturare come pax. Li mascheramo temporaneamente.
-    const TIME_CLAIM_RE = /\b(?:all[ae]?['']?|ore?)\s*['']?\s*(?:una|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|mezzanotte|mezzogiorno|\d{1,2})(?:\s+e\s+(?:mezza|mezzo|un quarto|quarto))?/gi;
-    const transcriptForPeople = normalizedTranscript.replace(TIME_CLAIM_RE, '__ORARIO__');
-
-    // Livello 1: estrazione opportunistica su tutti i campi
-    const date   = DateManager.parseFromText(normalizedTranscript);
-    const time   = TimeManager.parseFromText(normalizedTranscript);
-    const people = PeopleManager.parseFromText(transcriptForPeople);
-
-    // Livello 2: nome a 4 livelli di confidenza
-    // L1 NAMING (pq=name o phase=naming)  → _extractName completo con fallback
-    // L2 Frase breve (≤4 parole)          → _extractNameExplicit
-    // L3 Frase lunga, pattern espliciti   → _extractNameSafe (no "sono X")
-    // L4 Frase lunga, ambigua, no nota    → _extractNameWithGPT (async, 2s timeout)
-    let name;
-    const _wordCount = transcript.trim().split(/\s+/).length;
-    if (pq === 'name' || this.phase === 'naming') {
-      name = this._extractName(transcript);
-    } else if (_wordCount <= 4) {
-      name = this._extractNameExplicit(transcript);
-    } else {
-      // L3: pattern safe (mi chiamo, a nome, ecc.)
-      name = this._extractNameSafe(transcript);
-
-      // L4: GPT fallback — solo se safe non trova nulla, nome non già noto,
-      // e il transcript non contiene parole chiave note/allergie
-      if (!name && !this.data.name) {
-        const _hasNoteKw = /(allerg|intoller|vegano|vegetar|seggiolone|carrozzina|celiaco|disabile)/i.test(transcript);
-        if (!_hasNoteKw) {
-          // Chiamata async — wrappata per non bloccare se GPT è lento
-          name = await this._extractNameWithGPT(transcript).catch(() => null);
-        }
-      }
+    if (nome && dateISO) {
+      const r = await this._callAppsScript({ action: 'find_reservation', nome, data: dateISO, sheet: 'Prenotazioni' });
+      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, nome);
     }
-
-    // ── Ricerca prenotazione (MODIFY/CANCEL): nome in frase naturale ──────────
-    // In questo contesto il cliente sta IDENTIFICANDO una prenotazione: il nome
-    // arriva come "sono Ferrari ... intollerante" (frase lunga + nota) o
-    // "Ferrari per venerdì" (breve + data). Gli estrattori a pattern falliscono
-    // qui (esclusione "sono X", nessun marker, fallback ancorato, blocco-nota).
-    // GPT lo estrae bene e SAPPIAMO che è un nome. Scatta SOLO in ricerca
-    // prenotazione → il flusso CREATE non è toccato.
-    if (!name) {
-      const _intentNow = IntentDetector.detect(transcript);
-      const _inBookingSearch =
-        _intentNow === 'modify' || _intentNow === 'cancel' ||
-        this.intent === 'modify' || this.intent === 'cancel' ||
-        this._modifyEngine?.state === 'SEARCH_BOOKING' ||
-        this.cancelState === 'awaiting_search';
-      if (_inBookingSearch) {
-        name = await this._extractNameWithGPT(transcript).catch(() => null);
-        if (name) console.log(`👤 Nome (GPT, ricerca prenotazione): ${name}`);
-      }
+    if (nome) {
+      const r = await this._callAppsScript({ action: 'find_reservation', nome, sheet: 'Prenotazioni' });
+      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, nome);
     }
-
-    // Penalizza campi non attesi su risposte brevi con contesto noto
-    const extracted = { date, time, people, name };
-    if (pq && isShort) {
-      console.log('\u{1F3AF} Guided extraction (short): pq=' + pq + ' "' + transcript + '"');
-      if (pq === 'people') {
-        extracted.name = null;
-        extracted.date = null;
-        extracted.time = null;
-      } else if (pq === 'time') {
-        extracted.name = null;
-        extracted.people = null; // non sovrascrivere pax già acquisiti
-      } else if (pq === 'date') {
-        extracted.name = null;
-      } else if (pq === 'name') {
-        extracted.date = null;
-        extracted.time = null;
-        extracted.people = null;
-      }
+    if (phone) {
+      const r = await this._callAppsScript({ action: 'find_reservation', telefono: phone, sheet: 'Prenotazioni' });
+      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, nome);
     }
+    return { trovata: false };
+  }
 
-    // STEP 6: se l'utente ha interrotto il bot, considera reset _pendingQuestion
-    // solo se l'interrupt era significativo (bot stava parlando da > 500ms)
-    // Per ora: mantieni il contesto — l'interrupt potrebbe essere rumore PSTN
-
-    // STEP 3: _pendingQuestion persiste fino a slot acquisito o intent switch esplicito
-    // GPT: la lunghezza della frase NON è indicatore di topic switch
-    // es: "sì guardi siamo in quattro perché arriva anche mia moglie" > 6 parole ma è ancora people
-    // Reset solo se non c'era nessun contesto attivo
-    if (!pq) {
-      this._pendingQuestion = null;
-    }
-    // Se c'era un contesto attivo (_pendingQuestion settato), lo manteniamo
-    // Verrà resettato quando il campo viene acquisito con successo (in _processExtraction)
-
-    let intent = IntentDetector.detect(transcript);
-    const detectedLang = this._detectLanguage(transcript);
-    if (detectedLang !== 'it' && transcript.split(/\s+/).length >= 3) {
-      this.language = detectedLang;
-      console.log('\u{1F310} Lingua: ' + this.language);
-    }
-    const note_check    = /(?:hai|avete)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto)/i.test(transcript);
-    const people_change = /\bcambiar[ei]\s+(?:il numero di\s+)?person[ae]\b/i.test(transcript);
-    const unclear       = transcript.trim().split(/\s+/).length < 2;
-
-    // ── STEP GPT: Conversational history resolution (solo se ambiguo) ─────────
-    // Chiama GPT con gli ultimi 3 turni SOLO quando i parser locali non bastano
-    // Costo aggiuntivo stimato: ~$0.20/mese su 1200 chiamate — trascurabile
-    let _ambiguityResult = null;
-    if (this._isAmbiguous(transcript, extracted)) {
-      _ambiguityResult = await this._resolveAmbiguity(transcript).catch(() => null);
-      if (_ambiguityResult) {
-        // FIX 1+3 (GPT): il prompt non ritorna più "intent" — solo reference/entities
-        // confirmation e correction come hint per la state machine
-        if (_ambiguityResult.confirmation === true && intent === 'unknown') {
-          console.log('🧠 Ambiguity: conferma rilevata dal contesto');
-        }
-        if (_ambiguityResult.correction === true) {
-          console.log('🧠 Ambiguity: correzione rilevata dal contesto');
-        }
-
-        // FIX 1 HARDCODED (GPT): parser deterministico = authority ASSOLUTA
-        // GPT può SOLO riempire buchi — MAI correggere, sostituire o reinterpretare il parser
-        // Su transcript ≤ 3 parole: GPT non produce nuove entity strutturate (solo reference/confirm)
-        const _transcriptWords = (transcript || '').trim().split(/\s+/).length;
-        if (_ambiguityResult.entities && _transcriptWords > 3) {
-          const e = _ambiguityResult.entities;
-          // HARD RULE: if (local == null && gpt != null) → OK. if (local != null) → GPT ignorato.
-          if (e.people != null && extracted.people == null) { extracted.people = e.people; this._meta.peopleSource = 'gpt'; }
-          if (e.date   != null && extracted.date   == null) { extracted.date   = e.date;   this._meta.dateSource   = 'gpt'; }
-          if (e.time   != null && extracted.time   == null) { extracted.time   = e.time;   this._meta.timeSource   = 'gpt'; }
-          if (e.name   != null && extracted.name   == null) { extracted.name   = e.name;   this._meta.nameSource   = 'gpt'; }
-          if (e.note   != null && !extracted.notes)         { extracted.notes  = [e.note]; }
-        }
-      }
-    }
-
+  _foundResult(res, searchedName) {
+    this._lastFound = res;
+    const tn = res.time?.length === 5 ? res.time + ':00' : (res.time || '');
     return {
-      date:              extracted.date   || 'null',
-      time:              extracted.time   || 'null',
-      people:            extracted.people ? String(extracted.people) : 'null',
-      name:              extracted.name   || 'null',
-      intent,
-      language:          this.language,
-      notes:             [],
-      phone_alternative: null,
-      note_check,
-      people_change,
-      unclear,
+      trovata: true,
+      eventId: res.eventId,
+      nome:    res.name,
+      data:    DateManager.formatForDisplay(res.date),
+      ora:     TimeManager.formatForDisplay(tn),
+      persone: res.people,
+      note:    res.notes || 'nessuna',
+      // se trovata tramite numero ma con nome diverso da quello cercato → avvisa il cliente
+      nome_diverso_dal_cercato: !!(searchedName && res.name && res.name.toLowerCase() !== String(searchedName).toLowerCase()),
     };
   }
 
-
-  // ── Rilevamento lingua semplice ────────────────────────────────────────────
-  _detectLanguage(text) {
-    const t = text.toLowerCase();
-    if (/\b(the|is|are|hello|please|want|book|reservation|cancel)\b/.test(t)) return 'en';
-    if (/\b(bonjour|réserver|je veux|merci|annuler)\b/.test(t)) return 'fr';
-    if (/\b(hola|reservar|quiero|gracias|cancelar)\b/.test(t)) return 'es';
-    if (/\b(danke|reservierung|möchte|bitte|stornieren)\b/.test(t)) return 'de';
-    return 'it';
-  }
-
-  // ── Filtro allucinazioni Whisper note ─────────────────────────────────────
-
-  // ── Session Ready → Greeting ──────────────────────────────────────────────
-  _onSessionReady() {
+  // ─── TOOL 2: controlla_disponibilita (business rules + Apps Script)
+  async _toolControlla({ data, ora, persone }) {
     const rc = this.restaurantConfig;
+    const dateISO = this._normDate(data);
+    const timeN   = this._normTime(ora);
+    const ppl     = parseInt(persone, 10) || 0;
+
+    if (!dateISO) return { esito: 'data_non_capita' };
+
+    if (ValidationPipeline.getDayClosedMessage(dateISO, rc)) {
+      return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
+    }
+    if (timeN && !ValidationPipeline.isValidTime(timeN, rc)) {
+      return { esito: 'fuori_orario',
+               pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
+               cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}` };
+    }
+    if (timeN) {
+      const h = parseInt(timeN.split(':')[0], 10);
+      if (h >= 10 && h <= 16 && ValidationPipeline.isLunchClosed(dateISO, rc))
+        return { esito: 'solo_cena', giorno: DateManager.getDayName(dateISO) };
+      if ((h >= 17 || h <= 3) && ValidationPipeline.isDinnerClosed(dateISO, rc))
+        return { esito: 'solo_pranzo', giorno: DateManager.getDayName(dateISO) };
+    }
+
+    const eventTh = Number(rc?.event_threshold) || 45;
+    const largeTh = Number(rc?.large_group_threshold) || 10;
+    if (ppl >= eventTh) return { esito: 'evento', email: rc?.owner_email || '' };
+    if (ppl > largeTh)  return { esito: 'gruppo_grande' };
+
+    const res = await this._callAppsScript({ action: 'check_availability', data: dateISO, ora: timeN, persone: ppl });
+    if (res?.success || res?.reason === 'slot_available') return { esito: 'libero' };
+    if (res?.reason === 'day_closed') return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
+    if (res?.reason === 'slot_full') {
+      const alts = await this._callAppsScript({ action: 'find_available_slots', data: dateISO, ora: timeN, persone: ppl });
+      const sameDay = (alts?.availableSlots?.sameDay || [])
+        .filter(s => ValidationPipeline.isValidTime(s.time, rc))
+        .slice(0, 3).map(s => s.time.substring(0, 5));
+      return { esito: 'pieno', alternative_stesso_giorno: sameDay };
+    }
+    return { esito: 'libero' }; // check incerto → procedi
+  }
+
+  // ─── TOOL 3: crea_prenotazione
+  async _toolCrea({ nome, data, ora, persone, note }) {
+    const dateISO = this._normDate(data);
+    const timeN   = this._normTime(ora);
+    const ppl     = parseInt(persone, 10) || 0;
+    const tel     = this.callerPhone || '';
+    const r = await this._callAppsScript({
+      source: 'telnyx', nome, persone: ppl, data: dateISO, ora: timeN,
+      telefono: tel, notes: note || '', forceNew: true,
+    });
+    if (r?.success && r.eventId) {
+      this._lastFound = { eventId: r.eventId, name: nome, date: dateISO, time: timeN, people: ppl, phone: tel, notes: note || '' };
+      return { creata: true, stato: r.status || 'CONFIRMED',
+               data: DateManager.formatForDisplay(dateISO), ora: TimeManager.formatForDisplay(timeN), persone: ppl };
+    }
+    return { creata: false };
+  }
+
+  // ─── TOOL 4: modifica_prenotazione (merge sui campi non cambiati)
+  async _toolModifica({ data, ora, persone, note }) {
+    const base = this._lastFound;
+    if (!base?.eventId) return { aggiornata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
+
+    const newDate   = data    != null ? this._normDate(data) : base.date;
+    const newTime   = ora     != null ? this._normTime(ora)  : (base.time?.length === 5 ? base.time + ':00' : base.time);
+    const newPeople = persone != null ? parseInt(persone, 10) : base.people;
+    const newNotes  = note    != null ? this._mergeNotes(base.notes, note) : (base.notes || '');
+
+    const r = await this._callAppsScript({
+      action: 'update_reservation', eventId: base.eventId,
+      nome: base.name, data: newDate, ora: newTime, persone: newPeople,
+      telefono: base.phone || this.callerPhone || '', notes: newNotes,
+    });
+    if (r?.success !== false) {
+      this._lastFound = { ...base, date: newDate, time: newTime, people: newPeople, notes: newNotes };
+      return { aggiornata: true, data: DateManager.formatForDisplay(newDate),
+               ora: TimeManager.formatForDisplay(newTime), persone: newPeople };
+    }
+    return { aggiornata: false };
+  }
+
+  // ─── TOOL 5: cancella_prenotazione
+  async _toolCancella() {
+    const r = this._lastFound;
+    if (!r?.name || !r?.date) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
+    const tn = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
+    const res = await this._callAppsScript({
+      action: 'cancel_reservation', nome: r.name, data: r.date, ora: tn,
+      telefono: this.callerPhone || r.phone || '',
+    });
+    if (res?.success || res?.status === 'CANCELLED') return { cancellata: true };
+    return { cancellata: false };
+  }
+
+  // ── System prompt (snello = qualità intento + costo basso) ────────────────
+  _buildSystemPrompt() {
+    const rc = this.restaurantConfig;
+    const now = DateManager.getNow();
+    const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
+    const todayISO = DateManager.toISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+
+    const closedDays = rc?.closed_days ? String(rc.closed_days).split(',').map(Number) : [1];
+    const closedTxt  = closedDays.map(d => dayNames[d]).join(', ');
+    const ls = rc?.lunch_start || '12:00', le = rc?.lunch_end || '14:30';
+    const ds = rc?.dinner_start || '19:00', de = rc?.dinner_end || '22:30';
     const nome = rc?.restaurant_name || 'ristorante';
-    this._say(`Buongiorno! Benvenuto a ${nome}. Per quale giorno desidera prenotare?`);
+
+    // Info locale (trim per non gonfiare il prompt). Lo zoccolo del costo: tienilo corto.
+    const info = this._restaurantInfo || {};
+    const infoLines = [];
+    if (info.cuisine)        infoLines.push(`Cucina: ${info.cuisine}`);
+    if (info.parking)        infoLines.push(`Parcheggio: ${info.parking}`);
+    if (info.highchair)      infoLines.push(`Seggiolone: ${info.highchair}`);
+    if (info.accessibility)  infoLines.push(`Accessibilità: ${info.accessibility}`);
+    if (info.vegan)          infoLines.push(`Vegano/vegetariano: ${info.vegan}`);
+    if (info.glutenFree)     infoLines.push(`Senza glutine: ${info.glutenFree}`);
+    if (info.paymentMethods) infoLines.push(`Pagamenti: ${info.paymentMethods}`);
+    if (info.menuDetails)    infoLines.push(`Menu:\n${String(info.menuDetails).slice(0, 1400)}`);
+
+    return [
+      `Sei Giulia, receptionist vocale di ${nome}. Parli italiano, frasi brevi (max 2), tono cordiale e professionale.`,
+      `Oggi è ${dayNames[now.getDay()]} ${todayISO}.`,
+      `Orari: pranzo ${ls}-${le}, cena ${ds}-${de}. Chiuso il ${closedTxt}.`,
+      ``,
+      `Il tuo compito: aiutare il cliente a CREARE, MODIFICARE o CANCELLARE una prenotazione, usando SEMPRE gli strumenti. Non confermare mai una prenotazione, modifica o cancellazione, né una disponibilità, senza aver chiamato il tool corrispondente. Non inventare.`,
+      ``,
+      `Regole:`,
+      `- Per data e ora passa ai tool il testo COSÌ COME lo dice il cliente ("sabato", "domani", "alle 21"): al calcolo ci pensa il sistema.`,
+      `- Per modificare o cancellare: prima chiama trova_prenotazione, poi LEGGI al cliente cosa hai trovato (nome, data, ora, persone) e chiedi conferma prima di procedere. Se nome_diverso_dal_cercato è true, di' che l'hai trovata tramite il suo numero e chiedi se è la sua.`,
+      `- Persone: se il cliente dice "si aggiungono due" o "uno in meno", calcola TU il totale finale partendo dalle persone della prenotazione trovata, e passa il numero finale.`,
+      `- Prima di creare o di applicare un cambio di data/ora/persone chiama controlla_disponibilita e rispetta l'esito (giorno_chiuso, fuori_orario, solo_cena/solo_pranzo, pieno con alternative, gruppo_grande = soggetto a conferma del ristorante, evento = invita a scrivere all'email).`,
+      `- Leggi i numeri di telefono cifra per cifra.`,
+      `- Le note (allergie, intolleranze, seggiolone, occasioni, tavolo) vanno nel campo "note" dei tool.`,
+      `- Se il cliente cambia idea a metà (es. "no, anzi cancellala"), assecondalo chiamando il tool giusto: non serve ricominciare.`,
+      `- Domande sul locale: rispondi con le informazioni qui sotto. Se non le hai, invita a contattare il ristorante. Non inventare.`,
+      infoLines.length ? `\nInformazioni sul locale:\n${infoLines.join('\n')}` : '',
+    ].join('\n');
   }
 
-  // ── _say: routing al TTS session ─────────────────────────────────────────
-  //
-  // Tutte le risposte del bot passano da qui → nessuna risposta libera di GPT.
-  // Stessa firma del vecchio _say() — nessuna modifica alla business logic.
-
-  static THINKING_PHRASES = {
-    'Un attimo che verifico la disponibilità...': {
-      en: 'Just a moment while I check availability...',
-      fr: 'Un instant, je vérifie la disponibilité...',
-      es: 'Un momento mientras verifico la disponibilidad...',
-      de: 'Einen Moment, ich prüfe die Verfügbarkeit...',
-    },
-    'Un momento, cerco la prenotazione...': {
-      en: 'Just a moment, looking for your reservation...',
-      fr: 'Un instant, je cherche votre réservation...',
-      es: 'Un momento, busco su reserva...',
-      de: 'Einen Moment, ich suche Ihre Reservierung...',
-    },
-    'Perfetto, aggiorno subito...': {
-      en: 'Perfect, updating right away...',
-      fr: 'Parfait, je mets à jour immédiatement...',
-      es: 'Perfecto, actualizando ahora mismo...',
-      de: 'Perfekt, ich aktualisiere sofort...',
-    },
-    'Un attimo che procedo con la cancellazione...': {
-      en: 'Just a moment while I process the cancellation...',
-      fr: 'Un instant pendant que je procède à l\'annulation...',
-      es: 'Un momento mientras proceso la cancelación...',
-      de: 'Einen Moment, ich bearbeite die Stornierung...',
-    },
-    'Perfetto! A che nome faccio la prenotazione?': {
-      en: 'Perfect! What name should I put the reservation under?',
-      fr: 'Parfait ! À quel nom dois-je faire la réservation ?',
-      es: '¡Perfecto! ¿A qué nombre hago la reserva?',
-      de: 'Perfekt! Auf welchen Namen soll ich die Reservierung machen?',
-    },
-    'A che nome faccio la prenotazione?': {
-      en: 'What name should I put the reservation under?',
-      fr: 'À quel nom dois-je faire la réservation ?',
-      es: '¿A qué nombre hago la reserva?',
-      de: 'Auf welchen Namen soll ich die Reservierung machen?',
-    },
-    'Certo! A che nome è la prenotazione e per quale data?': {
-      en: 'Of course! What name is the reservation under and for what date?',
-      fr: 'Bien sûr ! Quel est le nom de la réservation et pour quelle date ?',
-      es: 'Por supuesto! ¿A qué nombre está la reserva y para qué fecha?',
-      de: 'Natürlich! Auf welchen Namen läuft die Reservierung und für welches Datum?',
-    },
-    'Nessun problema, la prenotazione rimane invariata. Arrivederci!': {
-      en: 'No problem, your reservation remains unchanged. Goodbye!',
-      fr: 'Pas de problème, votre réservation reste inchangée. Au revoir !',
-      es: 'Sin problema, su reserva permanece sin cambios. ¡Hasta pronto!',
-      de: 'Kein Problem, Ihre Reservierung bleibt unverändert. Auf Wiedersehen!',
-    },
-    'Non ho capito. Conferma la cancellazione? Dica sì o no.': {
-      en: 'I didn\'t understand. Do you confirm the cancellation? Please say yes or no.',
-      fr: 'Je n\'ai pas compris. Confirmez-vous l\'annulation ? Dites oui ou non.',
-      es: 'No he entendido. ¿Confirma la cancelación? Diga sí o no.',
-      de: 'Ich habe das nicht verstanden. Bestätigen Sie die Stornierung? Bitte sagen Sie ja oder nein.',
-    },
-  };
-
-  // FIX 2 (GPT): filtra filler/thinking messages dalla history
-  // Salva SOLO messaggi semanticamente rilevanti — NON progress/filler
-  _isSemanticMessage(text) {
-    const NON_SEMANTIC = [
-      'Un attimo', 'Verifico', 'Aggiorno', 'Controllo', 'Procedo',
-      'Un momento', 'Cerco la prenotazione', 'verifico la disponibilità',
-      'aggiorno subito', 'procedo con la cancellazione', 'Perfetto, aggiorno'
-    ];
-    return !NON_SEMANTIC.some(filler => text.includes(filler));
-  }
-
+  // ── TTS ───────────────────────────────────────────────────────────────────
   _say(text) {
-    console.log(`💉 [say]: ${text.substring(0, 100)}`);
-    // Registra SOLO messaggi semantici nella history — no filler/thinking phrases
-    if (text && text.trim() && this._isSemanticMessage(text)) {
-      this._conversationHistory.push({ role: 'assistant', content: text });
-      if (this._conversationHistory.length > this._historyMaxTurns * 2) {
-        this._conversationHistory.splice(0, 2);
-      }
-    }
-    const lang = this.language || 'it';
+    if (!text) return;
+    console.log(`💉 [say]: ${text.substring(0, 120)}`);
     this._ttsPlaying = true;
+    this.ttsSession?.speak(this._speakNumbers(text), 'it');
+  }
+  // legge cifra-per-cifra i numeri lunghi (telefoni) per una TTS affidabile
+  _speakNumbers(text) { return String(text).replace(/\d{7,}/g, (m) => m.split('').join(' ')); }
 
-    // Run di 7+ cifre (telefoni/ID): la TTS li legge cifra-per-cifra, così non
-    // salta/fonde cifre. NON tocca la nota salvata (questo è solo il parlato),
-    // né anni (4 cifre), orari o conteggi.
-    const spoken = this._speakNumbers(text);
+  // ── Helper di normalizzazione (DateManager/TimeManager = autorità) ─────────
+  _normDate(s) {
+    if (!s) return null;
+    const t = String(s).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;        // già ISO
+    return DateManager.parseFromText(t);
+  }
+  _normTime(s) {
+    if (!s) return null;
+    const t = String(s).trim();
+    const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (m) return `${m[1].padStart(2, '0')}:${m[2]}:00`;
+    return TimeManager.parseFromText(t);
+  }
+  _mergeNotes(existing, add) {
+    const arr = existing ? String(existing).split(/;\s*/).map(x => x.trim()).filter(Boolean) : [];
+    String(add).split(/;\s*/).map(x => x.trim()).filter(Boolean).forEach(n => { if (!arr.includes(n)) arr.push(n); });
+    return arr.join('; ');
+  }
 
-    if (lang === 'it') {
-      this.ttsSession.speak(spoken, 'it');
-      return;
+  _trimHistory() {
+    if (this._history.length > HISTORY_TURNS) {
+      this._history.splice(0, this._history.length - HISTORY_TURNS);
     }
+  }
 
-    // Cerca frase pre-tradotta (evita allucinazioni)
-    const preTranslated = OpenAIRealtimeClient.THINKING_PHRASES[text]?.[lang];
-    if (preTranslated) {
-      this.ttsSession.speak(preTranslated, lang);
-      return;
+  // ── Filtro allucinazioni Whisper (audio corto/silenzio PSTN) ──────────────
+  _isGarbage(t) {
+    if (!t) return true;
+    const s = t.trim().toLowerCase();
+    const PATTERNS = ['amara.org','sottotitoli','iscriviti','grazie per aver guardato',
+      'metti mi piace','copyright','all rights reserved','sottotitolat','comunità amara'];
+    if (PATTERNS.some(p => s.includes(p))) { console.log(`🚫 hallucination filtrata: "${t.slice(0,50)}"`); return true; }
+    const words = s.replace(/[.,!?]/g, '').split(/\s+/).filter(w => w.length > 1);
+    return words.length === 0;
+  }
+
+  // ── Info locale (Apps Script) ─────────────────────────────────────────────
+  async _fetchRestaurantInfo() {
+    try {
+      const r = await this._callAppsScript({ action: 'get_restaurant_info' });
+      if (r?.success && r.info) {
+        this._restaurantInfo = r.info;
+        console.log(`📋 Info locale caricata (menu: ${r.info.menuDetails ? r.info.menuDetails.length : 0} chars)`);
+      }
+    } catch (e) { console.log('⚠️ info locale:', e?.message); }
+  }
+
+  // ── Apps Script ─────────────────────────────────────────────────────────
+  async _callAppsScript(payload) {
+    const url = this.restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
+    if (!url) return null;
+    const controller = new AbortController();
+    const to = setTimeout(() => controller.abort(), 25000);
+    try {
+      const resp = await fetch(url, {
+        method: 'POST', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      clearTimeout(to);
+      const txt = await resp.text();
+      try { return JSON.parse(txt); } catch { return null; }
+    } catch (e) {
+      clearTimeout(to);
+      if (e.name === 'AbortError') { console.error('❌ Apps Script timeout'); return { success: false, reason: 'timeout' }; }
+      throw e;
     }
-
-    // Frase dinamica → TTS con traduzione
-    this.ttsSession.speakTranslated(spoken, lang);
   }
 
-  // Separa cifra-per-cifra i run lunghi (≥7) per una lettura TTS affidabile.
-  _speakNumbers(text) {
-    if (!text) return text;
-    return String(text).replace(/\d{7,}/g, (m) => m.split('').join(' '));
-  }
+  // ── Audio Telnyx → STT ────────────────────────────────────────────────────
+  sendAudio(pcmuBase64) { this.sttSession?.sendAudio(pcmuBase64); }
 
-  // Compatibilità con il vecchio codice che usa _sayDirect
-  _sayDirect(text) {
-    this._say(text);
-  }
-
-  // ── Audio da Telnyx → STT session ─────────────────────────────────────────
-  sendAudio(pcmuBase64) {
-    this.sttSession?.sendAudio(pcmuBase64);
-  }
-
-  // ── Chiudi entrambe le sessioni ───────────────────────────────────────────
+  // ── Chiusura ────────────────────────────────────────────────────────────
   close() {
     this.turnManager?.reset();
     this.sttSession?.close();
     this.ttsSession?.close();
-  }
-
-
-
-  async _processExtraction(args) {
-    if (this.checkingSlot) return;
-
-    const rc = this.restaurantConfig;
-
-    // ── Walk-in detection: "tra X minuti/ora" ────────────────────────────────
-    // Se il cliente chiede disponibilità immediata, calcola l'orario reale
-    // e tratta come CREATE con data=oggi e time=adesso+offset
-    // Scatta su qualsiasi intent, incluso unknown
-    if (this.lastTranscript && this.phase !== 'done') {
-      const _t = this.lastTranscript;
-      // Pattern esteso: gestisce "mezz'ora" / "mezzora" come caso speciale
-      const _walkInPat = /(?:tra|fra)\s+(?:(?:un[ao]?\s+)?(\w+)\s*(minuti?|quarti?\s+d['']?ora|mezz['']?ora|ora[e]?|quarto)|mezz['']?ora)/i;
-      const _mWalk = _t.match(_walkInPat);
-      if (_mWalk && !args._walkInHandled) {
-        // Calcola offset in minuti
-        const _numStr = (_mWalk[1] || '').toLowerCase();
-        const _unit   = (_mWalk[2] || '').toLowerCase();
-        // Caso speciale "tra mezz'ora" / "tra mezzora" senza gruppo catturato
-        const _isMezzOra = /tra\s+mezz['']?ora/i.test(_t) || /fra\s+mezz['']?ora/i.test(_t);
-        const _numMap = { uno:1, una:1, due:2, tre:3, quattro:4, cinque:5, sei:6,
-                          sette:7, otto:8, nove:9, dieci:10, quindici:15, venti:20,
-                          trenta:30, quaranta:40, cinquanta:50, sessanta:60, un:1, mezz:30, mezzo:30 };
-        let _mins = _isMezzOra ? 30 : (_numMap[_numStr] || parseInt(_numStr) || 0);
-        if (!_isMezzOra && /mezz/.test(_unit)) _mins = 30;
-        else if (!_isMezzOra && /ora/.test(_unit) && !/mezz/.test(_numStr)) _mins = (_mins || 1) * 60;
-        else if (!_isMezzOra && /quarto/.test(_unit)) _mins = 15;
-
-        if (_mins > 0) {
-          // Calcola orario adesso + offset nel fuso del ristorante
-          const _tz = rc?.timezone || 'Europe/Rome';
-          const _now = new Date();
-          const _targetMs = _now.getTime() + _mins * 60000;
-          const _target = new Date(_targetMs);
-          const _hh = String(_target.toLocaleTimeString('it-IT', { timeZone: _tz, hour: '2-digit' })).padStart(2,'0');
-          const _mm = String(_target.toLocaleTimeString('it-IT', { timeZone: _tz, minute: '2-digit' })).padStart(2,'0');
-          const _calcTime = `${_hh}:${_mm}:00`;
-          const _todayISO = _now.toLocaleDateString('sv-SE', { timeZone: _tz });
-          console.log(`🚶 Walk-in rilevato: "${_t}" → +${_mins}min → ${_calcTime}`);
-          // Resetta lastTranscript per evitare loop infinito al rientro
-          this.lastTranscript = null;
-          // Re-entra come CREATE con data=oggi e time calcolato
-          await this._processExtraction({ ...args, intent: 'create', date: _todayISO, time: _calcTime,
-                                        people: args.people || null, name: args.name || null, _walkInHandled: true });
-          return;
-        }
-      }
-    }
-
-    let   newDate   = (args.date   && args.date   !== 'null') ? args.date   : null;
-    let   newTime   = (args.time   && args.time   !== 'null') ? args.time   : null;
-    let   newPeople = (args.people && args.people !== 'null') ? parseInt(args.people) : null;
-    // BUG 1 FIX: pulizia nome — rimuove parole non-nome aggiunte da GPT
-    // es: "Rossi Per Sabato" → "Rossi", "Ferrari Alle 21" → "Ferrari"
-    const _rawName = (args.name && args.name !== 'null') ? args.name.trim() : null;
-    const newName = _rawName
-      ? _rawName.replace(/\s+(per|sabato|domenica|lunedì|martedì|mercoledì|giovedì|venerdì|sera|pranzo|cena|stasera|domani|oggi|alle|a|il|la|lo|le|un|una)\b.*/i, '').trim()
-      : null;
-
-    // 🆕 GPT-ONLY: cross-check data rimosso — GPT gestisce domani/oggi/stasera
-    // con le regole esplicite nel prompt e il calendario iniettato.
-
-    // Cross-check orario server-side: corregge GPT quando ignora la regola sera
-    // Regola: ore 1-10 senza qualificatore mattina/pranzo → forza PM (es: "alle 9" → 21:00)
-    if (newTime && this.lastTranscript) {
-      const _tr = this.lastTranscript;
-      const _tParts = newTime.split(':').map(Number);
-      const _h = _tParts[0];
-      const _m = _tParts[1] || 0;
-      const _isSmallHour = _h >= 1 && _h <= 10;
-      const _hasMattina = /\b(di mattina|mattina|colazione|a pranzo|pranzo|stamattina|stamani)\b/i.test(_tr);
-      const _hasExplicitLargeHour = /\b(21|22|23|20|19|18|17|16|15|14|13)[:h]|alle\s+2[0-3]\b|alle\s+1[3-9]\b/i.test(_tr);
-      if (_isSmallHour && !_hasMattina && !_hasExplicitLargeHour) {
-        const _newH = _h + 12;
-        const _newTime = String(_newH).padStart(2,'0') + ':' + String(_m).padStart(2,'0') + ':00';
-        console.log(`⏰ Time cross-check: ${_h}:${String(_m).padStart(2,'0')} → ${_newTime} (regola sera server-side)`);
-        args = { ...args, time: _newTime };
-        newTime = _newTime; // aggiorna la variabile locale per tutti i check successivi
-      }
-    }
-
-    // 🆕 GPT-ONLY: cross-check persone rimosso — GPT estrae il numero direttamente.
-
-    // ── Note estratte da GPT ──────────────────────────────────────────────────
-    // 🆕 ARCHITETTURA GPT-ONLY: GPT estrae le note direttamente dall'audio
-    this._noteCheck    = args.note_check    === true; // 🆕 true se chiede di note esistenti
-    this._peopleChange = args.people_change === true; // 🆕 true se vuole CAMBIARE le persone
-    if (args.notes && Array.isArray(args.notes) && args.notes.length > 0) {
-      args.notes.forEach(note => {
-        const noteStr = String(note).trim();
-        if (noteStr && (!this.data.notes || !this.data.notes.includes(noteStr))) {
-          this.data.notes = this.data.notes ? `${this.data.notes}; ${noteStr}` : noteStr;
-          console.log(`📝 Nota (GPT): "${noteStr}"`);
-        }
-      });
-      // Se siamo in phase=done e abbiamo nuove note, aggiorna subito il Calendar
-      if (this.phase === 'done' && this.lastReservation?.eventId) {
-        const _mergedNotes = this._mergeNotesStr(this.lastReservation.notes || '', this.data.notes || '');
-        if (_mergedNotes !== this.lastReservation.notes) {
-          console.log(`📝 Phase=done: nuove note GPT, aggiorno Calendar: "${_mergedNotes}"`);
-          this._callAppsScript({
-            action: 'update_notes',
-            eventId: this.lastReservation.eventId,
-            notes: _mergedNotes,
-          }).then(() => {
-            if (this.lastReservation) this.lastReservation.notes = _mergedNotes;
-          }).catch(err => console.error('❌ update_notes GPT:', err));
-        }
-      }
-    }
-
-    // ── Telefono alternativo estratto da GPT ──────────────────────────────────
-    if (args.phone_alternative && args.phone_alternative !== 'null' && !this.data.alternativePhone) {
-      const _rawPhone = String(args.phone_alternative).replace(/\D/g, '');
-      if (_rawPhone.length >= 9) {
-        const _formattedPhone = _rawPhone.startsWith('39') ? `+${_rawPhone}` : `+39${_rawPhone}`;
-        this.data.alternativePhone = _formattedPhone;
-        console.log(`📞 Telefono alternativo (GPT): "${_formattedPhone}"`);
-        // Appende alle note così arriva ad Apps Script (non esiste campo dedicato)
-        const _phoneNote = `Tel. alternativo: ${_formattedPhone}`;
-        if (!this.data.notes || !this.data.notes.includes('Tel. alternativo')) {
-          this.data.notes = this.data.notes ? `${this.data.notes}; ${_phoneNote}` : _phoneNote;
-        }
-      }
-    }
-
-    // ── Aggiorna lingua rilevata ─────────────────────────────────────────────
-    // Guard: cambia lingua solo se il transcript corrente contiene almeno 3 parole
-    // ed è coerente con la lingua rilevata. Evita false detections su parole corte
-    // ambigue (es: "Salve" → es, "Merci" → fr su un singolo termine).
-    if (args.language && args.language !== this.language) {
-      const transcriptWordCount = this.lastTranscript ? this.lastTranscript.trim().split(/\s+/).length : 0;
-      if (transcriptWordCount >= 3) {
-        this.language = args.language;
-        console.log(`🌐 Lingua rilevata da GPT: ${this.language}`);
-      } else {
-        console.log(`🌐 Lingua GPT=${args.language} ignorata (transcript troppo corto: "${this.lastTranscript}")`);
-      }
-    }
-
-    // ── Fix 1: CANCEL confirm intercetta anche qui (GPT più veloce di Whisper) ─
-    if (this.cancelState === 'awaiting_confirm') {
-      // Non fare nulla — la conferma è gestita in _onTurnReady via _handleCancelConfirmText
-      // ma se GPT rileva un cancel/unknown, ignoriamo per non interferire
-      return;
-    }
-
-    // 🆕 SMART MODIFY confirm: GPT ignorato durante attesa conferma
-    // Il modifyEngine gestisce internamente il suo stato — nessun intercept necessario
-    if (this._modifyEngine?.state === 'CONFIRM_PATCH' ||
-        this._modifyEngine?.state === 'CONFIRM_BOOKING') {
-      console.log(`🔒 GPT result ignorato: modifyEngine in ${this._modifyEngine.state}`);
-      return;
-    }
-
-    // ══ HARD LOCK: modifyState attivo → nessun reset automatico ══════════════
-    // Nel modify flow l'utente PUÒ dire date/ore/numeri senza voler fare una nuova prenotazione.
-    // Reset SOLO con frasi esplicite: "voglio fare una nuova prenotazione", "annulla tutto", ecc.
-    // HARD LOCK: usa il nuovo modifyEngine se attivo
-    const _engineActive = this._modifyEngine?.isActive && !this._modifyEngine?.isDone;
-    if (_engineActive) {
-      const _explicitExit = /\b(?:nuova\s+prenotazione|voglio\s+prenotare\s+(?:un|un')\s+altro|annulla\s+tutto|lasci\s+stare|ripartiamo|lasciate?\s+perdere)\b/i.test(this.lastTranscript || '');
-      // 🆕 TEST 4: uscita verso CANCEL. Dentro un modify il cliente può chiedere
-      // esplicitamente di cancellare ("voglio cancellarla", "voglio disdire").
-      // Richiede una forma verbale chiara → niente falsi positivi su cognomi
-      // ("Cancelleri", "Disdri"). Agganciato al transcript: scavalca anche un
-      // eventuale errore di GPT che classifica "voglio cancellare" come modify.
-      const _explicitCancel = /\b(?:voglio|vorrei|devo|posso|vorremmo|dobbiamo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i.test(this.lastTranscript || '');
-      if (_explicitCancel) {
-        console.log('🔓 HARD LOCK: intent cancel esplicito → switch a CANCEL');
-        this._modifyEngine.reset();
-        this.modifyState = null;
-        this.intent = 'cancel';
-        args.intent = 'cancel';
-      } else if (_explicitExit) {
-        console.log('🔓 HARD LOCK: exit phrase → reset modify engine');
-        this._modifyEngine.reset();
-        this.modifyState = null;
-      } else {
-        console.log(`🔒 HARD LOCK: modifyEngine.state=${this._modifyEngine.state}, blocco reset`);
-        args.intent = 'modify';
-      }
-    }
-
-
-    // ══ PRE-ROUTING LAYER (GPT raccomandazione) ══════════════════════════════
-    // Prima del booking flow: intercetta domande sul locale
-    // Intent=create NON significa sempre "vuole prenotare" — è anche il fallback catch-all
-    // Segnali strutturali (no entity + frame interrogativo) → GPT risponde dal menu
-    if (!this.modifyState && !this.cancelState && this.phase !== 'done') {
-      const _isInfoQ = await this._shouldHandleAsRestaurantInfo(this.lastTranscript || '', {
-        date: newDate, time: newTime, people: newPeople
-      });
-      if (_isInfoQ) {
-        const _handled = await this._handleInfoQuery(this.lastTranscript || '');
-        if (_handled) return; // GPT ha risposto → stop, NON mutare phase
-        // GPT dice NOT_RESTAURANT → continua il booking flow normalmente
-      }
-    }
-
-    // ── Fix 3: Phase=done — gestisce saluti, ringraziamenti e nuovi intent ────
-    if (this.phase === 'done') {
-      const intent = args.intent;
-
-      // Fix 3A: "Pronto?" = segnale telefonico
-      if (this.lastTranscript) {
-        const _prontoPat = /^(pronto|pronto\?|ci sei|mi senti|sei li|sei l[ìi]|sento|hello\?|are you there)[?!.\s]*$/i;
-        if (_prontoPat.test(this.lastTranscript.trim())) {
-          console.log('📞 "Pronto?" rilevato → risposta deterministica');
-          this._say('Sì, sono qui! Posso aiutarla con altro?');
-          return;
-        }
-
-        // Fix 3A2: saluti e ringraziamenti finali → congedo SEMPRE PRIMO
-        // Deve scattare PRIMA di topic memory e ambiguity — ordine critico
-        // Pattern esteso: "No, va benissimo, grazie mille", "Grazie buona giornata"
-        const _farewellPat = /^(?:ok|sì|si|no|perfetto|benissimo|ottimo|capito|bene)?[,\s]*(?:va\s+bene(?:\s+così)?[,\s]*)?(?:grazie(?:\s+mille)?|arrivederci|arrivederla|a presto|ciao|buona(?:\s+serata|\s+giornata)?|salve)[!.\s]*$/i;
-        // Pattern alternativo: frasi con "grazie" o congedo ovunque nella frase breve
-        const _farewellAlt = /\b(?:grazie(?:\s+mille)?|arrivederci|arrivederla|buona\s+(?:serata|giornata|notte))[!.\s]*$/i;
-        const _transcript = this.lastTranscript.trim();
-        const _isFarewell = _farewellPat.test(_transcript) ||
-                           (_transcript.split(/\s+/).length <= 8 && _farewellAlt.test(_transcript));
-        if (_isFarewell) {
-          console.log('👋 Saluto/ringraziamento finale → congedo senza reset');
-          this._say('Grazie a lei! A presto.');
-          return;
-        }
-      }
-
-      // Fix 3B: Domanda su note esistenti — intercetta PRIMA di qualsiasi check intent
-      // Es: "Avete segnato che sono allergico?" dopo un MODIFY → NON resettare, rispondere
-      const _noteQGuard = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|lo\s+avete\s+segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(this.lastTranscript || '');
-      if (_noteQGuard && this.lastReservation?.eventId) {
-        console.log('📋 Phase=done: domanda su note → risposta diretta senza reset');
-        this._lastTopic = 'notes'; // STEP 3
-        const _lrNotes = this.lastReservation.notes
-          ? this.lastReservation.notes.split(';').map(n => n.replace(/\s*\([^)]*\)/g, '').trim()).filter(n => n.length > 0).join('; ')
-          : '';
-        if (_lrNotes) {
-          this._say(`Sì, ho annotato: ${_lrNotes}.`);
-        } else {
-          this._say('Non risultano note salvate sulla sua prenotazione.');
-        }
-        return;
-      }
-
-      // Nuovo intent modify → usa lastReservation se disponibile, altrimenti cerca
-      if (intent === 'modify') {
-        // 🆕 FIX TEST1: se il cliente sta chiedendo delle note esistenti ("avete segnato X?"),
-        // GPT restituisce intent=modify per via della frase ma non va avviato il MODIFY flow.
-        // Lasciamo rispondere GPT normalmente con le note in contesto.
-        const _noteQuestionGuard = /(?:hai|avete|avevate|aveva|avevi)\s+(?:\w+\s+){0,2}(?:segnato|annotato|scritto|indicato|aggiunto|inserito)|risulta\s+(?:ancora\s+)?segnato|è\s+(?:ancora\s+)?segnato|avete\s+(?:\w+\s+){0,2}(?:segnato|annotato|aggiunto)/i.test(this.lastTranscript || '');
-        if (_noteQuestionGuard) {
-          console.log('📋 Phase=done MODIFY: domanda su note → skip MODIFY, lascio GPT rispondere');
-          // Costruisci contesto note per GPT
-          const _lrN = this.lastReservation;
-          const _notesCtxN = _lrN?.notes ? `Note salvate sulla prenotazione: "${_lrN.notes}".` : '';
-          // Risposta deterministica: conferma note salvate
-          const _noteAnswer = _notesCtxN
-            ? `Sì, ho annotato: ${this._notesForClient(_lrN.notes)}.`
-            : 'Non risultano note salvate sulla sua prenotazione.';
-          this._say(_noteAnswer);
-        }
-        this.intent = 'modify';
-        this.modifyState = null;
-        // Fix X04: salva foundReservation prima del reset — potrebbe contenere la prenotazione
-        // trovata durante un CANCEL abortito (es: "No anzi spostala a sabato")
-        const _cancelFoundReservation = this.foundReservation;
-        this.foundReservation = null;
-        console.log('🔄 Phase=done: nuovo intent modify rilevato');
-
-        // Guard anti-double: se stiamo già processando un MODIFY, ignora il secondo trigger
-        if (this._processingModify) {
-          console.log('🔒 Double MODIFY ignorato: _processingModify=true');
-          return;
-        }
-
-        // Se abbiamo la prenotazione appena gestita, usala direttamente
-        // Nota: funziona anche con eventId=null (es. timeout AS)
-        // Fix X04: usa anche _cancelFoundReservation (da CANCEL abortito) se lastReservation è null
-        const _refRes = (this.lastReservation?.name && this.lastReservation?.date)
-          ? this.lastReservation
-          : (_cancelFoundReservation?.name && _cancelFoundReservation?.date ? _cancelFoundReservation : null);
-
-        if (_refRes) {
-          if (!this.lastReservation?.name) {
-            console.log(`🔄 Fix X04: uso foundReservation da CANCEL abortito (${_refRes.name}, ${_refRes.date}) come base MODIFY`);
-          }
-          this.foundReservation = _refRes;
-          this.modifyState = 'awaiting_changes';
-
-          // Fix 4: se solo le note cambiano (stessi data/ora/pax/nome), non fare MODIFY
-          // Le note sono già state gestite da _detectNotesAndPhone → update_notes
-          const _onlyNoteChange = !newName && !newDate && !newTime && !newPeople;
-          if (_onlyNoteChange) {
-            console.log('📝 Phase=done MODIFY: solo nota cambiata, già gestita da update_notes → skip MODIFY');
-            // Fix: resetta intent e modifyState per evitare il MODIFY reminder sul saluto finale
-            this.intent = 'done_modify';
-            this.modifyState = 'done';
-            // Fix 4: conferma verbale della nota al cliente
-            if (this.data.notes) {
-              const _lastNote = this.data.notes.split(';').pop().trim();
-              this._say(`Ho annotato: ${_lastNote}. C'è altro che posso fare per lei?`);
-            }
-            return;
-          }
-
-          // Se il messaggio contiene già la modifica esplicita, applicala subito
-          if (newName || newDate || newTime || newPeople) {
-            console.log(`💾 Phase=done MODIFY: applico cambio diretto su _refRes (${_refRes.name}, ${_refRes.date})`);
-            await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-            return;
-          }
-
-          // Altrimenti mostra la prenotazione trovata e chiedi cosa modificare
-          const r = _refRes;
-          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-          const dateDisplay = DateManager.formatForDisplay(r.date);
-          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          console.log(`💾 Phase=done MODIFY: uso _refRes direttamente (${r.name}, ${r.date})`);
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Cosa vuole modificare?`);
-          return;
-        }
-
-        await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-        return;
-      }
-
-      // Nuovo intent cancel → avvia CANCEL flow
-      if (intent === 'cancel') {
-        this.intent = 'cancel';
-        this.cancelState = null;
-        this.foundReservation = null;
-        console.log('🔄 Phase=done: nuovo intent cancel rilevato');
-        await this._handleCancelFlow(newDate, newName);
-        return;
-      }
-
-      // Nuovo intent create → reset e riparte
-      if (intent === 'create') {
-        // Guard anti-duplicato: se GPT ha estratto gli stessi dati dell'ultima prenotazione
-        // confermata (es. dopo "grazie" ricorda il contesto), NON fare reset.
-        // Si tratta di cortesia post-prenotazione, non di una nuova richiesta.
-        const lr = this.lastReservation;
-        if (lr && newDate === lr.date && newTime === lr.time &&
-            String(newPeople) === String(lr.people) && newName === lr.name) {
-          // Se la prenotazione è PENDING, lo diciamo esplicitamente al cliente
-          if (lr.status === 'PENDING_OWNER') {
-            console.log('⏳ Phase=done: prenotazione PENDING_OWNER → informo cliente');
-            this._say('La tua prenotazione è in attesa di conferma dal ristorante. Ti contatteranno a breve per confermarla.');
-            return;
-          }
-          console.log('🛡️ Phase=done: create con dati identici a lastReservation → saluto senza reset');
-          // Fix: aggiorna note se rilevate PRIMA di rispondere, poi lascia GPT rispondere liberamente
-          // (prima forzava "Prego! A presto!" saltando le note e causando loop)
-          if (this.data.notes && this.data.notes !== lr.notes) {
-            const updatedNotes = this.data.notes;
-            console.log(`📝 Guard identici: nuove note rilevate, aggiorno: "${updatedNotes}"`);
-            this._callAppsScript({
-              action: 'update_reservation',
-              eventId: lr.eventId,
-              nome: lr.name,
-              data: lr.date,
-              ora: lr.time,
-              persone: lr.people,
-              telefono: lr.phone,
-              notes: updatedNotes,
-            }).then(r => {
-              console.log(`✅ Note aggiornate (guard identici): ${r?.status}`);
-              if (this.lastReservation) this.lastReservation.notes = updatedNotes;
-            }).catch(err => console.error('❌ Errore aggiornamento note (guard):', err));
-          }
-          // Controlla prima se è una domanda info — risposta deterministica
-          const _infoAnswerGuard = this._checkInfoQuestion(this.lastTranscript || '');
-          if (_infoAnswerGuard !== null) {
-            console.log('📋 Info question (guard identico) → risposta deterministica');
-            this._say(_infoAnswerGuard);
-            return;
-          }
-          // Lascia GPT rispondere liberamente alle domande post-prenotazione
-          // senza resettare il contesto
-          const _gLang = this.language || 'it';
-          const _lr = this.lastReservation;
-          const _notesInfo = _lr?.notes ? `Note salvate sulla prenotazione: "${_lr.notes}".` : 'Nessuna nota salvata.';
-          // Risposta deterministica post-prenotazione
-          const _postBookingInfo = this._checkInfoQuestion(this.lastTranscript || '');
-          if (_postBookingInfo) {
-            this._say(_postBookingInfo);
-          } else if (this._noteCheck && this.lastReservation?.notes) {
-            this._say(`Sì, ho annotato: ${this._notesForClient(this.lastReservation.notes)}.`);
-          } else {
-            this._say('C\'è altro che posso fare per lei?');
-          }
-        }
-
-        // STEP 2: Post-confirm correction patching (GPT suggestion)
-        // NON resettare mai per una correzione — è un "state patch"
-        const _lrFix = this.lastReservation;
-
-        // Caso A: solo nome fornito (no data/ora/persone) → correzione nome post-conferma
-        // es: "Il mio nome è Franceschini" dopo che è stato confermato "Franceschi"
-        // USA eventId direttamente — non cercare per nome (evita ricerca inutile e lenta)
-        if (_lrFix?.eventId && newName && newName !== _lrFix.name &&
-            !newDate && !newTime && !newPeople) {
-          console.log(`🔄 Phase=done: correzione nome (${_lrFix.name} → ${newName}) → aggiorno direttamente`);
-          this._say(`Un attimo, aggiorno il nome in ${newName}...`);
-          try {
-            const upd = await this._callAppsScript({
-              action: 'update_reservation',
-              eventId: _lrFix.eventId,
-              nome: newName,
-              data: _lrFix.date,
-              ora: _lrFix.time,
-              persone: _lrFix.people,
-              telefono: _lrFix.phone || this.callerPhone || '',
-              notes: _lrFix.notes || '',
-            });
-            if (upd?.success !== false) {
-              this.lastReservation = { ..._lrFix, name: newName };
-              this._say(`Perfetto ${newName}! Ho aggiornato il nome sulla prenotazione.`);
-            } else {
-              this._say(`Mi dispiace, non sono riuscita ad aggiornare il nome. La prenotazione rimane a nome ${_lrFix.name}.`);
-            }
-          } catch (err) {
-            console.error('❌ Correzione nome post-confirm:', err);
-            this._say(`Perfetto ${newName}! La prenotazione è aggiornata.`);
-          }
-          return;
-        }
-
-        // Caso B: stessi dati ma nome diverso → MODIFY nome
-        // es: "Mi chiamo Russo, non Rossi" con tutti i dati presenti
-        if (_lrFix?.eventId && newName && newName !== _lrFix.name &&
-            newDate === _lrFix.date && newTime === _lrFix.time &&
-            String(newPeople) === String(_lrFix.people)) {
-          console.log(`🔄 Phase=done CREATE: solo nome cambiato (${_lrFix.name} → ${newName}) → MODIFY nome`);
-          await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-          return;
-        }
-
-        // GUARD: se non c'è nessun dato prenotazione estratto (no data/ora/persone)
-        // è quasi certamente una domanda o follow-up, non una nuova prenotazione
-        const _hasBookingData = newDate || newTime || newPeople;
-        if (!_hasBookingData) {
-          console.log('💬 Phase=done: intent create senza dati → probabile domanda/follow-up');
-
-          const _t = this.lastTranscript || '';
-          // Distingui: richiamo alle NOTE della prenotazione vs domanda sul RISTORANTE.
-          // "avete SEGNATO il seggiolone?" → nota loro prenotazione
-          // "avete il seggiolone?"          → il locale ce l'ha? (info ristorante)
-          const _isNoteRecall = /(?:segnato|annotato|annotata|registrat|risulta|nelle?\s+not|sulle?\s+not|\bla\s+not|ancora\s+(?:segnat|annotat))/i.test(_t);
-          if (!_isNoteRecall) {
-            // 1) Risposta deterministica da restaurantInfo (seggiolone, menu, orari, ecc.)
-            const _infoAns = this._checkInfoQuestion(_t);
-            if (_infoAns !== null) {
-              console.log('📋 Phase=done no-data: domanda info ristorante → risposta deterministica');
-              this._say(_infoAns);
-              return;
-            }
-            // 2) Fallback GPT su restaurantInfo per fraseggi non coperti dai pattern
-            if (this._isInformationalQuery(_t) && this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
-              const _handled = await this._handleInfoQuery(_t);
-              if (_handled) return;
-            }
-          }
-
-          // STEP 3 (GPT): Topic memory — se l'ultimo topic era 'notes' e la frase è
-          // breve/interrogativa, è un follow-up sulle note senza ripetere le keyword
-          const _wordCount3 = (this.lastTranscript || '').trim().split(/\s+/).length;
-          const _isFollowUp = _wordCount3 <= 8 && /\?|avete|c'è|posso|si può|ok|bene|sì|certo|capito/i.test(this.lastTranscript || '');
-          // STEP 3: topic memory — ma NON se è un congedo
-          const _isCongedoInFollowUp = /\b(?:grazie|arrivederci|buona\s+(?:giornata|serata)|ciao|a\s+presto)\b/i.test(this.lastTranscript || '');
-          if (this._lastTopic === 'notes' && this.lastReservation?.notes && _isFollowUp && !_isCongedoInFollowUp) {
-            const _notesClean = this._notesForClient(this.lastReservation.notes);
-            console.log('💬 STEP 3: follow-up su notes (topic memory)');
-            this._say(`Sì, ho già annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
-            return;
-          }
-
-          // Controlla keyword note esplicite nel transcript
-          const _noteKeywords = /(seggiolone|allergi|celiaco|vegano|vegetar|carrozzin|disabil|lattosio|glutine|intolleranz)/i;
-          if (this.lastReservation?.notes && _noteKeywords.test(this.lastTranscript || '')) {
-            const _notesClean = this._notesForClient(this.lastReservation.notes);
-            this._lastTopic = 'notes';
-            this._say(`Sì, ho già annotato sulla sua prenotazione: ${_notesClean}. C'è altro che posso fare per lei?`);
-            return;
-          }
-
-          // Domanda generica sul locale — rimanda al ristorante
-          this._say('Per informazioni sul locale la invito a contattare direttamente il ristorante. Posso aiutarla con altro?');
-          return;
-        }
-
-        this.intent = 'create';
-        this.phase = 'collecting';
-        this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
-        this.modifyState = null;
-        this.cancelState = null;
-        this.foundReservation = null;
-        this.checkingSlot = false;
-        this.availDone = false;
-        this._pendingQuestion = null;
-        console.log('🔄 Phase=done: nuovo intent create — reset e riparto');
-        await this._processExtraction(args);
-        return;
-      }
-
-      // Intent unknown (saluti, ringraziamenti, note aggiuntive, "posso aiutarti con altro?")
-
-      // Fix A: controlla unclear PRIMA di tutto — anche in phase=done
-      if (args.unclear === true || args.unclear === 'true') {
-        console.log('🔁 Phase=done: frase incomprensibile → chiedo di ripetere');
-        this._say('Non ho capito bene, può ripetere?');
-        return;
-      }
-
-      console.log('💬 Phase=done: intent unknown — risposta cortese');
-
-      // Se ci sono nuove note rilevate dalla trascrizione e abbiamo lastReservation, aggiorna
-      // (es: "siamo celiaci" dopo la prenotazione confermata)
-      // La rilevazione note avviene in _detectNotesAndPhone via Whisper transcript
-      // Il controllo lo facciamo qui: se this.data.notes è cambiato rispetto a lastReservation
-      if (this.lastReservation?.eventId && this.data.notes &&
-          this.data.notes !== this.lastReservation.notes) {
-        const updatedNotes = this.data.notes;
-        console.log(`📝 Phase=done: nuove note rilevate, aggiorno lastReservation: "${updatedNotes}"`);
-        this._callAppsScript({
-          action: 'update_reservation',
-          eventId: this.lastReservation.eventId,
-          nome: this.lastReservation.name,
-          data: this.lastReservation.date,
-          ora: this.lastReservation.time,
-          persone: this.lastReservation.people,
-          telefono: this.lastReservation.phone,
-          notes: updatedNotes,
-        }).then(r => {
-          console.log(`✅ Note aggiornate su prenotazione: ${r?.status}`);
-          if (this.lastReservation) this.lastReservation.notes = updatedNotes;
-        }).catch(err => console.error('❌ Errore aggiornamento note:', err));
-      }
-      // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
-      // ricordagli che la prenotazione originale è ancora attiva prima di congedarsi.
-      // Evita che riattacchi convinto che la modifica sia andata a buon fine.
-      const _modifyReminderRes = this.foundReservation || this.lastReservation;
-      if (this.intent === 'modify' && this.modifyState !== 'done' && _modifyReminderRes?.eventId) {
-        const r = _modifyReminderRes;
-        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-        const dateDisplay = DateManager.formatForDisplay(r.date);
-        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-        console.log(`ℹ️ Phase=done MODIFY incomplete: ricorda prenotazione originale (${r.name}, ${r.date})`);
-        this._say(`La sua prenotazione originale per ${r.people} persone ${dateDisplay} alle ${timeDisplay} è ancora attiva. Vuole mantenerla o cancellarla?`);
-        return;
-      }
-
-      // FIX 3: domande informative sul locale (seggiolone, menu, ecc.) → _handleInfoQuery
-      // GUARD: se è una domanda sulle NOTE della prenotazione → vai direttamente al note recall
-      // Salta sia _handleInfoQuery che _checkInfoQuestion per evitare "Per informazioni sul locale"
-      const _isNoteRecallQ = /\b(?:segnato|annotato|segnalato|ancora\s+segnata?|ancora\s+annotata?|ancora\s+assegnata?|hai\s+segnato|avete\s+segnato|l'avete|l'hai|avete\s+ancora\s+(?:la|il|i|le)\s+\w)/i.test(this.lastTranscript || '');
-
-      // GPT risponde sia a domande sulle note della prenotazione che sul ristorante
-      // Usa contesto completo: menuDetails + note prenotazione corrente
-      if ((this._isInformationalQuery(this.lastTranscript || '') || _isNoteRecallQ) &&
-          this._restaurantInfo && Object.keys(this._restaurantInfo).length > 0) {
-        const _handled = await this._handleInfoQuery(this.lastTranscript || '');
-        if (_handled) return;
-      }
-
-      // Controlla prima se è una domanda info — risposta deterministica
-      const _infoAnswerDone = this._checkInfoQuestion(this.lastTranscript || '');
-      if (_infoAnswerDone !== null) {
-        console.log('📋 Info question (phase=done) → risposta deterministica');
-        this._say(_infoAnswerDone);
-        return;
-      }
-      const _lang = this.language || 'it';
-      const _lrNotes = this.lastReservation?.notes;
-      const _notesCtx = _lrNotes ? `Note salvate sulla prenotazione: "${_lrNotes}".` : '';
-      // Risposta deterministica post-operazione
-      const _postOpInfo = this._checkInfoQuestion(this.lastTranscript || '');
-      if (_postOpInfo) {
-        this._say(_postOpInfo);
-      } else if (this.lastReservation?.notes && /nota|segnato|annotato|allergi/i.test(this.lastTranscript || '')) {
-        this._say(`Sì, ho annotato: ${this._notesForClient(this.lastReservation.notes)}.`);
-      } else {
-        this._say('C\'è altro che posso fare per lei?');
-      }
-    }
-
-    // ── Intent ───────────────────────────────────────────────────────────────
-    // STEP 1 (GPT): Intent lock — flow state > transcript intent
-    // Quando siamo in un flow guidato (modify/cancel attivo), l'intent GPT
-    // NON deve mai resettare lo stato. L'utente sta rispondendo alla nostra domanda.
-    const _modifyActive = this.intent === 'modify' && this.modifyState && this.modifyState !== 'done';
-    const _cancelActive = this.intent === 'cancel' && this.cancelState;
-
-    if (_modifyActive || _cancelActive) {
-      // Solo cancel esplicito può uscire dal modify flow
-      const _explicitCancel = /\b(?:cancell|disdic|annull|voglio cancellare)\b/i.test(this.lastTranscript || '');
-      if (!_explicitCancel) {
-        this.intentLocked = true;
-        if (args.intent !== this.intent) {
-          console.log(`🔒 Intent locked: GPT dice "${args.intent}" ma siamo in ${this.intent}/${this.modifyState || this.cancelState} — ignoro`);
-          args.intent = this.intent;
-        }
-      } else {
-        this.intentLocked = false;
-      }
-    } else {
-      this.intentLocked = false;
-    }
-
-    // Override locale: frasi implicite di cancellazione che GPT classifica come modify/create
-    const _impliedCancelPat = /non\s+(?:riusciamo|possiamo|riesco|posso|vengo|veniamo)\s+(?:più\s+)?(?:a\s+)?venire|non\s+(?:ci|vi)\s+saremo|abbiamo\s+(?:avuto\s+)?un\s+imprevisto|dobbiamo\s+(?:purtroppo\s+)?(?:cancellare|disdire|annullare)|\b(?:voglio|vorrei|devo|posso|vorremmo)\s+(?:cancellar|disdir|annullar)\w*|\b(?:cancellar|disdir|annullar)\w*\s+(?:la\s+|questa\s+|mia\s+)*prenotazion|(?<!(?:il|lo|un|del|dal|al|sul)\s)\b(?:cancello|disdico|annullo|cancelliamo|disdiciamo|annulliamo)\b/i;
-    if (!this.intentLocked && this.lastTranscript && _impliedCancelPat.test(this.lastTranscript)) {
-      if (args.intent !== 'cancel') {
-        console.log(`🎯 Intent override: ${args.intent} → cancel (frase implicita cancellazione)`);
-        args.intent = 'cancel';
-      }
-    }
-
-    if (!this.intent && args.intent && args.intent !== 'unknown') {
-      this.intent = args.intent;
-      console.log(`🎯 Intent (GPT): ${this.intent}`);
-    }
-
-    const prevDate = this.data.date;
-    const prevTime = this.data.time;
-
-    // Se intent=unknown, lascia rispondere GPT con i dati reali iniettati esplicitamente
-    if (!args.intent || args.intent === 'unknown') {
-
-      // Se GPT ha segnalato che la frase era incomprensibile → chiedi di ripetere
-      if (args.unclear === true || args.unclear === 'true') {
-        console.log('🔁 Frase incomprensibile rilevata da GPT → chiedo di ripetere');
-        this._say('Non ho capito bene, può ripetere?');
-        return;
-      }
-
-      console.log('💬 Intent unknown — GPT risponde liberamente con dati reali');
-
-      // Fix: controlla PRIMA se è una domanda info ristorante — risposta deterministica
-      // Questo ha priorità anche sul reminder MODIFY, per evitare che il reminder
-      // soffochi domande legittime come "avete piatti vegani?"
-      const _skipInfoCheck = (this.phase === 'collecting' && newName && newName !== 'null');
-      if (!_skipInfoCheck) {
-        const _infoAnswer = this._checkInfoQuestion(this.lastTranscript || '');
-        if (_infoAnswer !== null) {
-          console.log(`📋 Info question rilevata → risposta deterministica`);
-          this._say(_infoAnswer);
-          return;
-        }
-      }
-
-      // Fix: se il cliente saluta dopo un MODIFY fallito (slot_full),
-      // ricordagli che la prenotazione originale è ancora attiva.
-      const _modifyReminderRes2 = this.foundReservation || this.lastReservation;
-      if (this.intent === 'modify' && _modifyReminderRes2?.eventId) {
-        const r = _modifyReminderRes2;
-        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-        const dateDisplay = DateManager.formatForDisplay(r.date);
-        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-        console.log(`ℹ️ Intent-unknown MODIFY incomplete: ricorda prenotazione originale (${r.name}, ${r.date})`);
-        this._say(`La sua prenotazione originale per ${r.people} persone ${dateDisplay} alle ${timeDisplay} è ancora attiva. Vuole mantenerla o cancellarla?`);
-        return;
-      } else {
-        // Fix M07: se intent=unknown + nome presente in phase=collecting,
-        // e NON abbiamo ancora nessun dato di prenotazione raccolto (no data/ora/pax),
-        // il cliente probabilmente ha già una prenotazione → cerca automaticamente.
-        // Se invece abbiamo già dei dati (siamo a metà del flusso CREATE), lascia GPT rispondere.
-        const _noDataYet = !this.data.date && !this.data.time && !this.data.people;
-        if (_noDataYet && newName && newName !== 'null') {
-          console.log(`📋 Fix M07: intent=unknown + nome=${newName} senza dati → cerco prenotazione automaticamente`);
-          this.intent = 'modify';
-          this.modifyState = null;
-          this.foundReservation = null;
-          await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-          return;
-        } else {
-          console.log(`📋 Info question skippata: fase collecting con nome=${newName} e dati parziali → lascio GPT rispondere`);
-        }
-      }
-
-      const rc = this.restaurantConfig;
-      const ls = rc?.lunch_start  || '12:00';
-      const le = rc?.lunch_end    || '14:30';
-      const ds = rc?.dinner_start || '19:00';
-      const de = rc?.dinner_end   || '22:30';
-      const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-      const closedDays = rc?.closed_days ? String(rc.closed_days).split(',').map(Number) : [1];
-      const lunchClosedDays = rc?.lunch_closed_days ? String(rc.lunch_closed_days).split(',').map(Number) : [];
-      const dinnerClosedDays = rc?.dinner_closed_days ? String(rc.dinner_closed_days).split(',').map(Number) : [];
-      const allDays = [0,1,2,3,4,5,6];
-      const openForLunch = allDays.filter(d => !closedDays.includes(d) && !lunchClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
-      const openForDinner = allDays.filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
-      const closedText = closedDays.map(d => dayNames[d]).join(', ');
-
-      const _langFree = this.language || 'it';
-      const _scheduleData = `Lunch ${ls}-${le}: open ${openForLunch || 'no days'} / Dinner ${ds}-${de}: open ${openForDinner || 'no days'} / Closed: ${closedText}`;
-      // Risposta deterministica orari
-      const _orariRisp = `Pranzo ${ls}-${le} (${openForLunch || 'nessun giorno'}), cena ${ds}-${de} (${openForDinner || 'nessun giorno'}). Chiuso il: ${closedText}.`;
-      this._say(_orariRisp);
-      return;
-    }
-
-    // 🆕 Intent-switch create→modify in phase=collecting
-    // Es: utente dice "ho una prenotazione, vorrei modificarla" → GPT dice modify ma this.intent='create'
-    if (this.intent === 'create' && this.phase === 'collecting' && args.intent === 'modify') {
-      // Fix B1: se il cliente ha già dato tutti i dati di prenotazione (date+time+people),
-      // GPT dice modify solo perché sta correggendo un campo → NON avviare MODIFY flow,
-      // semplicemente aggiornare i dati e restare in CREATE.
-      // Il MODIFY flow ha senso solo se il cliente non ha ancora dati raccolti.
-      // _anyDataCollected: se il cliente ha già dato ALMENO UN dato in questa sessione,
-      // GPT sta interpretando una correzione come modify → resta in CREATE.
-      // Se invece non c'è nessun dato (nuova chiamata), il MODIFY flow è legittimo.
-      const _anyDataCollected = this.data.date || this.data.name || this.data.people || this.data.time;
-      if (_anyDataCollected) {
-        console.log(`🔄 Intent-switch collecting: create → modify IGNORATO (dati già presenti, è correzione CREATE)`);
-        // Fix B2: reset foundReservation residuo da MODIFY fallback
-        this.foundReservation = null;
-        // Rientra in _processExtraction con intent=create corretto
-        // così il flow normale (validazione orario, check slot, ecc.) viene eseguito
-        await this._processExtraction({ ...args, intent: 'create' });
-        return;
-      }
-      console.log(`🔄 Intent-switch collecting: create → modify, avvio MODIFY flow`);
-      this.intent = 'modify';
-      this.modifyState = null;
-      this.foundReservation = null;  // Fix B2: reset esplicito
-      await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-      return;
-    }
-
-    // 🆕 Guard intent-switch: se GPT dice create ma siamo in modify/cancel,
-    // l'utente sta correggendo l'intenzione → reset completo e riparte da CREATE.
-    const inModifyOrCancel = (this.intent === 'modify' || this.intent === 'cancel');
-    const gptSaysCreate = (args.intent === 'create');
-    if (inModifyOrCancel && gptSaysCreate && (newDate || newTime || newPeople)) {
-      console.log(`🔄 Intent-switch rilevato: ${this.intent} → create, reset`);
-      this.intent = 'create';
-      this.phase = 'collecting';
-      this.data = { date: null, time: null, people: null, name: null, notes: null, alternativePhone: null };
-      this.modifyState = null;
-      this.cancelState = null;
-      this.foundReservation = null;
-      this.checkingSlot = false;
-      this.availDone = false;
-      this.lastTranscript = null; // 🆕 evita che il cross-check parsePeople giri sul transcript precedente
-      await this._processExtraction(args);
-      return;
-    }
-
-    // ── MODIFY flow ──────────────────────────────────────────────────────────
-    if (this.intent === 'modify') {
-      // Intent-switch guard: se GPT dice 'cancel' durante MODIFY, passa subito al CANCEL flow
-      // senza entrare in _handleModifyFlow (che farebbe check disponibilità invece di cancellare)
-      if (args.intent === 'cancel') {
-        console.log('🔄 Intent-switch MODIFY → cancel rilevato fuori phase=done');
-        this.intent = 'cancel';
-        // Se abbiamo già la prenotazione trovata (es. MODIFY slot_full), vai diretto alla conferma
-        if (this.foundReservation?.eventId) {
-          const r = this.foundReservation;
-          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-          const dateDisplay = DateManager.formatForDisplay(r.date);
-          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          this.cancelState = 'awaiting_confirm';
-          console.log(`🗑️ CANCEL diretto su foundReservation: ${r.name}, ${r.date}`);
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
-        } else {
-          this.cancelState = null;
-          this.foundReservation = null;
-          await this._handleCancelFlow(newDate, newName);
-        }
-        return;
-      }
-      await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-      return;
-    }
-
-    // ── CANCEL flow ──────────────────────────────────────────────────────────
-    if (this.intent === 'cancel') {
-      // Fix X04: intent-switch cancel→modify — cliente cambia idea durante CANCEL
-      // (es: "No anzi la sposto a sabato"). Riutilizza foundReservation già trovata.
-      // Condizione tripla: siamo in cancel + GPT dice modify + prenotazione già trovata
-      if (args.intent === 'modify' && this.foundReservation?.eventId) {
-        console.log(`🔄 Intent-switch CANCEL → modify: uso foundReservation (${this.foundReservation.name}, ${this.foundReservation.date})`);
-        this.intent = 'modify';
-        this.cancelState = null;
-        this.modifyState = 'awaiting_changes';
-        await this._handleModifyFlow(newDate, newTime, newPeople, newName);
-        return;
-      }
-      // confirm phase gestita in _onTurnReady via _handleCancelConfirmText
-      if (this.cancelState !== 'awaiting_confirm') {
-        await this._handleCancelFlow(newDate, newName);
-      }
-      return;
-    }
-
-    // STEP 5: usa _applyExtraction() come unico punto di mutazione stato
-    this._applyExtraction({
-      date:   newDate,
-      time:   newTime,
-      people: newPeople ? String(newPeople) : null,
-      name:   newName,
-    });
-
-    console.log(`📊 date=${this.data.date} time=${this.data.time} people=${this.data.people} name=${this.data.name}`);
-
-    // ── Fase naming: se siamo già in naming basta il nome ────────────────────
-    if (this.phase === 'naming') {
-      this._processNaming(this.data.name ? '__name_already_set__' : (newName || ''));
-      return;
-    }
-
-    // ── Fase collecting ──────────────────────────────────────────────────────
-
-    // ① Check giorno chiuso
-    if (this.data.date && this.data.date !== prevDate) {
-      const msg = ValidationPipeline.getDayClosedMessage(this.data.date, rc);
-      if (msg) {
-        console.log(`🚫 Giorno chiuso: ${this.data.date}`);
-        this.data.date = null;
-        this._say(msg);
-        return;
-      }
-    }
-
-    // ② Check orario valido + pranzo/cena chiuso
-    // Triggera quando time OPPURE date cambia (es: stesso orario, giorno diverso)
-    if (this.data.date && this.data.time &&
-        (this.data.time !== prevTime || this.data.date !== prevDate)) {
-      if (!ValidationPipeline.isValidTime(this.data.time, rc)) {
-        const msg = ValidationPipeline.getTimeInvalidMessage(this.data.time, this.data.date, rc);
-        console.log(`🚫 Orario non valido: ${this.data.time}`);
-        this.data.time = null;
-        this._say(msg);
-        // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-        return;
-      }
-
-      // ③ Check pranzo/cena chiuso
-      const [h] = this.data.time.split(':').map(Number);
-      const isPranzo = h >= 10 && h <= 16;
-      if (isPranzo && ValidationPipeline.isLunchClosed(this.data.date, rc)) {
-        const dayName = DateManager.getDayName(this.data.date);
-        const ds = rc?.dinner_start || '21:00';
-        const de = rc?.dinner_end   || '22:30';
-        this.data.time = null;
-        this._say(`Il ${dayName} siamo aperti solo a cena (${ds}-${de}). Vuole prenotare per cena?`);
-        return;
-      }
-      const isCena = h >= 17 || h <= 3;
-      if (isCena && ValidationPipeline.isDinnerClosed(this.data.date, rc)) {
-        const dayName = DateManager.getDayName(this.data.date);
-        const ls = rc?.lunch_start || '12:00';
-        const le = rc?.lunch_end   || '14:30';
-        this.data.time = null;
-        this._say(`Il ${dayName} siamo aperti solo a pranzo (${ls}-${le}). Vuole prenotare per pranzo?`);
-        return;
-      }
-    }
-
-    // ④ Tutti e 3 → check slot
-    if (this.data.date && this.data.time && this.data.people && !this.checkingSlot) {
-      await this._checkSlot();
-      return;
-    }
-
-    // Chiedi dato mancante
-    if (!this.data.date)   { this._ask('date');   }
-    else if (!this.data.time)   { this._ask('time');   }
-    else if (!this.data.people) { this._ask('people'); }
-  }
-
-  // ── Note e Telefono Alternativo ───────────────────────────────────────────
-
-  // ── GPT note extractor — label nota da contesto (sostituisce contextCapture) ──
-  // Pattern GPT: note semantiche → GPT, entity strutturate → parser
-  // Chiamata leggera: solo il label della nota, max 6 parole
-  async _extractNoteWithGPT(text, category) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 1500);
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 15,
-          messages: [{
-            role: 'system',
-            content: `Estrai la nota specifica dalla frase per la categoria "${category}". Rispondi SOLO con il label della nota, max 4 parole in italiano, nessun altro testo. Esempi: "anniversario di matrimonio" → "Anniversario matrimonio". "sono allergico alle uova" → "Allergia uova". "mia moglie è celiaca" → "Celiachia (moglie)". "compleanno di mia figlia" → "Compleanno figlia".`
-          }, {
-            role: 'user', content: text
-          }]
-        })
-      });
-      clearTimeout(timeout);
-      const data = await response.json();
-      const label = data?.choices?.[0]?.message?.content?.trim();
-      return label && label.length < 50 ? label : null;
-    } catch (err) {
-      return null;
-    }
-  }
-
-  async _detectNotesAndPhone(text) {
-    // Ritorna true se ha già gestito la risposta (update_notes post-confirm)
-    // Il caller deve fare return immediatamente in quel caso
-    const t = text.toLowerCase();
-
-    // ── Keyword note ─────────────────────────────────────────────────────────
-    // 🆕 FIX 4: campo `removes` per gestire note confliggenti (es. interno vs esterno)
-    // NOTE: pattern = trigger strutturale (dice che c'è qualcosa da annotare)
-    // note = fallback label se GPT non è disponibile o per note non-semantiche
-    // gptCategory = hint per GPT su che tipo di nota estrarre
-    // NO più contextCapture regex — label semantico estratto da GPT
-    const noteKeywords = [
-      // Allergie e intolleranze — GPT estrae l'allergene specifico
-      { pattern: /celiac[oai]|ciliac[oai]|senza\s+glutine|intolleranz[ae]\s+glutine/i,
-        note: 'Intolleranza glutine', gptCategory: 'intolleranza/celiachia' },
-      { pattern: /lattosio|lactose/i,
-        note: 'Intolleranza lattosio', gptCategory: 'intolleranza lattosio' },
-      // Allergia generica: scatta SOLO se non ci sono allergeni specifici già coperti
-      // Negazione: arachidi/uova/frutta secca/glutine hanno pattern dedicati → skip generico
-      { pattern: /allergi[aoci]/i,
-        note: 'Allergia (verifica con cliente)', gptCategory: 'allergia alimentare',
-        negation: /arachidi|arachide|frutta\s*secca|noci|\buov[ao]\b|lattosio|glutine|celiaco/i },
-      { pattern: /\buova\b|\buovo\b/i,
-        note: 'Allergia uova', gptCategory: 'allergia uova' },
-      { pattern: /arachidi|arachide|frutta\s*secca|noci/i,
-        note: 'Allergia arachidi/frutta secca', gptCategory: 'allergia arachidi o frutta secca' },
-      // Dieta — GPT può specificare "vegano (1 persona)", "vegetariana (moglie)" ecc.
-      { pattern: /vegetarian[oai]/i,
-        note: 'Vegetariano', gptCategory: 'dieta vegetariana' },
-      { pattern: /vegan[oai]/i,
-        note: 'Vegano', gptCategory: 'dieta vegana' },
-      // Bambini (label già preciso, GPT non aggiunge valore)
-      { pattern: /seggiol[eo]n[eo]|seggiolino|seggialone|seggilon[ei]|seggialino|highchair/i,
-        note: 'Richiesto seggiolone' },
-      { pattern: /bambino\s*piccolo|neonat[oi]|bimb[oi]\s*piccol/i,
-        note: 'Neonato/bambino piccolo' },
-      // Occasioni — GPT estrae contesto preciso (matrimonio, moglie, ecc.)
-      { pattern: /anniversario/i,
-        note: 'Anniversario', gptCategory: 'anniversario' },
-      { pattern: /compleanno|birthday/i,
-        note: 'Compleanno', gptCategory: 'compleanno' },
-      { pattern: /propost[ae]\s*di\s*matrimonio|fidanzamento/i,
-        note: 'Proposta di matrimonio' },
-      { pattern: /occasion[ei]\s*speciale/i,
-        note: 'Occasione speciale', gptCategory: 'occasione speciale' },
-      { pattern: /romantico|romantica/i,
-        note: 'Cena romantica' },
-      { pattern: /finestra|vista/i,
-        note: 'Tavolo vicino finestra' },
-      // Tavolo — label deterministico, no GPT
-      { pattern: /esterno|terrazza|giardino|dehor|\bfuori\b|all.aperto/i,
-        note: 'Tavolo esterno/terrazza',
-        negation: /\ball.interno\b|prefer[ei].{0,20}intern|non.{0,20}esterno|starei.{0,10}intern|\bdentro\b/i },
-      { pattern: /\binterno\b|\bdentro\b|preferis[ce].{0,20}intern|star[ei].{0,10}dentro|vorrei.{0,10}dentro/i,
-        note: 'Tavolo interno', removes: 'Tavolo esterno/terrazza' },
-      { pattern: /sedia\s*a\s*rotelle|disabil|carrozzin/i,
-        note: 'Accessibilità disabili' },
-      { pattern: /tranquill[oa]|riservat[oa]/i,
-        note: 'Tavolo tranquillo/riservato' },
-    ];
-
-    // 🆕 FIX 3B: se il cliente sta CHIEDENDO di note già esistenti → non rilevare note
-    // Distingue "sono celiaco" (dichiarazione) da "avete segnato la celiachia?" (domanda)
-    const _isNoteQuestion = /(?:\bmi\s+ha\b|\bm['']ha\b|\bha\b|\bhai\b|\bavete\b|\bavevate\b|\baveva\b|\bavevi\b|\bhanno\b)\s+(?:\w+\s+){0,2}(?:segnat|annotat|scritt|indicat|aggiunt|inserit|registrat)|risulta\s+(?:ancora\s+)?(?:segnat|annotat)|è\s+(?:ancora\s+)?(?:segnat|annotat)/i.test(text);
-
-    // Pattern domanda info vegan/vegetariano: "avete piatti vegani?" → NON è nota
-    const _isVeganInfoQuestion = /avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|c.è.{0,15}vegan|ci sono.{0,15}vegan|offrite.{0,15}vegan|servite.{0,15}vegan/i.test(text);
-
-    if (_isNoteQuestion) {
-      console.log(`📋 Domanda su note esistenti → skip rilevamento nota: "${text.substring(0,60)}"`);
-      // Non rilevare nuove note ma non uscire — continuiamo per il telefono alternativo
-
-      // ── Risposta diretta a "avete/ha segnato X?" quando la prenotazione è nota ──
-      // Intercetta QUI (prima del labirinto phase=done) ed evita la deflection
-      // "contatta il locale". Risponde dalle note della prenotazione che abbiamo.
-      if (this.phase === 'done' && this.lastReservation?.eventId) {
-        const _notesClean = this._notesForClient(this.lastReservation.notes || '');
-        if (_notesClean) {
-          this._say(`Sì, risulta annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
-        } else {
-          this._say(`Al momento non risulta nessuna nota particolare sulla sua prenotazione. C'è altro che posso fare per lei?`);
-        }
-        this._lastTopic = 'notes';
-        console.log(`📋 Domanda-nota in phase=done → risposta dalle note: "${_notesClean || '(nessuna)'}"`);
-        return true; // turno gestito → niente deflection
-      }
-    }
-
-    const newNotes = [];
-    if (!_isNoteQuestion) {
-      for (let kw of noteKeywords) {
-        const { pattern, negation, removes, contextCapture, contextPrefix } = kw;
-        let note = kw.note;
-        // Guard: "vegano" come domanda info non va annotato come nota
-        if (note === 'Vegano' && _isVeganInfoQuestion) {
-          console.log(`📋 Vegan rilevato come domanda info → skip nota`);
-          continue;
-        }
-        if (note === 'Vegetariano' && _isVeganInfoQuestion) {
-          console.log(`📋 Vegetariano rilevato come domanda info → skip nota`);
-          continue;
-        }
-        if (pattern.test(text)) {
-          // GPT estrae il label semantico se gptCategory è definito
-          // Questo sostituisce il contextCapture regex — scala col cambiamento del linguaggio
-          if (kw.gptCategory) {
-            const _gptLabel = await this._extractNoteWithGPT(text, kw.gptCategory);
-            if (_gptLabel) {
-              note = _gptLabel;
-              console.log(`🧠 Nota GPT: "${_gptLabel}" (categoria: ${kw.gptCategory})`);
-            }
-          }
-          // 🆕 FIX 4: controlla negazione
-          if (negation && negation.test(text)) {
-            console.log(`📋 Nota "${note}" negata nel contesto → skip`);
-            continue;
-          }
-          // 🆕 FIX 4: rimuovi nota confliggente da sessione corrente
-          if (removes) {
-            if (this.data.notes && this.data.notes.includes(removes)) {
-              this.data.notes = this.data.notes.split('; ').filter(n => n !== removes).join('; ') || null;
-            }
-            // 🆕 FIX TEST7A: segna anche per rimozione dal Calendar (note di sessioni precedenti)
-            if (!this.data.notesToRemove) this.data.notesToRemove = [];
-            if (!this.data.notesToRemove.includes(removes)) {
-              this.data.notesToRemove.push(removes);
-              console.log(`📋 Nota "${removes}" marcata per rimozione da Calendar`);
-            }
-          }
-          // Aggiungi la nota solo se non è null (es. "interno" ha note: null → serve solo per rimuovere)
-          if (note !== null) {
-            // Evita duplicati
-            if (!this.data.notes || !this.data.notes.includes(note)) {
-              newNotes.push(note);
-              console.log(`📝 Nota rilevata: "${note}"`);
-            this._lastTopic = 'notes'; // STEP 3: topic memory
-            }
-          }
-        }
-      }
-    }
-
-    // ── Telefono alternativo → NOTA ───────────────────────────────────────────
-    // Decisione di prodotto: il numero alternativo dettato a voce ("contattatemi
-    // al 333…") si salva come NOTA. Spingendolo in `newNotes` sfrutta la stessa
-    // pipeline (dedup + conferma vocale + push update_notes su Calendar in
-    // phase=done). Richiede parola-contesto + 8-16 cifre → niente falsi positivi
-    // su "siamo in 4" o "alle 9".
-    {
-      const phoneMatch = text.match(/(?:numero|telefono|cell(?:ulare)?|phone|contatt|chiama).*?(\+?\d[\d\s\-]{6,14}\d)/i);
-      if (phoneMatch && !(this.data.notes && this.data.notes.includes('Tel. alternativo'))
-          && !newNotes.some(n => n.startsWith('Tel. alternativo'))) {
-        const phoneNumber = phoneMatch[1].replace(/[\s\-]/g, '');
-        this.data.alternativePhone = phoneNumber;
-        newNotes.push(`Tel. alternativo: ${phoneNumber}`);
-        console.log(`📞 Telefono alternativo → nota: "${phoneNumber}"`);
-        this._lastTopic = 'notes';
-      }
-    }
-
-    if (newNotes.length > 0) {
-      const toAdd = newNotes.join('; ');
-      this.data.notes = this.data.notes
-        ? `${this.data.notes}; ${toAdd}`
-        : toAdd;
-
-      // STEP 2 (GPT): Note post-conferma — update_notes + conferma vocale + return immediato
-      // Successful mutation deve short-circuitare il flow (GPT raccomandazione)
-      if (this.phase === 'done' && this.lastReservation?.eventId) {
-        const _evId = this.lastReservation.eventId;
-        const _notes = this.data.notes;
-        this.lastReservation.notes = _notes;
-        const _notesClean = this._notesForClient(_notes);
-        console.log(`📝 Note post-conferma → update_notes su Calendar: "${_notes}"`);
-        this._callAppsScript({ action: 'update_notes', eventId: _evId, notes: _notes })
-          .then(r => console.log(`📝 update_notes: ${r?.success ? 'OK' : 'FAIL'}`))
-          .catch(e => console.error('❌ update_notes error:', e));
-        // Short-circuit: conferma vocale — ritorna true per segnalare al caller
-        this._lastTopic = 'notes';
-        if (_notesClean) {
-          this._say(`Ho annotato: ${_notesClean}. C'è altro che posso fare per lei?`);
-        } else {
-          this._say("Ho aggiornato le note sulla sua prenotazione. C'è altro che posso fare?");
-        }
-        return true; // segnala al caller che ha già risposto
-      }
-    }
-    return false; // nessuna gestione speciale
-  }
-
-  // ── Core Logic Engine ─────────────────────────────────────────────────────
-
-  _processNaming(text) {
-    const rc = this.restaurantConfig;
-
-    // Se il nome è già stato settato da GPT, conferma direttamente
-    if (text === '__name_already_set__' && this.data.name) {
-      console.log(`👤 Nome (GPT): ${this.data.name}`);
-      this._confirmReservation();
-      return;
-    }
-
-    // ── Controlla se l'utente sta correggendo i dati prima di dare il nome ──
-    // ── Controlla correzioni dati in fase naming ──────────────────────────────
-    // Anche senza parole trigger esplicite, se il cliente menziona dati diversi
-    // da quelli già raccolti, trattiamo come correzione
-    {
-      let changed = false;
-
-      const newPeople = PeopleManager.parseFromText(
-        text.replace(/\bnon\s+(?:in\s+)?\w+/gi, '')
-      );
-      const newTime   = TimeManager.parseFromText(text);
-
-      // Per la data: rimuovi contesto negativo ("non per sabato") prima di parsare
-      const textForDate = text.replace(/\bnon\s+per\s+\w+/gi, '');
-      const correctedDate = DateManager.parseFromText(textForDate);
-
-      if (newPeople && newPeople !== this.data.people) {
-        console.log(`👥 Correzione persone in naming: ${this.data.people} → ${newPeople}`);
-        this.data.people = newPeople;
-        changed = true;
-      }
-      if (newTime && newTime !== this.data.time) {
-        console.log(`⏰ Correzione orario in naming: ${this.data.time} → ${newTime}`);
-        this.data.time = newTime;
-        changed = true;
-      }
-      if (correctedDate && correctedDate !== this.data.date) {
-        console.log(`📅 Correzione data in naming: ${this.data.date} → ${correctedDate}`);
-        this.data.date = correctedDate;
-        changed = true;
-      }
-
-      if (changed) {
-        // Controlla se il nome era già nella stessa frase della correzione
-        const nameInCorrection = this._extractName(text);
-        if (nameInCorrection) {
-          this.data.name = nameInCorrection;
-          console.log(`👤 Nome trovato nella correzione: ${nameInCorrection}`);
-        }
-        this.phase = 'collecting';
-        this.availDone = false;
-        this.checkingSlot = false;
-        this._checkSlot();
-        return;
-      }
-    }
-
-    // ── Estrai nome ───────────────────────────────────────────────────────────
-    const name = this._extractName(text);
-    if (name) {
-      this.data.name = name;
-      console.log(`👤 Nome: ${name}`);
-      this._confirmReservation();
-    } else {
-      this._ask('name');
-    }
-  }
-
-  // ── MODIFY flow ───────────────────────────────────────────────────────────
-
-  // Helper: ricerca a 4 stadi con priorità sicura (STEP 4 anti-regressione)
-  //
-  // Logica:
-  //   Stadio 1: nome + data      → se confidence >= 0.9 → ritorna subito
-  //                              → se fuzzy incerto → salva come candidato, continua
-  //   Stadio 2: solo nome        → idem
-  //   Stadio 3: telefono         → PRIORITY: se trovato, usa SEMPRE (batte fuzzy incerto)
-  //   Stadio 4: solo se tel fail → usa miglior fuzzy candidato raccolto (chiede conferma)
-  //
-  // Ritorna:
-  //   - reservation object                             → match certo, procedi
-  //   - { fuzzyCandidate, requiresConfirmation: true } → chiedi conferma
-  //   - null                                           → non trovato
-  async _findReservationWithFallback(searchName, searchDate, logPrefix) {
-    const phone = this.callerPhone || '';
-    const isValid = (r) => r && r.date && r.name && r.date !== 'null' && r.name !== 'null';
-
-    let bestFuzzyCandidate = null; // miglior fuzzy incerto raccolto durante la ricerca
-
-    // Stadio 1: nome + data
-    if (searchName && searchDate) {
-      console.log(`🔍 ${logPrefix} cerca: nome=${searchName}, data=${searchDate}`);
-      const r1 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, data: searchDate, sheet: 'Prenotazioni' });
-      if (r1?.found && isValid(r1.reservation)) {
-        const res = r1.reservation;
-        if (!res.requiresConfirmation) return res; // match esatto → procedi subito
-        // Fuzzy incerto → salva e continua verso telefono
-        console.log(`🔍 Fuzzy candidato (${res.fuzzyConfidence?.toFixed(2)}): ${res.name} — cerco telefono prima`);
-        if (!bestFuzzyCandidate || res.fuzzyConfidence > bestFuzzyCandidate.fuzzyConfidence) {
-          bestFuzzyCandidate = res;
-        }
-      }
-    }
-
-    // Stadio 2: solo nome
-    if (searchName) {
-      console.log(`🔍 ${logPrefix} fallback: solo nome=${searchName}`);
-      const r2 = await this._callAppsScript({ action: 'find_reservation', nome: searchName, sheet: 'Prenotazioni' });
-      if (r2?.found && isValid(r2.reservation)) {
-        const res = r2.reservation;
-        if (!res.requiresConfirmation) return res;
-        console.log(`🔍 Fuzzy candidato (${res.fuzzyConfidence?.toFixed(2)}): ${res.name} — cerco telefono prima`);
-        if (!bestFuzzyCandidate || res.fuzzyConfidence > bestFuzzyCandidate.fuzzyConfidence) {
-          bestFuzzyCandidate = res;
-        }
-      }
-    }
-
-    // Stadio 3: telefono — PRIORITY, batte sempre il fuzzy incerto
-    // Comportamento identico a prima del STEP 4 — nessuna regressione possibile
-    if (phone) {
-      console.log(`🔍 ${logPrefix} fallback telefono: ${phone}`);
-      const r3 = await this._callAppsScript({ action: 'find_reservation', telefono: phone, sheet: 'Prenotazioni' });
-      if (r3?.found && isValid(r3.reservation)) {
-        console.log(`✅ ${logPrefix} trovato per telefono → priorità su fuzzy`);
-        return r3.reservation; // telefono vince sempre
-      }
-    }
-
-    // Stadio 4: nessun match esatto né telefono — usa miglior fuzzy candidato
-    if (bestFuzzyCandidate) {
-      console.log(`🔍 Stadio 4: uso fuzzy candidato (${bestFuzzyCandidate.fuzzyConfidence?.toFixed(2)}): ${bestFuzzyCandidate.name}`);
-      return { fuzzyCandidate: bestFuzzyCandidate, requiresConfirmation: true };
-    }
-
-    return null;
-  }
-
-  async _handleModifyFlow(newDate, newTime, newPeople, newName) {
-    // ══ NUOVO MODIFY ENGINE ════════════════════════════════════════════════════
-    // Inizializza il motore se non esiste o se era DONE/IDLE
-    if (!this._modifyEngine || this._modifyEngine.isDone) {
-      this._modifyEngine = new ModifyEngine({
-        callAppsScript:              (p) => this._callAppsScript(p),
-        say:                         (m) => this._say(m),
-        buildInfoContext:            (r) => this._buildInfoContextForEngine(r),
-        mergeNotesStr:               (a, b, c) => this._mergeNotesStr(a, b, c),
-        findReservationWithFallback: (n, d, l) => this._findReservationWithFallback(n, d, l),
-        formatForDisplay:            (d) => DateManager.formatForDisplay(d),
-        formatTimeForDisplay:        (t) => TimeManager.formatForDisplay(t),
-        isValidTime:                 (t, cfg) => ValidationPipeline.isValidTime(t, cfg),
-        parseDate:                   (t) => DateManager.parseFromText(t),
-        restaurantConfig:            this.restaurantConfig,
-        apiKey:                      this.apiKey,
-      });
-    }
-
-    // Sincronizza modifyState legacy per compatibilità con cancel e hard lock
-    this.modifyState = this._modifyEngine.state === 'DONE'   ? 'done'
-                     : this._modifyEngine.state === 'IDLE'   ? null
-                     : 'awaiting_changes'; // qualsiasi stato attivo
-
-    const _forcedNote = this.data.alternativePhone ? `Tel. alternativo: ${this.data.alternativePhone}` : null;
-    console.log(`🔧 _handleModifyFlow → forcedNote=${_forcedNote || 'null'}`);
-    await this._modifyEngine.handle(this.lastTranscript || '', {
-      newDate, newTime, newPeople, newName,
-      // telefono alternativo rilevato a voce → nota forzata (GPT non lo estrae)
-      forcedNote: _forcedNote,
-    });
-
-    // Aggiorna modifyState legacy dopo l'esecuzione
-    this.modifyState = this._modifyEngine.isDone ? 'done' : 'awaiting_changes';
-
-    // Aggiorna lastReservation se il motore ha completato
-    if (this._modifyEngine.isDone && this._modifyEngine.activeBooking) {
-      this.lastReservation = { ...this._modifyEngine.activeBooking, status: 'CONFIRMED' };
-      this.foundReservation = this._modifyEngine.activeBooking;
-      this.phase = 'done';
-    }
-  }
-
-  // Costruisce contesto info ristorante + prenotazione per ModifyEngine
-  _buildInfoContextForEngine(reservation) {
-    const info = this._restaurantInfo || {};
-    const menuDetails = info.menuDetails || '';
-    const resCtx = reservation ? `
-Prenotazione corrente:
-- Nome: ${reservation.name}
-- Note: ${reservation.notes || 'nessuna'}` : '';
-    return `${menuDetails}${resCtx}`;
-  }
-
-  async _handleCancelFlow(newDate, newName) {
-    // Phase 1: primo messaggio cancel → se contiene già nome e data, cerca subito
-    if (!this.cancelState) {
-      this.cancelState = 'awaiting_search';
-      // 🆕 Cancella eventuale risposta GPT in corso: vogliamo controllare noi il dialogo
-
-      if (newName && newDate) {
-        if (newName) this.data.name = newName;
-        if (newDate) this.data.date = newDate;
-        this._say('Un momento, cerco la prenotazione...');
-        const r = await this._findReservationWithFallback(newName, newDate, 'CANCEL primo msg');
-        if (r) {
-          this.foundReservation = r;
-          const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-          const dateDisplay = DateManager.formatForDisplay(r.date);
-          const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-          this.cancelState = 'awaiting_confirm';
-          // v3.9.35: se il nome trovato è diverso da quello cercato (fallback telefono),
-          // avvisa l'utente invece di presentarlo silenziosamente come corretto
-          const nameMismatch = newName && r.name && r.name.toLowerCase() !== newName.toLowerCase();
-          if (nameMismatch) {
-            this._say(`Tramite il suo numero ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. È la sua prenotazione? Conferma la cancellazione?`);
-          } else {
-            this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
-          }
-        } else {
-          this._say(`Non trovo nessuna prenotazione a nome ${newName}.`);
-        }
-        return;
-      }
-
-      this._say('Certo! A che nome è la prenotazione e per quale data?');
-      return;
-    }
-
-    // Phase 2: cerca la prenotazione
-    if (this.cancelState === 'awaiting_search') {
-      const searchName = newName || this.data.name;
-      const searchDate = newDate || this.data.date;
-
-      if (newName) this.data.name = newName;
-      if (newDate) this.data.date = newDate;
-
-      if (!searchName && !searchDate) {
-        this._say('Può dirmi a che nome è la prenotazione e per quale data?');
-        return;
-      }
-      if (!searchName) {
-        this._say('A che nome è la prenotazione?');
-        return;
-      }
-      if (!searchDate) {
-        this._say('Per quale data è la prenotazione?');
-        return;
-      }
-
-      this._say('Un momento, cerco la prenotazione...');
-      const r = await this._findReservationWithFallback(searchName, searchDate, 'CANCEL');
-      if (r) {
-        this.foundReservation = r;
-        const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-        const dateDisplay = DateManager.formatForDisplay(r.date);
-        const timeDisplay = TimeManager.formatForDisplay(timeNorm);
-        this.cancelState = 'awaiting_confirm';
-        const nameMismatch2 = searchName && r.name && r.name.toLowerCase() !== searchName.toLowerCase();
-        if (nameMismatch2) {
-          this._say(`Tramite il suo numero ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. È la sua prenotazione? Conferma la cancellazione?`);
-        } else {
-          this._say(`Ho trovato: ${r.name}, ${dateDisplay} alle ${timeDisplay} per ${r.people} persone. Conferma la cancellazione?`);
-        }
-      } else {
-        this._say(`Non trovo nessuna prenotazione a nome ${searchName}.`);
-      }
-    }
-  }
-
-  // ── CANCEL conferma via testo grezzo ──────────────────────────────────────
-
-  async _handleCancelConfirmText(text) {
-    const t = text.toLowerCase().trim();
-    const isYes = /\bsì|si\b|yes\b|certo\b|confermo\b|ok\b|esatto\b|giusto\b|procedi\b/i.test(t);
-    const isNo  = /\bno\b|niente\b|lascia\s+perdere\b|annulla\b|stop\b/i.test(t);
-
-    console.log(`🔤 CANCEL confirm text: "${text}" → yes=${isYes} no=${isNo}`);
-
-    if (isNo) {
-      this.phase = 'done';
-      this.cancelState = null;        // 🆕 reset: utente ha rifiutato, uscire dalla confirm loop
-      // Fix X04: NON azzerare foundReservation — se il cliente dice "No anzi spostala a sabato"
-      // GPT ritornerà intent=modify e il blocco phase=done MODIFY userà foundReservation come base
-      // this.foundReservation = null;
-      this._say('Nessun problema, la prenotazione rimane invariata. Arrivederci!');
-      return;
-    }
-
-    if (isYes) {
-      const r = this.foundReservation;
-      if (!r) { this.phase = 'done'; return; }
-
-      const timeNorm = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-      console.log(`🗑️ CANCEL conferma: nome=${r.name}, data=${r.date}, ora=${timeNorm}`);
-      this._say('Un attimo che procedo con la cancellazione...');
-      const result = await this._callAppsScript({
-        action: 'cancel_reservation',
-        nome: r.name,
-        data: r.date,
-        ora: timeNorm,
-        telefono: this.callerPhone || r.phone || '',  // 🆕 FIX PHONE: callerPhone ha sempre + normalizzato
-      });
-
-      this.phase = 'done';
-      if (result?.success || result?.status === 'CANCELLED') {
-        this._say('La prenotazione è stata cancellata. Speriamo di rivederla presto!');
-      } else {
-        this._say(`Mi dispiace, c'è stato un problema nella cancellazione. Può richiamare?`);
-      }
-      return;
-    }
-
-    // Risposta non chiara
-    this._say('Non ho capito. Conferma la cancellazione? Dica sì o no.');
-  }
-
-  // ── Ask Next Field ────────────────────────────────────────────────────────
-
-  _ask(field) {
-    const msgs = {
-      date:   'Per quale giorno vuole prenotare?',
-      time:   'A che ora desidera il tavolo?',
-      people: 'Per quante persone?',
-      name:   'A che nome faccio la prenotazione?',
-    };
-    this._pendingQuestion = field;
-    console.log(`🎯 pendingQuestion: ${field}`);
-    this._say(msgs[field] || 'Può ripetere?');
-  }
-
-  // ── Check Slot ────────────────────────────────────────────────────────────
-
-  async _checkSlot() {
-    if (this.checkingSlot) return;
-    this.checkingSlot = true;
-
-    const { date, time, people } = this.data;
-    const rc = this.restaurantConfig;
-    console.log(`🔍 Check slot: ${date} ${time} per ${people}`);
-
-    // ── Gruppi grandi / eventi: gestiti PRIMA di "Un attimo" ─────────────────
-    // Se non diciamo "Un attimo" e subito dopo un altro _say, evita la race condition
-    // dove il secondo messaggio sovrascrive il primo e va perso
-    const eventThreshold = Number(rc?.event_threshold) || 45;
-    const largeGroupThreshold = Number(rc?.large_group_threshold) || 10;
-    const ownerEmail = rc?.owner_email || '';
-
-    if (people >= eventThreshold) {
-      console.log(`🎉 Evento: ${people} persone (soglia: ${eventThreshold})`);
-      this.checkingSlot = false;
-      this._say(`Per eventi di ${people} persone o più, ti chiedo di contattarci via email a ${ownerEmail}. Saremo felici di organizzare!`);
-      return;
-    }
-
-    if (people > largeGroupThreshold) {
-      console.log(`👥 Gruppo grande: ${people} persone (soglia: ${largeGroupThreshold})`);
-      this.checkingSlot = false;
-      this.availDone = true;
-      if (this.data.name) {
-        // Nome già disponibile → PENDING diretto
-        console.log(`👥 PENDING con nome già disponibile: ${this.data.name}`);
-        this.phase = 'done';
-        const _dateD = DateManager.formatForDisplay(this.data.date);
-        const _timeD = TimeManager.formatForDisplay(this.data.time);
-        this._say(`Perfetto ${this.data.name}! La prenotazione per ${people} persone ${_dateD} alle ${_timeD} è in attesa di conferma dal ristorante. La contatteremo presto!`);
-        this._callAppsScript({
-          source: 'telnyx', nome: this.data.name, persone: people,
-          data: this.data.date, ora: this.data.time,
-          telefono: this.callerPhone || '', notes: this.data.notes || '', forceNew: true,
-        }).then(r => console.log('📅 PENDING creato:', r?.success ? '✅' : '❌'))
-          .catch(e => console.error('❌ Errore PENDING:', e));
-      } else {
-        this.phase = 'naming';
-        this._say(`Per gruppi superiori a ${largeGroupThreshold} persone la prenotazione è soggetta a conferma del ristoratore. A che nome la registro?`);
-      }
-      return;
-    }
-
-    this._say('Un attimo che verifico la disponibilità...');
-
-    // Silenzio durante il check — GPT non parla fino al risultato
-
-    try {
-      const result = await this._callAppsScript({
-        action: 'check_availability',
-        data: date,
-        ora: time,
-        persone: people,
-      });
-
-      if (result?.success || result?.reason === 'slot_available') {
-        console.log('✅ Slot disponibile');
-        this.phase = 'naming';
-        this.checkingSlot = false;
-        this.availDone = true;
-        this._lastAsked = null;
-        // Piccolo delay per assicurarsi che la risposta di estrazione sia completata
-        await new Promise(r => setTimeout(r, 300));
-        if (this.data.name) {
-          this._confirmReservation();
-        } else {
-          this._ask('name');
-        }
-      } else if (result?.reason === 'slot_full') {
-        console.log('❌ Slot pieno');
-        this.checkingSlot = false;
-
-        // Cerca slot realmente disponibili invece di dire orari hardcoded
-        try {
-          const alts = await this._callAppsScript({
-            action: 'find_available_slots',
-            data: date,
-            ora: time,
-            persone: people,
-          });
-
-          const sameDay = alts?.availableSlots?.sameDay || [];
-          const nextDays = alts?.availableSlots?.nextDays || [];
-
-          // Filtra solo orari nei nostri orari di apertura
-          const validSameDay = sameDay.filter(s =>
-            ValidationPipeline.isValidTime(s.time, rc)
-          );
-
-          if (validSameDay.length > 0) {
-            const times = validSameDay.slice(0, 3).map(s => s.time.substring(0,5)).join(', ');
-            console.log(`✅ Alternative stesso giorno (filtrate): ${times}`);
-            this.data.time = null;
-            this._say(`Mi dispiace, quell'orario è al completo. Oggi ho disponibilità alle ${times}. Quale preferisce?`);
-          } else if (nextDays.length > 0) {
-            const first = nextDays[0];
-            const dayName = first.dayName || '';
-            // Filtra anche i prossimi giorni
-            const validSlots = (first.slots || []).filter(s =>
-              ValidationPipeline.isValidTime(s.time, rc)
-            );
-            const times = validSlots.slice(0, 2).map(s => s.time.substring(0,5)).join(' o ');
-            console.log(`✅ Alternative prossimi giorni: ${dayName} ${times}`);
-            this.data.date = null;
-            this.data.time = null;
-            this._say(`Mi dispiace, siamo al completo per quel giorno. Prima disponibilità ${dayName} alle ${times}. Vuole prenotare?`);
-          } else {
-            console.log('❌ Nessuna alternativa valida trovata');
-            this.data.date = null;
-            this.data.time = null;
-            this._say('Mi dispiace, siamo al completo per quel giorno. Vuole provare un altro giorno?');
-          }
-        } catch (err) {
-          console.error('❌ Errore ricerca alternative:', err);
-          this.data.time = null;
-          const ds = rc?.dinner_start || '21:00';
-          const de = rc?.dinner_end   || '22:30';
-          this._say(`Mi dispiace, quell'orario è al completo. Abbiamo disponibilità in altre fasce tra le ${ds} e le ${de}. Quale preferisce?`);
-        }
-      } else if (result?.reason === 'day_closed') {
-        console.log('🚫 Giorno chiuso (da Apps Script)');
-        this.data.date = null;
-        this.checkingSlot = false;
-        this._say('Mi dispiace, quel giorno siamo chiusi. Per quale altro giorno vuole prenotare?');
-      } else {
-        console.log('⚠️ Check incerto, procedo');
-        this.phase = 'naming';
-        this.checkingSlot = false;
-        this.availDone = true;
-        this._ask('name');
-      }
-    } catch (err) {
-      console.error('❌ Errore check slot:', err);
-      this.phase = 'naming';
-      this.checkingSlot = false;
-      this.availDone = true;
-      this._ask('name');
-    }
-  }
-
-  // ── Confirm Reservation ───────────────────────────────────────────────────
-
-  _confirmReservation() {
-    const { date, time, people, name } = this.data;
-
-    // Fix 1: valida orario SEMPRE prima di confermare (evita bypass da turno multi-campo)
-    if (time && !ValidationPipeline.isValidTime(time, this.restaurantConfig)) {
-      console.log(`🚫 _confirmReservation: orario non valido ${time} → blocco`);
-      const rc = this.restaurantConfig;
-      const lunch = rc?.lunch_hours || '12:00-14:30';
-      const dinner = rc?.dinner_hours || '21:00-22:30';
-      // CRITICO: risolve function_call pendente PRIMA di _say, altrimenti GPT genera risposta autonoma
-      this.phase = 'collecting';
-      this.data.time = null;
-      this._say(`Quell'orario è fuori dai nostri orari. Pranzo ${lunch}, cena ${dinner}. Che orario preferisce?`);
-      // Fix B4: forza GPT a NON confermare prenotazioni dopo orario invalido
-      return;
-    }
-
-    const dateDisplay  = DateManager.formatForDisplay(date);
-    const timeDisplay  = TimeManager.formatForDisplay(time);
-    const firstName    = name || ''; // usa nome completo (supporta nomi composti: De Luca, Di Maio, ecc.)
-
-    this.phase = 'done';
-
-    // Setta lastReservation SUBITO (prima dell'async) per bloccare double-booking
-    this.lastReservation = {
-      eventId: null, // verrà aggiornato dopo Apps Script
-      name, date, time, people,
-      phone: this.callerPhone || '',
-      notes: this.data.notes || '',
-    };
-
-    // Determina se sarà PENDING in base alla soglia gruppo grande
-    const _rc2 = this.restaurantConfig;
-    const _largeThresh = Number(_rc2?.large_group_threshold) || 10;
-    const _willBePending = people > _largeThresh;
-
-    // Fix: includi note nel messaggio di conferma se presenti
-    // Filtra le note interne (tra parentesi) che non vanno lette al cliente
-    const _notesForClient = this.data.notes
-      ? this.data.notes
-          .split(';')
-          .map(n => n.replace(/\s*\([^)]*\)/g, '').trim())  // rimuove "(verifica con cliente)" anche se preceduto da testo
-          .filter(n => n.length > 0)
-          .join('; ')
-      : '';
-    const _notesConfirmStr = _notesForClient ? ` Ho annotato: ${_notesForClient}.` : '';
-
-    if (_willBePending) {
-      const _callerNum = this.callerPhone ? ` Ti contatteremo al numero da cui stai chiamando.` : '';
-      this._say(
-        `Perfetto ${firstName}! Ho registrato la richiesta per ${people} persone ${dateDisplay} alle ${timeDisplay}.${_notesConfirmStr}${_callerNum} La prenotazione è in attesa di conferma dal ristorante. Se preferisci essere contattato su un altro numero, dimmelo ora!`
-      );
-    } else {
-      this._say(
-        `Perfetto ${firstName}! Ho prenotato per ${people} persone ${dateDisplay} alle ${timeDisplay}.${_notesConfirmStr} Ti aspettiamo!`
-      );
-    }
-
-    // Crea prenotazione in background
-    this._callAppsScript({
-      source: 'telnyx',
-      nome: name,
-      persone: people,
-      data: date,
-      ora: time,
-      telefono: this.callerPhone || '',
-      notes: this.data.notes || '',
-      forceNew: true,
-    }).then(result => {
-      console.log('📅 Prenotazione creata:', result?.success ? '✅' : '❌', result);
-      if (this.data.notes) console.log(`📝 Note inviate: "${this.data.notes}"`);
-      // Salva riferimento alla prenotazione appena creata per uso post-done
-      if (result?.success && result.eventId) {
-        this.lastReservation = {
-          eventId: result.eventId,
-          name: name,
-          date: date,
-          time: time,
-          people: people,
-          phone: this.callerPhone || '',
-          notes: this.data.notes || '',
-          status: result.status || 'CONFIRMED',
-        };
-        console.log(`💾 lastReservation salvato: eventId=${result.eventId} status=${result.status}`);
-      }
-    }).catch(err => {
-      console.error('❌ Errore creazione prenotazione:', err);
-    });
-  }
-
-  // ── Name Extractor ────────────────────────────────────────────────────────
-
-  // ── Name Extractor (solo pattern espliciti) ──────────────────────────────
-  // Usato da _extractFromTranscript() — NO pattern generico fallback.
-  // Estrae nome solo quando c'è contesto esplicito (mi chiamo, a nome, ecc.)
-  // Evita falsi positivi come "due" → "Due" quando l'utente risponde al numero persone.
-  // ── Name Extractor SAFE — solo frasi lunghe fuori naming ───────────────────
-  // Usa SOLO pattern inequivocabili: "mi chiamo X", "a nome X", "prenoto a nome X"
-  // ESCLUSO: "sono X" (troppo ambiguo — "sono allergico agli arachidi")
-  // ESCLUSO: pattern generico fallback (cattura qualsiasi parola sola)
-  // ── Pre-routing: decide se la frase va gestita come domanda sul locale ──────
-  // Pattern GPT: structural + contextual, NON regex sui piatti
-  // Controlla frame linguistico interrogativo + assenza entity booking
-  // NON altera mai lo state booking — è side conversation
-  async _shouldHandleAsRestaurantInfo(transcript, extracted) {
-    // Segnali espliciti di booking → mai info query, indipendentemente da tutto
-    // "ho prenotato", "ho una prenotazione", "spostare", ecc. → sempre booking flow
-    const _t = transcript.toLowerCase();
-    const _clearBookingSignal = /\bho\s+(?:già\s+)?prenotat|\bho\s+una\s+prenotazione|\bprenotazione\s+a\s+nome|\bspostare\b|\bmodificare\b|\bcancellare\b|\bdisdire\b|\bannullare\b|\bvolevo\s+spostare\b|\bvolevo\s+modificare\b/.test(_t);
-    if (_clearBookingSignal) return false;
-
-    // FIX 2 (GPT): entity booking e intent informational possono coesistere
-    const _hasEntities = !!(extracted.date || extracted.time || extracted.people);
-    if (_hasEntities) {
-      const _looksInformational = /\bfate\b|\bservite\b|\bc'è\b|\bposso\s+sapere\b|\bmen[uù]\b|\bparcheggio\b|\bseggiol\b|\borari\b|\baccessibil\b|\bpagament\b/.test(_t);
-      // Rimosso \bavete\b — troppo broad ("avete segnato" è booking, non info)
-      if (!_looksInformational) return false;
-    }
-
-    // Solo in fase collecting senza flow attivi
-    if (this.modifyState || this.cancelState || this.phase === 'done') return false;
-
-    // Deve avere restaurantInfo disponibile
-    if (!this._restaurantInfo || Object.keys(this._restaurantInfo).length === 0) return false;
-
-    const t = transcript.toLowerCase();
-
-    // Frame linguistico interrogativo — NON nomi di piatti specifici
-    // Segnali strutturali: domanda generica sul locale
-    const infoPatterns = [
-      /\bcosa\b/,           // "cosa avete", "cosa fate"
-      /\bche\b.*\?/,       // "che dolci avete?"
-      /\bavete\b/,          // "avete X"
-      /\bfate\b/,           // "fate X"
-      /\bservite\b/,
-      /\bpreparate\b/,
-      /\bmen[uù]\b/,        // "menu"
-      /\bprimi\b/,          // categoria, non piatto
-      /\bsecondi\b/,        // categoria
-      /\bdolci\b/,          // categoria
-      /\bantipasti\b/,      // categoria
-      /\bsenza\s+glut/,     // "senza glutine"
-      // vegan[oi] e vegetar rimossi — sono NOTE sulla prenotazione, non info query
-      // Se qualcuno chiede "avete piatti vegani?" viene catturato da "fate/avete" o "menu"
-      /\bvegetar.*\?/,  // solo se domanda esplicita (punto interrogativo)
-      /\bparcheggio\b/,
-      /\bindirizzo\b/,
-      /\borari\b/,
-      /\bseggiol/,           // "seggiolone" e varianti
-      /\baccessibil/,
-      /\bpagamento\b/,
-      /\bprezzo\b/,
-      /\bcosto\b/,
-      /\bcucina\b/,
-      /\bspecialit/,
-      /posso\s+sapere/,      // "posso sapere..."
-      /voglio\s+sapere/,     // "voglio sapere..."
-      /vorrei\s+sapere/,
-      /volevo\s+sapere/,
-      /vorrei\s+chieder/,
-      /ho\s+una\s+domanda/,
-    ];
-
-    const score = infoPatterns.filter(r => r.test(t)).length;
-    if (score >= 1) {
-      console.log(`🔍 Pre-routing: info query score=${score} → gestisco come domanda locale`);
-      return true;
-    }
-    return false;
-  }
-
-  // ── Info query detector — domande informative sul ristorante ───────────────
-  _isInformationalQuery(transcript) {
-    const t = transcript.toLowerCase();
-
-    // REGOLA FONDAMENTALE: deve essere una DOMANDA, non una dichiarazione
-    // "uno di noi è vegano" → dichiarazione → NOT info query
-    // "avete piatti vegani?" → domanda → info query
-    // Segnali interrogativi: punto interrogativo, verbi interrogativi, avverbi interrogativi
-    const _hasQuestionMark = transcript.includes('?');
-    const _hasInterrogativeVerb = /\b(?:avete|fate|c'è|ci sono|è possibile|si può|posso|potete|avete|offrite|servite|accettate|è disponibile|quando apre|quando chiude|siete aperti|quanto costa|quanto viene|come si arriva|dove siete|mi dite|mi sapete|sapete dirmi)\b/i.test(t);
-    const _hasInterrogativeWord = /\b(?:cosa|che cosa|come|dove|quando|quanto|quant[eo]|quali|quale|chi)\b/i.test(t);
-
-    const _isQuestion = _hasQuestionMark || _hasInterrogativeVerb || _hasInterrogativeWord;
-
-    // Se non è una domanda → non intercettare mai
-    if (!_isQuestion) return false;
-
-    // È una domanda: controlla se riguarda il ristorante o la prenotazione
-    if (/\b(?:menu|menù|piatt|cucina|carbonara|pizza|pasta|carne|pesce|dolce|vino|birra|vegan|vegetar|gluten|celiac|allergi|intolleran)/.test(t)) return true;
-    if (/\b(?:dove siete|indirizzo|come arriv|parcheggio|mappa|quartiere|zona)\b/.test(t)) return true;
-    if (/\b(?:animali|cane|gatto|terrazza|dehor|accessibil|disabil|carrozzina|seggiolone|bambini)\b/.test(t)) return true;
-    if (/\b(?:aperti|aprite|chiudete|orari|quando apre|quando chiude|coperto|prezzo|costo)\b/.test(t)) return true;
-    if (/\b(?:segnato|annotato|assegnato|ancora|nota|appuntat)\b/.test(t)) return true;
-    return false;
-  }
-
-  // ── Info query handler — risponde da _restaurantInfo via GPT ───────────────
-  // NON muta mai phase o stato booking — side conversation pura
-  // Ritorna true se ha risposto, false se non era una domanda sul locale
-  async _handleInfoQuery(transcript) {
-    const infoSection = this._buildInfoSection ? this._buildInfoSection() : '';
-
-    // Contesto prenotazione corrente (se esiste)
-    // GPT usa ENTRAMBI i contesti: info ristorante + note prenotazione
-    // Questo permette di rispondere a "avete segnata la celiachia?" senza regex
-    const _lr = this.lastReservation || this.foundReservation;
-    const _reservationContext = _lr ? `
-=== PRENOTAZIONE CORRENTE DEL CLIENTE ===
-- Nome: ${_lr.name || 'non specificato'}
-- Data: ${_lr.date ? DateManager.formatForDisplay(_lr.date) : 'non specificata'}
-- Orario: ${_lr.time ? TimeManager.formatForDisplay(_lr.time) : 'non specificato'}
-- Persone: ${_lr.people || 'non specificato'}
-- Note annotate: ${this._notesForClient(_lr.notes) || 'nessuna nota'}
-` : '';
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 100,
-          messages: [
-            {
-              role: 'system',
-              content: `Sei l'assistente vocale di un ristorante. Rispondi in modo naturale e conversazionale usando il contesto disponibile.
-
-REGOLE:
-1. Puoi rispondere su: info ristorante (menu, orari, servizi) E note sulla prenotazione del cliente
-2. Se la domanda riguarda le note della prenotazione (allergie, intolleranze, richieste speciali) → rispondi con quello che è annotato
-3. Se è una domanda sul ristorante → usa le info del locale
-4. Se non hai l'informazione richiesta → rispondi esattamente: null
-5. Se la frase non è una domanda su nulla di pertinente → rispondi esattamente: NOT_RELEVANT
-6. Massimo 2 frasi brevi in italiano. Non inventare nulla.
-${_reservationContext}
-${infoSection}`
-            },
-            { role: 'user', content: transcript }
-          ]
-        })
-      });
-      clearTimeout(timeout);
-      const data = await response.json();
-      const answer = data?.choices?.[0]?.message?.content?.trim();
-      console.log(`ℹ️ Info query risposta: "${answer?.substring(0,60)}"`);
-
-      if (!answer || answer === 'NOT_RELEVANT') {
-        console.log('🔍 _handleInfoQuery: NOT_RELEVANT → return false');
-        return false;
-      }
-      if (answer.toLowerCase() === 'null') {
-        this._say('Non ho questa informazione, le consiglio di contattare direttamente il ristorante.');
-      } else {
-        this._say(answer);
-      }
-      return true;
-    } catch (err) {
-      clearTimeout(timeout);
-      console.log('⚠️ _handleInfoQuery error:', err?.message);
-      return false;
-    }
-  }
-
-
-  // ── Ambiguity score — decide se serve context GPT ───────────────────────────
-  // FIX 4 (GPT): score numerico invece di boolean puro
-  // Riduce falsi positivi, evita trigger inutili
-  // Threshold: score >= 3 → chiama GPT
-  _isAmbiguous(transcript, extracted) {
-    const words = transcript.trim().split(/\s+/);
-    const wordCount = words.length;
-    const noEntities = !extracted.date && !extracted.time && !extracted.people && !extracted.name;
-
-    let score = 0;
-
-    // HARD RULE (GPT): se ci sono entity estratte → MAI triggerare ambiguity GPT
-    // "sabato alle 9", "siamo in quattro", "Ferrari" → parser deterministico basta
-    const hasStrongEntity = !!(extracted.date || extracted.time || extracted.people || extracted.name);
-    if (hasStrongEntity) return false; // zero ambiguity se parser ha già estratto
-
-    // Risposta breve (≤ 4 parole) senza entity
-    if (wordCount <= 4) score += 2;
-
-    // FIX 3b: pronomi — rimuovi "la/le/li/lo" (troppo rumorosi in italiano PSTN)
-    // Mantieni solo pronomi disambiguanti reali
-    if (/\b(?:quello|quella|questo|questa|anche|invece)\b/i.test(transcript)) score += 2;
-
-    // Nessuna entity estratta dai parser locali
-    if (noEntities) score += 2;
-
-    // Sì/No puro — sempre ambiguo senza contesto
-    if (/^(?:sì|si|no|ok|bene|esatto|perfetto|certo|vai|procedi)[!.,\s]*$/i.test(transcript.trim())) score += 1;
-
-    // Parole di correzione — quasi sempre richiedono contesto
-    if (/\b(?:invece|anzi|aspetti|volevo dire|no aspetti|piuttosto)\b/i.test(transcript)) score += 2;
-
-    // "anche" + qualcosa (es: "anche mia moglie", "anche il seggiolone")
-    if (/\banche\b/i.test(transcript) && wordCount <= 6) score += 2;
-
-    // Partial extraction conflict — parser ha trovato entity conflittuali
-    if (extracted.time && extracted.people && wordCount <= 6) score += 1;
-
-    // Nessuna entity e frase medio-corta
-    if (noEntities && wordCount <= 8) score += 1;
-
-    const isAmbig = score >= 3;
-    if (isAmbig) console.log(`🔍 Ambiguity score: ${score}/10 → chiamo GPT context`);
-    return isAmbig;
-  }
-
-  // ── GPT contextual resolver — chiama GPT con history solo se ambiguo ─────────
-  // Ritorna un oggetto con i campi chiariti nel contesto
-  // NON decide il flow — solo interpreta il significato
-  async _resolveAmbiguity(transcript) {
-    if (!this._conversationHistory || this._conversationHistory.length < 2) {
-      return null;
-    }
-
-    // FIX 4: dedup anti-loop — se stesso transcript risolto negli ultimi 2 turni → skip
-    const _cacheKey = transcript.trim().toLowerCase();
-    if (this._lastAmbiguityResolution &&
-        this._lastAmbiguityResolution.transcript === _cacheKey &&
-        (this._ambiguityTurnCounter - this._lastAmbiguityResolution.turn) <= 2) {
-      console.log('🔁 Ambiguity dedup: stesso contesto → uso cached result');
-      return this._lastAmbiguityResolution.result;
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
-
-    try {
-      // Passa ultimi 3 turni (escludi il turno corrente già aggiunto)
-      const historySlice = this._conversationHistory.slice(-6, -1); // ultimi 3 turni senza current
-
-      // FIX 3 (GPT): prompt ristretto a contextual interpretation ONLY
-      // NON chiedere intent globale — solo cosa riferisce e entity gap fill
-      // Riduce semantic drift e over-interpretation
-      // FIX 2: stato ridotto al minimo — solo phase/pendingQuestion/lastTopic
-      // NON passare il booking completo: GPT deve solo capire il riferimento
-      const systemPrompt = `Interpreta SOLO il significato contestuale dell'ultima frase dell'utente nel contesto di una conversazione per prenotazioni ristorante.\nNON decidere il flow conversazionale.\nNON inventare informazioni mancanti.\nNON inferire intent globali.\n\nContesto minimo:\n- Fase: ${this.phase || 'collecting'}\n- Domanda in attesa: ${this._pendingQuestion || 'nessuna'}\n- Ultimo argomento: ${this._lastTopic || 'nessuno'}\n\nRispondi SOLO con JSON valido, nessun testo aggiuntivo:\n{\n  \"reference\": \"cosa sta referenziando (es: seggiolone già menzionato, null)\",\n  \"confirmation\": true,\n  \"correction\": false,\n  \"entities\": {\n    \"date\": null,\n    \"time\": null,\n    \"people\": null,\n    \"name\": null,\n    \"note\": null\n  }\n}`;
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...historySlice,
-        { role: 'user', content: `Interpreta questa frase nel contesto: "${transcript}"` }
-      ];
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 150,
-          messages,
-        })
-      });
-
-      clearTimeout(timeout);
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      const raw = data?.choices?.[0]?.message?.content?.trim();
-      if (!raw) return null;
-
-      const clean = raw.replace(/```json|```/g, '').trim();
-      const result = JSON.parse(clean);
-      console.log(`🧠 Ambiguity resolved: "${transcript}" → ref="${result.reference}" confirm=${result.confirmation} correction=${result.correction}`);
-      // Salva in dedup cache
-      this._lastAmbiguityResolution = { transcript: _cacheKey, result, turn: this._ambiguityTurnCounter };
-      return result;
-
-    } catch (err) {
-      clearTimeout(timeout);
-      return null;
-    }
-  }
-
-  // ── GPT name fallback — solo per casi semanticamente ambigui ────────────────
-  // Chiamato SOLO quando: frase lunga, fuori naming, parser locale = null
-  // Costo: ~pochi centesimi/mese su 1200 chiamate. Latenza: 250-700ms (OK su completed)
-  async _extractNameWithGPT(transcript) {
-    // Cache anti-repeat
-    const cacheKey = transcript.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (this._gptNameCache.has(cacheKey)) {
-      return this._gptNameCache.get(cacheKey);
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
-
-    try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
-          max_tokens: 10,
-          messages: [
-            {
-              role: 'system',
-              content:
-                "Estrai SOLO il nome della prenotazione dal testo. " +
-                "Se NON c'è chiaramente un nome della persona, rispondi SOLO con NULL. " +
-                "NON estrarre allergie, descrizioni, aggettivi, note o richieste. " +
-                "Rispondi con una sola parola o cognome, oppure NULL."
-            },
-            {
-              role: 'user',
-              content: transcript
-            }
-          ]
-        })
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) { this._gptNameCache.set(cacheKey, null); return null; }
-
-      const data = await response.json();
-      const text = data?.choices?.[0]?.message?.content?.trim();
-
-      if (!text || text.toUpperCase() === 'NULL') {
-        this._gptNameCache.set(cacheKey, null);
-        return null;
-      }
-
-      // Pulizia: solo lettere, spazi, apostrofi, trattini
-      const cleaned = text.replace(/[^\p{L}\s''-]/gu, '').trim();
-      if (!cleaned || cleaned.split(/\s+/).length > 3) {
-        this._gptNameCache.set(cacheKey, null);
-        return null;
-      }
-
-      const result = cleaned.replace(/\b\w/g, c => c.toUpperCase());
-      console.log(`🤖 GPT name fallback: "${transcript.substring(0,40)}..." → ${result}`);
-      this._gptNameCache.set(cacheKey, result);
-      return result;
-
-    } catch (err) {
-      clearTimeout(timeout);
-      return null;
-    }
-  }
-
-  _extractNameSafe(text) {
-    if (!text) return null;
-    const t = text.trim();
-
-    const safePatterns = [
-      /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      /\bil\s+(?:mio\s+)?nome\s+è\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bprenoto\s+a\s+nome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      /\bprenotaz(?:ione)?\s+a\s+nome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Inglese
-      /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Francese
-      /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Spagnolo
-      /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-    ];
-
-    const excluded = ['si','no','ok','allergico','allergica','intollerante','celiaco',
-                      'vegano','vegetariano','disponibile','libero','pronto'];
-
-    for (const p of safePatterns) {
-      const match = t.match(p);
-      if (match && match[1] && match[1].length >= 2) {
-        const name = match[1].trim();
-        if (!excluded.includes(name.toLowerCase())) {
-          return name.replace(/\b\w/g, c => c.toUpperCase());
-        }
-      }
-    }
-    return null;
-  }
-
-  _extractNameExplicit(text) {
-    if (!text) return null;
-    const t = text.trim();
-
-    const explicitPatterns = [
-      // Italiano
-      /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      // Inglese
-      /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bi(?:'m|\s+am)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Francese
-      /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Spagnolo
-      /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-    ];
-
-    // FIX 2: stopword italiane + parole mediche/dietetiche
-    const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
-                      'nome','certo','quello','quella','giusto','pronto',
-                      'di','dei','del','della','delle','degli','da','dal',
-                      'a','al','alla','per','con','su','sul','sulla',
-                      'un','una','uno','il','lo','la','le','gli','i',
-                      'allergico','allergica','intollerante','celiaco','celiaca',
-                      'vegano','vegana','vegetariano','vegetariana','diabetico','diabetica',
-                      'disponibile','libero','libera','pronto','pronta'];
-
-    for (const p of explicitPatterns) {
-      const match = t.match(p);
-      if (match && match[1] && match[1].length >= 2) {
-        const name = match[1].trim();
-        if (!excluded.includes(name.toLowerCase())) {
-          return name.replace(/\b\w/g, c => c.toUpperCase());
-        }
-      }
-    }
-    return null;
-  }
-
-  _extractName(text) {
-    if (!text) return null;
-
-    // FIX 2: stopword italiane + parole mediche/dietetiche
-    // "sono allergico", "sono celiaco" non sono nomi
-    const excluded = ['si','no','ok','perfetto','grazie','esatto','confermo',
-                      'nome','certo','quello','quella','giusto','pronto',
-                      'di','dei','del','della','delle','degli','da','dal',
-                      'a','al','alla','per','con','su','sul','sulla',
-                      'un','una','uno','il','lo','la','le','gli','i',
-                      // Parole mediche/dietetiche che seguono "sono"
-                      'allergico','allergica','intollerante','celiaco','celiaca',
-                      'vegano','vegana','vegetariano','vegetariana','diabetico','diabetica',
-                      'iperteso','ipertesa','disabile','sordo','sorda',
-                      // Altre parole comuni che non sono nomi
-                      'disponibile','libero','libera','pronto','pronta','sicuro','sicura'];
-
-    // Pulizia: rimuovi congiunzioni inserite da Whisper tra "nome" e il nome vero
-    // es. "Nome e Mirko" → "Nome Mirko", "Nome è Mirko" → "Nome Mirko"
-    let t = text.trim();
-    t = t.replace(/\bnome\s+[eè]\s+/i, 'Nome ');
-    t = t.replace(/\bil\s+nome\s+è\s+/i, 'Nome ');
-    t = t.replace(/\bil\s+nome\s+/i, 'Nome ');
-
-    const patterns = [
-      // Italiano
-      /\bmi\s+chiamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      // 'sono X' solo se X non è seguito da preposizioni (agli, alle, ecc.) — evita 'sono allergico agli'
-      /\bsono\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)(?!\s+(?:agli|alle|ai|al|allo|alla|dei|del|della|degli|alle|un|una|e\s))/i,
-      /\ba\s+nome\s+(?:di\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      /\bnome\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /^(?:no[,\s]+)?a\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
-      // Inglese
-      /\bmy\s+name\s+is\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bi(?:'m|\s+am)\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bunder\s+(?:the\s+)?name\s+(?:of\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      /\bname\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      // Francese
-      /\bje\s+m['']appelle\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\bau\s+nom\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Spagnolo
-      /\bme\s+llamo\s+([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)/i,
-      /\ba\s+nombre\s+(?:de\s+)?([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)*)/i,
-      // Generico (fallback)
-      /^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Z][a-zA-ZÀ-ÿ]+)?)[\s.,!]*$/i,
-    ];
-
-    for (const p of patterns) {
-      const match = t.match(p);
-      if (match && match[1] && match[1].length >= 2) {
-        const words = match[1].trim().split(/\s+/);
-        const name = excluded.includes(words[0].toLowerCase())
-          ? words.slice(1).join(' ')
-          : match[1].trim();
-
-        if (name.length >= 2 && !excluded.includes(name.toLowerCase())) {
-          // Capitalizza prima lettera di ogni parola (Whisper trascrive spesso in minuscolo)
-          return name.replace(/\b\w/g, c => c.toUpperCase());
-        }
-      }
-    }
-    return null;
-  }
-
-  _checkInfoQuestion(text) {
-    if (!text) return null;
-    const t = text.toLowerCase();
-    const ri = this._restaurantInfo || {};
-    const lang = this.language || 'it';
-
-    const noInfo = lang === 'it'
-      ? 'Non ho questa informazione. Per dettagli pu\u00f2 contattare direttamente il ristorante.'
-      : lang === 'en' ? 'I don\u2019t have this information. Please contact the restaurant directly.'
-      : lang === 'fr' ? 'Je n\u2019ai pas cette information. Veuillez contacter le restaurant directement.'
-      : lang === 'es' ? 'No tengo esta informaci\u00f3n. Por favor contacte el restaurante directamente.'
-      : 'Non ho questa informazione. Per dettagli pu\u00f2 contattare direttamente il ristorante.';
-
-    // Se la domanda riguarda la prenotazione stessa (note, conferma, ecc.) non intercettare
-    if (/ha[i]?.{0,15}segna|l.ha[i]?.{0,15}segna|nelle.{0,10}note|lo.{0,5}sai|ha[i]?.{0,10}nota|ha[i]?.{0,10}registr|segni.{0,20}(amica|amico|ospite|bambino)|conferma.{0,10}prenot|la.{0,10}prenot/i.test(t)) {
-      return null;
-    }
-
-    // ── MENU deterministico ──────────────────────────────────────────────────
-    const _riMenu = this._restaurantInfo || {};
-    
-    if (_riMenu.menuDetails) {
-      const menuText = _riMenu.menuDetails;
-
-      // Helper: filtra sezione categoria
-      const getSection = (cat) => {
-        const lines = menuText.split('\n');
-        let inSection = false, result = [];
-        for (const line of lines) {
-          if (line.trim().toUpperCase().startsWith(cat.toUpperCase() + ':') || line.trim().toUpperCase() === cat.toUpperCase()) {
-            inSection = true; continue;
-          }
-          if (inSection && line.match(/^[A-Z]{3,}[:\s]/)) break; // nuova categoria
-          if (inSection && line.trim()) {
-            // Solo nome piatto, senza prezzo e descrizione
-            const cleanLine = line.trim().replace(/^[-•]\s*/, '').split('€')[0].trim();
-            result.push(cleanLine);
-          }
-        }
-        return result.join(', ');
-      };
-
-      // Check coperto (INFO categoria)
-      if (/coperto/i.test(t)) {
-        const copertLine = menuText.split('\n').find(l => /coperto/i.test(l));
-        if (copertLine) {
-          const price = copertLine.match(/[€£]?\s*(\d+[.,]?\d*)/);
-          if (price) { const pStr = parseFloat(price[1]).toFixed(2).replace('.', ','); return `Sì, applichiamo un coperto di ${pStr} euro a persona.`; }
-        }
-      }
-
-      // Domanda su piatto specifico: ricerca diretta nome piatto nel transcript
-      // Più robusto del regex dishMatch — gestisce STT distortion e frasi complesse
-      const _hasCategoryKeyword = /antipast|prim[io].{0,10}piatt|second[io]|contorn|dolc|dessert/i.test(t);
-      const _hasInquiry = /avete|fate|fann[oa]|fatt[ei]|dico|chiedevo|vorrei|c.è|c.era|avrebbe|offrite|servite|preparat|\?/i.test(t);
-      if (!_hasCategoryKeyword && _hasInquiry) {
-        const _stopWords = new Set(['alla','alle','allo','agli','della','dello','degli','delle','con','per','dal','del','nel','che','una','uno','dei','misti','misto','fresc','caso','cosa','tipo','forn','fritte','miste']);
-        const _menuLines = menuText.split('\n').filter(l => /^\s*-/.test(l));
-        for (const _mLine of _menuLines) {
-          const _cleanDish = _mLine.trim().replace(/^[-•]\s*/, '').split('€')[0].trim();
-          const _dishWords = _cleanDish.toLowerCase().split(/\s+/).filter(w => w.length >= 5 && !_stopWords.has(w));
-          if (_dishWords.length > 0 && _dishWords.some(w => t.includes(w))) {
-            console.log(`📋 Dish match: "${_cleanDish}"`);
-            // Fix 5: se il cliente chiede "come/ingredienti/cosa c'è", includi la descrizione
-            // Fix: fatt[ao] copre sia "fatto" (maschile) che "fatta" (femminile)
-            const _askingDescription = /come.{0,15}(fat|prepar|cucinat|composto|fatt[ao])|ingredienti|cosa.{0,5}(c.è|hanno|ha|contiene|mett)|com.è.{0,15}(fatt[ao]|preparata?)|di cosa/i.test(t);
-            if (_askingDescription) {
-              // Fix: cerca la descrizione DOPO il prezzo (€XX) — ancora affidabile
-              const _descMatch = _mLine.match(/€\s*[\d,.]+\s+(.+)$/);
-              const _desc = _descMatch ? _descMatch[1].trim() : null;
-              if (_desc) {
-                console.log(`📋 Dish match con descrizione: "${_cleanDish}" → "${_desc}"`);
-                return `La ${_cleanDish} è preparata con ${_desc.toLowerCase().replace(/[()]/g, '')}.`;
-              }
-            }
-            return `Sì, abbiamo ${_cleanDish}`;
-          }
-        }
-      }
-
-      // Domanda per categoria
-      if (/antipast/i.test(t)) { const s = getSection('ANTIPASTI'); if (s) return `I nostri antipasti: ${s}`; }
-      if (/prim[io]/i.test(t) && !/primo.{0,5}piano/i.test(t)) { const s = getSection('PRIMI'); if (s) return `I nostri primi piatti: ${s}`; }
-      if (/second[io]/i.test(t)) { const s = getSection('SECONDI'); if (s) return `I nostri secondi piatti: ${s}`; }
-      if (/contorn/i.test(t)) { const s = getSection('CONTORNI'); if (s) return `I nostri contorni: ${s}`; }
-      if (/dolc[ie]/i.test(t) && !/dolce.{0,10}vita/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dolci: ${s}`; }
-      if (/dessert/i.test(t)) { const s = getSection('DOLCI'); if (s) return `I nostri dessert: ${s}`; }
-
-      // ── Domanda su ingrediente/prodotto specifico (pesce, carne, pasta...) ──
-      // Cerca nel menuDetails: se trovato restituisce le righe; se non trovato → noInfo.
-      // Evita che GPT inventi piatti non presenti nel menu.
-      const _ingredientPatterns = [
-        { re: /pesce|frutt.{0,10}mare|seafood|salmone|tonno|branzino|orat[ae]|cozze|vongole|calamari|gamberi|aragosta|polpo|merluzzo|spigola/i, label: 'pesce' },
-        { re: /carne|bistecca|manzo|vitello|maiale|agnello|pollo|coniglio|anatra|cinghiale|selvaggina/i, label: 'carne' },
-        { re: /pasta\b|tagliat|pappardel|rigatoni|spaghett|linguine|fettuccin|lasagn|gnocch|tortellini|ravioli/i, label: 'pasta' },
-        { re: /risotto|ris[oa]\b/i, label: 'risotto' },
-        { re: /zuppa|minestra|vellutata|crema.{0,10}(zucca|pomodoro|piselli)/i, label: 'zuppa' },
-        { re: /pizza\b|focaccia/i, label: 'pizza' },
-        { re: /salumi|affett|prosciutto|bresaola|mortadella|salame/i, label: 'salumi' },
-        { re: /formagg|pecorino|parmigiano|burrata|mozzarella|gorgonzola/i, label: 'formaggio' },
-        { re: /tartufo\b|funghi\b|porcini|finferli/i, label: 'tartufo/funghi' },
-        { re: /fritto|frittura/i, label: 'fritto' },
-      ];
-      for (const { re, label } of _ingredientPatterns) {
-        if (re.test(t)) {
-          // Cerca righe del menu che contengono termini correlati
-          const _matchingLines = menuText.split('\n').filter(l => re.test(l)).map(l => l.trim()).filter(Boolean);
-          if (_matchingLines.length > 0) {
-            console.log(`📋 Menu search: trovati ${_matchingLines.length} piatti con "${label}"`);
-            return `Sì, abbiamo piatti a base di ${label}: ${_matchingLines.join('; ')}.`;
-          } else {
-            console.log(`📋 Menu search: "${label}" non trovato nel menu → noInfo`);
-            return noInfo;
-          }
-        }
-      }
-      // ── fine ricerca ingrediente ──────────────────────────────────────────
-
-      // Domanda generica sul menu
-      if (/men[uù]|cosa.{0,15}avete|cosa.{0,15}mangiate|cosa.{0,15}si.{0,10}mang|che.{0,15}piatt/i.test(t)) {
-        // Riassunto categorie disponibili
-        const cats = [];
-        if (menuText.match(/ANTIPASTI/i)) cats.push('antipasti');
-        if (menuText.match(/PRIMI/i)) cats.push('primi');
-        if (menuText.match(/SECONDI/i)) cats.push('secondi');
-        if (menuText.match(/CONTORNI/i)) cats.push('contorni');
-        if (menuText.match(/DOLCI/i)) cats.push('dolci');
-        if (cats.length > 0) return `Il nostro menu comprende: ${cats.join(', ')}. Vuole sapere i dettagli di una categoria specifica?`;
-      }
-    }
-    // ── fine MENU ────────────────────────────────────────────────────────────
-
-    const checks = [
-      {
-        patterns: [/sedia.{0,20}rotel|sed[ae]r[ae].{0,10}rotel|rot[ae]ll[ae]|disabil|carrozzin|accessibil|mobilit.{0,10}ridott|handicap|wheelchair|entr[ae].{0,20}rotel/i],
-        key: 'accessibility'
-      },
-      {
-        patterns: [/parcheggi|posteggi|park|dove parcheg/i],
-        key: 'parking'
-      },
-      {
-        patterns: [/pagar|pagamento|cart[ae].{0,20}credit|credit.{0,15}card|bancomat|pos|contant|cash|visa|mastercard|bonifico|accetta.{0,15}cart|pagate.{0,10}cart|pagare.{0,10}cart/i],
-        key: 'paymentMethods'
-      },
-      {
-        patterns: [/esterno|all.aperto|terrazza|dehor|giardino|fuori/i],
-        key: 'outdoorSeating'
-      },
-      {
-        // Solo domande sul menu del ristorante, non dichiarazioni personali tipo "sono vegano"
-        patterns: [/avete.{0,25}vegan|avete.{0,25}vegetar|piatti.{0,20}vegan|piatti.{0,20}vegetar|menu.{0,20}vegan|opzion.{0,20}vegan|opzion.{0,20}vegetar|vegan.{0,20}nel.{0,10}menu|si.{0,10}mangia.{0,20}vegan|cibo.{0,15}vegan/i],
-        key: 'vegan'
-      },
-      {
-        patterns: [/gluten|celiac|celiach|senza glutine/i],
-        key: 'glutenFree'
-      },
-      {
-        patterns: [/seggiol|seggialo|seggior|seggial|bambini.{0,15}segg|segg.{0,15}bambin|highchair|sediolin/i],
-        key: 'highchair'
-      },
-      {
-        patterns: [/quanto.{0,20}cost|prezz|menu.{0,20}cost|spende|tariffa|listino/i],
-        key: 'prices'
-      },
-      {
-        patterns: [/che tipo.{0,15}cucin|che cucin|tipo di cibo|specialit|che si mang|cosa si mang/i],
-        key: 'cuisine'
-      },
-    ];
-
-    for (const check of checks) {
-      if (check.patterns.some(p => p.test(t))) {
-        const val = ri[check.key];
-        console.log(`📋 Info match: key=${check.key}, value=${val || '(vuoto)'}`);
-        if (!val) return noInfo;
-        // Se il valore è molto corto (es: "No", "Sì"), costruisci risposta più naturale
-        const trimmed = val.trim();
-        if (trimmed.length <= 3) {
-          const isYes = /^(s[iì]|yes|oui|si)$/i.test(trimmed);
-          const isNo  = /^(no|non|nein|nope)$/i.test(trimmed);
-          if (isNo)  return lang === 'it' ? `No, mi dispiace, non abbiamo questa possibilità.` : `No, unfortunately we don't have this option.`;
-          if (isYes) return lang === 'it' ? `Sì, certamente.` : `Yes, certainly.`;
-        }
-        return trimmed;
-      }
-    }
-    return null; // non è una domanda info
-  }
-
-  // Carica le info ristorante da Apps Script e aggiorna il session prompt
-  async _fetchAndInjectRestaurantInfo() {
-    try {
-      const result = await this._callAppsScript({ action: 'get_restaurant_info' });
-      if (result?.success && result.info) {
-        this._restaurantInfo = result.info;
-        const _menuLen = result.info.menuDetails ? result.info.menuDetails.length : 0;
-        console.log(`📋 Restaurant info caricata (menuDetails: ${_menuLen} chars)`);
-        // In dual session, le info ristorante vengono usate localmente da _checkInfoQuestion().
-        // Non è necessario iniettarle nel context della sessione TTS — tutte le risposte
-        // passano attraverso _say() che usa testo deterministico.
-      }
-    } catch(err) {
-      console.error('❌ Errore fetch restaurant info:', err);
-    }
-  }
-
-  _buildInfoSection() {
-    const ri = this._restaurantInfo || {};
-
-    const lines = [];
-
-    // Indirizzo e telefono
-    if (ri.address) lines.push(`Indirizzo: ${ri.address}`);
-    if (ri.phone)   lines.push(`Telefono ristorante: ${ri.phone}`);
-
-    // Info operative
-    if (ri.accessibility)  lines.push(`Accessibilità sedia a rotelle: ${ri.accessibility}`);
-    if (ri.parking)        lines.push(`Parcheggio: ${ri.parking}`);
-    if (ri.paymentMethods) lines.push(`Metodi di pagamento: ${ri.paymentMethods}`);
-    if (ri.highchair)      lines.push(`Seggiolone: ${ri.highchair}`);
-    if (ri.outdoorSeating) lines.push(`Zona esterna: ${ri.outdoorSeating}`);
-
-    // Menu e cucina
-    if (ri.cuisine)    lines.push(`Tipo di cucina: ${ri.cuisine}`);
-    if (ri.vegan)      lines.push(`Opzioni vegane/vegetariane: ${ri.vegan}`);
-    if (ri.glutenFree) lines.push(`Senza glutine: ${ri.glutenFree}`);
-    if (ri.prices)     lines.push(`Prezzi: ${ri.prices}`);
-    if (ri.menuUrl)    lines.push(`Menu online: ${ri.menuUrl}`);
-    if (ri.menuText)   lines.push(`Menu: ${ri.menuText}`);
-    if (ri.menuDetails) lines.push(`=== MENU COMPLETO ===\n${ri.menuDetails}`);
-
-    if (lines.length === 0) return '';
-
-    const sep = '\u2550'.repeat(80);
-    return '\n\n' + sep + '\n📋 INFORMAZIONI RISTORANTE\n' + sep + '\n' +
-      'REGOLA CRITICA: Rispondi SOLO con le informazioni elencate qui sotto.\n' +
-      'NON inventare mai informazioni non presenti. Se una domanda riguarda qualcosa\n' +
-      'non elencato (es: un piatto specifico, allergie non menzionate, orari diversi),\n' +
-      'di\' ESATTAMENTE: "Non ho questa informazione, verifichi direttamente col ristorante."\n\n' +
-      lines.join('\n') + '\n' + sep;
-  }
-
-  // Pulisce le note per la lettura al cliente: rimuove le annotazioni interne
-  // tra parentesi (es. "(verifica con cliente)") che non vanno dette ad alta voce.
-  // Accetta una stringa di note separate da ';' e ritorna stringa pulita (o '').
-  _notesForClient(notes) {
-    if (!notes) return '';
-    return notes
-      .split(';')
-      .map(n => n.replace(/\s*\([^)]*\)/g, '').trim())
-      .filter(n => n.length > 0)
-      .join('; ');
-  }
-
-  // notesToRemove: array di stringhe da escludere dal merge (es. ['Tavolo esterno/terrazza'])
-  _mergeNotesStr(existing, newNotes, notesToRemove) {
-    let eArr = existing ? existing.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
-    const nArr = newNotes ? newNotes.split(/;\s*/).map(s => s.trim()).filter(Boolean) : [];
-    // 🆕 FIX TEST7A: rimuovi note marcate per rimozione (es. "interno" → rimuove "Tavolo esterno/terrazza")
-    if (notesToRemove && notesToRemove.length > 0) {
-      eArr = eArr.filter(n => !notesToRemove.includes(n));
-    }
-    nArr.forEach(n => { if (!eArr.includes(n)) eArr.push(n); });
-    return eArr.join('; ');
-  }
-
-
-  // ── Apps Script ───────────────────────────────────────────────────────────
-
-  async _callAppsScript(payload) {
-    const url = this.restaurantConfig?.apps_script_url || process.env.APPS_SCRIPT_URL;
-    if (!url) return null;
-
-    // Timeout di 15 secondi — Apps Script può essere lento su cold start
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const text = await response.text();
-      try { return JSON.parse(text); } catch { return null; }
-    } catch (err) {
-      clearTimeout(timeout);
-      if (err.name === 'AbortError') {
-        console.error('❌ Apps Script timeout (15s)');
-        return { success: false, reason: 'timeout' };
-      }
-      throw err;
-    }
   }
 }
