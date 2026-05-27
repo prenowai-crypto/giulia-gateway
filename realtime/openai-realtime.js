@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC1-S2S-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC2-S2S-GA-2026-05-27 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -210,7 +210,6 @@ export class OpenAIRealtimeClient {
       const ws = new WebSocket(REALTIME_URL, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'OpenAI-Beta':   'realtime=v1',
         },
       });
       this._ws = ws;
