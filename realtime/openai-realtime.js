@@ -23,14 +23,15 @@ import { TurnManager }  from './turn-manager.js';
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vB2-FILLER-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vB3-GUARDS-2026-05-27 caricato');
 
 // ─── Modello del "cervello" ──────────────────────────────────────────────────
-// gpt-4o-mini è il default sicuro (tool calling + italiano collaudati su Chat
-// Completions). Per passare a gpt-5.4-mini basta impostare la variabile BRAIN_MODEL
-// su Render — nessuna modifica al codice. Se gpt-5.4-mini desse errore con questo
-// endpoint, torna a gpt-4o-mini.
-const BRAIN_MODEL = process.env.BRAIN_MODEL || 'gpt-4o-mini';
+// gpt-5.4-mini: famiglia GPT-5, gira su Chat Completions + function calling.
+// La chiamata in _chat è scritta per adattarsi da sola ai parametri che il
+// modello accetta (temperature / max_tokens vs max_completion_tokens), quindi
+// si può cambiare modello via env BRAIN_MODEL (es. 'gpt-4o-mini') senza toccare
+// il codice.
+const BRAIN_MODEL = process.env.BRAIN_MODEL || 'gpt-5.4-mini';
 const MAX_TOOL_ROUNDS = 5;     // sicurezza anti-loop nel ciclo agente
 const HISTORY_TURNS   = 8;     // ultimi 8 messaggi (~4 turni) per tenere basso il costo
 
@@ -71,7 +72,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'controlla_disponibilita',
-      description: 'Verifica se è possibile prenotare/spostare a una certa data, ora e numero di persone. Applica giorni di chiusura, orari, capienza e gruppi grandi. Chiamalo SEMPRE prima di creare o di applicare una modifica di data/ora/persone. Fidati del suo esito.',
+      description: 'Verifica se è possibile prenotare/spostare a una certa data, ora e numero di persone. Applica giorni di chiusura, orari, capienza e gruppi grandi. Chiamalo SEMPRE prima di creare o di applicare una modifica di data/ora/persone, ma SOLO quando hai data, ora e persone detti davvero dal cliente. Fidati del suo esito.',
       parameters: {
         type: 'object',
         properties: {
@@ -79,7 +80,7 @@ const TOOLS = [
           ora:     { type: 'string', description: "Ora come detta dal cliente, es. 'alle 21', '21:30'" },
           persone: { type: 'integer', description: 'Numero di persone (totale finale)' },
         },
-        required: ['data', 'ora', 'persone'],
+        required: [],
       },
     },
   },
@@ -97,7 +98,7 @@ const TOOLS = [
           persone: { type: 'integer' },
           note:    { type: 'string', description: 'Allergie, seggiolone, occasioni, tavolo, ecc. Opzionale.' },
         },
-        required: ['nome', 'data', 'ora', 'persone'],
+        required: [],
       },
     },
   },
@@ -252,35 +253,55 @@ export class OpenAIRealtimeClient {
   }
 
   // ── Chiamata al modello (Chat Completions + tool calling) ─────────────────
+  // I modelli GPT-5/o-series possono rifiutare temperature≠1 e vogliono
+  // max_completion_tokens al posto di max_tokens. Proviamo prima i parametri
+  // ottimali; se il modello li rifiuta, riproviamo una volta in modalità
+  // compatibile. Così funziona con gpt-5.4-mini e con gpt-4o-mini senza branch.
   async _chat(messages) {
-    const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), 12000);
-    try {
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
-        body: JSON.stringify({
-          model: BRAIN_MODEL,
-          messages,
-          tools: TOOLS,
-          tool_choice: 'auto',
-          temperature: 0.2,
-          max_tokens: 300,
-        }),
-      });
-      clearTimeout(to);
-      const data = await resp.json();
-      if (data?.error) { console.log('⚠️ brain error:', data.error?.message); return null; }
-      // Log token per stimare il costo reale (PARTE 6 della spec)
-      const u = data?.usage;
-      if (u) console.log(`📊 tokens: in=${u.prompt_tokens} out=${u.completion_tokens}`);
-      return data?.choices?.[0]?.message || null;
-    } catch (e) {
-      clearTimeout(to);
-      console.log('⚠️ brain exception:', e?.message);
-      return null;
+    const buildBody = (conservative) => {
+      const body = { model: BRAIN_MODEL, messages, tools: TOOLS, tool_choice: 'auto' };
+      if (conservative) {
+        body.max_completion_tokens = 800; // largo: i reasoning model contano qui anche il "pensiero"
+      } else {
+        body.temperature = 0.2;
+        body.max_tokens = 300;
+      }
+      return body;
+    };
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const conservative = attempt === 1;
+      const controller = new AbortController();
+      const to = setTimeout(() => controller.abort(), 12000);
+      try {
+        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+          body: JSON.stringify(buildBody(conservative)),
+        });
+        clearTimeout(to);
+        const data = await resp.json();
+        if (data?.error) {
+          const m = String(data.error?.message || '');
+          // errore di parametro → riprova una volta in modalità compatibile
+          if (attempt === 0 && /temperature|max_tokens|max_completion_tokens|unsupported|not supported/i.test(m)) {
+            console.log('⚠️ brain param error, riprovo compatibile:', m);
+            continue;
+          }
+          console.log('⚠️ brain error:', m);
+          return null;
+        }
+        const u = data?.usage;
+        if (u) console.log(`📊 tokens: in=${u.prompt_tokens} out=${u.completion_tokens}`);
+        return data?.choices?.[0]?.message || null;
+      } catch (e) {
+        clearTimeout(to);
+        console.log('⚠️ brain exception:', e?.message);
+        return null;
+      }
     }
+    return null;
   }
 
   // ── Dispatcher tool ───────────────────────────────────────────────────────
@@ -345,7 +366,9 @@ export class OpenAIRealtimeClient {
     const timeN   = this._normTime(ora);
     const ppl     = parseInt(persone, 10) || 0;
 
-    if (!dateISO) return { esito: 'data_non_capita' };
+    if (!dateISO) return { esito: 'manca_data' };
+    if (!timeN)   return { esito: 'manca_ora' };
+    if (!ppl)     return { esito: 'manca_persone' };
 
     if (ValidationPipeline.getDayClosedMessage(dateISO, rc)) {
       return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
@@ -383,9 +406,15 @@ export class OpenAIRealtimeClient {
 
   // ─── TOOL 3: crea_prenotazione
   async _toolCrea({ nome, data, ora, persone, note }) {
+    // Guard anti-invenzione: niente creazione finché non ci sono i dati veri.
+    const nomeOk = nome && String(nome).trim() && !/^(cliente|sconosciuto|n\.?d\.?)$/i.test(String(nome).trim());
+    if (!nomeOk) return { creata: false, manca: 'nome' };
     const dateISO = this._normDate(data);
     const timeN   = this._normTime(ora);
     const ppl     = parseInt(persone, 10) || 0;
+    if (!dateISO) return { creata: false, manca: 'data' };
+    if (!timeN)   return { creata: false, manca: 'ora' };
+    if (!ppl)     return { creata: false, manca: 'persone' };
     const tel     = this.callerPhone || '';
     const r = await this._callAppsScript({
       source: 'telnyx', nome, persone: ppl, data: dateISO, ora: timeN,
@@ -468,6 +497,8 @@ export class OpenAIRealtimeClient {
       `Il tuo compito: aiutare il cliente a CREARE, MODIFICARE o CANCELLARE una prenotazione, usando SEMPRE gli strumenti. Non confermare mai una prenotazione, modifica o cancellazione, né una disponibilità, senza aver chiamato il tool corrispondente. Non inventare.`,
       ``,
       `Regole:`,
+      `- MAI inventare dati che il cliente non ha detto. Per controllare la disponibilità servono data, ora e numero di persone; per CREARE serve anche il nome. Se manca anche solo uno di questi, CHIEDILO al cliente e NON chiamare ancora il tool. Non scegliere tu un orario, una data, un numero di persone o un nome di tua iniziativa. "Cliente" non è un nome valido: chiedi il nome vero.`,
+      `- Se un tool risponde con "manca_ora", "manca_persone", "manca_data" o manca:"nome", significa che quel dato non c'è: chiedilo al cliente, non riprovare con un valore inventato.`,
       `- Per data e ora passa ai tool il testo COSÌ COME lo dice il cliente ("sabato", "domani", "alle 21"): al calcolo ci pensa il sistema.`,
       `- Per modificare o cancellare: prima chiama trova_prenotazione, poi LEGGI al cliente cosa hai trovato (nome, data, ora, persone) e chiedi conferma prima di procedere. Se nome_diverso_dal_cercato è true, di' che l'hai trovata tramite il suo numero e chiedi se è la sua.`,
       `- Persone: se il cliente dice "si aggiungono due" o "uno in meno", calcola TU il totale finale partendo dalle persone della prenotazione trovata, e passa il numero finale.`,
