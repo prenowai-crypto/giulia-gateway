@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC6-S2S-GA-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC6-DIAG-audio-2026-05-28 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -666,6 +666,23 @@ export class OpenAIRealtimeClient {
   // ── Audio Telnyx → Realtime ──────────────────────────────────────────────
   sendAudio(pcmuBase64) {
     if (this._ws?.readyState !== WebSocket.OPEN) return;
+
+    // ── DIAGNOSTICA: conta byte/chunk audio in ingresso da Telnyx ──
+    // Se mentre parli vedi "0 chunk, 0 byte", l'audio si perde PRIMA del
+    // gateway (tua linea o Telnyx). Se vedi tanti byte ma OpenAI trascrive
+    // garbage, il problema è a valle (formato o lato OpenAI).
+    const len = pcmuBase64 ? pcmuBase64.length : 0;
+    this._diagBytes  = (this._diagBytes  || 0) + len;
+    this._diagChunks = (this._diagChunks || 0) + 1;
+    const now = Date.now();
+    if (!this._diagLast) this._diagLast = now;
+    if (now - this._diagLast >= 2000) {
+      console.log(`🎤 audio IN (ultimi 2s): ${this._diagChunks} chunk, ${this._diagBytes} byte base64`);
+      this._diagBytes = 0;
+      this._diagChunks = 0;
+      this._diagLast = now;
+    }
+
     this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
   }
 
