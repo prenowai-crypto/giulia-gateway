@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC8-VAD-server-2026-05-29 caricato');
+console.log('🟢 openai-realtime.js vC9-L16-24k-2026-05-29 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -248,7 +248,12 @@ export class OpenAIRealtimeClient {
       tool_choice: 'auto',
       audio: {
         input: {
-          format: { type: 'audio/pcmu' },           // Telnyx PCMU 8kHz pass-through
+          // 🆕 vC9: audio/pcm 24kHz invece di audio/pcmu 8kHz.
+          // Telnyx ci manda L16 BE 16kHz; il gateway converte in PCM16 LE 24kHz
+          // (byteswap + upsample) prima di mandarlo qui. OpenAI accetta solo
+          // 24000 Hz per audio/pcm (docs ufficiali, "Only a 24kHz sample rate
+          // is supported").
+          format: { type: 'audio/pcm', rate: 24000 },
           transcription: { model: 'whisper-1' },   // trascrizione utente per log
           turn_detection: {
             // 🆕 vC8: server_vad invece di semantic_vad
@@ -265,7 +270,9 @@ export class OpenAIRealtimeClient {
           noise_reduction: { type: 'far_field' },
         },
         output: {
-          format: { type: 'audio/pcmu' },
+          // 🆕 vC9: OpenAI ci manda audio/pcm 24kHz LE; il gateway converte in
+          // L16 BE 16kHz (downsample + byteswap) prima di rimandarlo a Telnyx.
+          format: { type: 'audio/pcm', rate: 24000 },
           voice: this.restaurantConfig?.voice || 'coral',
         },
       },
@@ -335,7 +342,12 @@ export class OpenAIRealtimeClient {
 
       // Audio del modello → forward a Telnyx (nome evento GA: output_audio)
       case 'response.output_audio.delta':
-        if (msg.delta) this.onAudioDelta(msg.delta);
+        if (msg.delta) {
+          // 🆕 vC9: OpenAI manda PCM 24kHz LE, Telnyx vuole L16 16kHz BE.
+          // Convertiamo prima di passarlo al callback (che fa il send a Telnyx).
+          const l16Base64 = this._pcm24kLEToL16BE(msg.delta);
+          this.onAudioDelta(l16Base64);
+        }
         break;
 
       case 'response.output_audio.done':
@@ -676,26 +688,109 @@ export class OpenAIRealtimeClient {
   }
 
   // ── Audio Telnyx → Realtime ──────────────────────────────────────────────
-  sendAudio(pcmuBase64) {
+  // 🆕 vC9: input da Telnyx è L16 BE 16kHz; OpenAI vuole PCM LE 24kHz.
+  // Convertiamo prima di accodare.
+  sendAudio(l16Base64) {
     if (this._ws?.readyState !== WebSocket.OPEN) return;
 
     // ── DIAGNOSTICA: conta byte/chunk audio in ingresso da Telnyx ──
-    // Se mentre parli vedi "0 chunk, 0 byte", l'audio si perde PRIMA del
-    // gateway (tua linea o Telnyx). Se vedi tanti byte ma OpenAI trascrive
-    // garbage, il problema è a valle (formato o lato OpenAI).
-    const len = pcmuBase64 ? pcmuBase64.length : 0;
+    // Numeri ATTESI con L16 16kHz mono 16-bit:
+    //   16000 sample/s * 2 byte = 32000 byte/s raw = ~42700 byte/s in base64
+    //   In 2 secondi → ~85400 byte base64, distribuiti in molti chunk.
+    // Se vedi numeri MOLTO inferiori per più cicli, l'audio si perde nel
+    // trasporto rete (problema esterno al codice).
+    const len = l16Base64 ? l16Base64.length : 0;
     this._diagBytes  = (this._diagBytes  || 0) + len;
     this._diagChunks = (this._diagChunks || 0) + 1;
     const now = Date.now();
     if (!this._diagLast) this._diagLast = now;
     if (now - this._diagLast >= 2000) {
-      console.log(`🎤 audio IN (ultimi 2s): ${this._diagChunks} chunk, ${this._diagBytes} byte base64`);
+      console.log(`🎤 audio IN (ultimi 2s): ${this._diagChunks} chunk, ${this._diagBytes} byte base64 (atteso ~85k)`);
       this._diagBytes = 0;
       this._diagChunks = 0;
       this._diagLast = now;
     }
 
-    this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
+    // Conversione L16 BE 16kHz → PCM LE 24kHz
+    const pcm24kLE = this._l16BE16kToPcm24kLE(l16Base64);
+    this._send({ type: 'input_audio_buffer.append', audio: pcm24kLE });
+  }
+
+  // ── Conversioni audio L16 BE 16kHz ↔ PCM LE 24kHz ─────────────────────────
+  // 🆕 vC9: Telnyx parla L16 16-bit big-endian a 16kHz (RFC 2586).
+  // OpenAI Realtime accetta solo audio/pcm 16-bit little-endian a 24kHz.
+  // Quindi convertiamo: byteswap (BE↔LE) + resample lineare 16↔24.
+  //
+  // Math note: 16kHz → 24kHz = ratio 3/2 = aggiungiamo 1 sample ogni 2 input
+  // (interpolazione lineare tra sample N e N+1). E al contrario per il ritorno.
+
+  /** L16 base64 (BE, 16kHz) → PCM base64 (LE, 24kHz) */
+  _l16BE16kToPcm24kLE(l16Base64) {
+    if (!l16Base64) return l16Base64;
+    try {
+      const buf = Buffer.from(l16Base64, 'base64');
+      // Leggi come int16 big-endian
+      const inLen = buf.length >> 1; // numero di sample 16-bit
+      if (inLen < 2) return l16Base64; // troppo poco per interpolare
+      const inSamples = new Int16Array(inLen);
+      for (let i = 0; i < inLen; i++) {
+        inSamples[i] = buf.readInt16BE(i << 1);
+      }
+      // Resample lineare 16kHz → 24kHz (ratio 3/2)
+      // Per ogni 2 sample input produciamo 3 sample output:
+      //   out[0] = in[0]
+      //   out[1] = in[0] + (in[1] - in[0]) * (1/3)  ≈ 2/3 in[0] + 1/3 in[1]
+      //   out[2] = in[0] + (in[1] - in[0]) * (2/3)  ≈ 1/3 in[0] + 2/3 in[1]
+      const outLen = Math.floor((inLen * 3) / 2);
+      const outBuf = Buffer.alloc(outLen * 2);
+      for (let i = 0; i < outLen; i++) {
+        const srcPos = (i * 2) / 3; // posizione frazionaria nell'input
+        const srcIdx = Math.floor(srcPos);
+        const frac = srcPos - srcIdx;
+        const s0 = inSamples[srcIdx] || 0;
+        const s1 = inSamples[srcIdx + 1] !== undefined ? inSamples[srcIdx + 1] : s0;
+        const interp = Math.round(s0 + (s1 - s0) * frac);
+        // Clamp a int16 range per sicurezza
+        const clamped = Math.max(-32768, Math.min(32767, interp));
+        outBuf.writeInt16LE(clamped, i << 1);
+      }
+      return outBuf.toString('base64');
+    } catch (e) {
+      console.error('❌ _l16BE16kToPcm24kLE:', e?.message);
+      return l16Base64; // fallback: passa pari pari (probabilmente romperà OpenAI ma non blocca)
+    }
+  }
+
+  /** PCM base64 (LE, 24kHz) → L16 base64 (BE, 16kHz) */
+  _pcm24kLEToL16BE(pcmBase64) {
+    if (!pcmBase64) return pcmBase64;
+    try {
+      const buf = Buffer.from(pcmBase64, 'base64');
+      const inLen = buf.length >> 1;
+      if (inLen < 3) return pcmBase64;
+      const inSamples = new Int16Array(inLen);
+      for (let i = 0; i < inLen; i++) {
+        inSamples[i] = buf.readInt16LE(i << 1);
+      }
+      // Resample lineare 24kHz → 16kHz (ratio 2/3)
+      // Per ogni 3 sample input produciamo 2 sample output.
+      const outLen = Math.floor((inLen * 2) / 3);
+      const outBuf = Buffer.alloc(outLen * 2);
+      for (let i = 0; i < outLen; i++) {
+        const srcPos = (i * 3) / 2;
+        const srcIdx = Math.floor(srcPos);
+        const frac = srcPos - srcIdx;
+        const s0 = inSamples[srcIdx] || 0;
+        const s1 = inSamples[srcIdx + 1] !== undefined ? inSamples[srcIdx + 1] : s0;
+        const interp = Math.round(s0 + (s1 - s0) * frac);
+        const clamped = Math.max(-32768, Math.min(32767, interp));
+        outBuf.writeInt16BE(clamped, i << 1);
+      }
+      return outBuf.toString('base64');
+    } catch (e) {
+      console.error('❌ _pcm24kLEToL16BE:', e?.message);
+      return pcmBase64;
+    }
   }
 
   // ── Chiusura ─────────────────────────────────────────────────────────────
