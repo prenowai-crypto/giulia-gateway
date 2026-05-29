@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC6-S2S-GA-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC8-VAD-server-2026-05-29 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -251,8 +251,14 @@ export class OpenAIRealtimeClient {
           format: { type: 'audio/pcmu' },           // Telnyx PCMU 8kHz pass-through
           transcription: { model: 'whisper-1' },   // trascrizione utente per log
           turn_detection: {
-            type: 'semantic_vad',
-            eagerness: 'auto',
+            // 🆕 vC8: server_vad invece di semantic_vad
+            // semantic_vad era troppo fragile su audio narrowband PSTN 8kHz —
+            // a volte non chiudeva il turno (cliente parla, modello resta muto).
+            // server_vad è meno "intelligente" ma più affidabile su linea telefonica.
+            type: 'server_vad',
+            threshold: 0.5,              // soglia energia (0..1) — default per parlato chiaro
+            prefix_padding_ms: 300,      // audio incluso prima dell'inizio parlato
+            silence_duration_ms: 600,    // ms di silenzio per considerare il turno finito
             create_response: true,
             interrupt_response: true,
           },
@@ -517,8 +523,14 @@ export class OpenAIRealtimeClient {
 
   // ─── TOOL 3: crea_prenotazione ───────────────────────────────────────────
   async _toolCrea({ nome, data, ora, persone, note }) {
-    // Guard anti-invenzione: nome 'Cliente' (o vuoto) NON è valido
-    const nomeOk = nome && String(nome).trim() && !/^(cliente|sconosciuto|n\.?d\.?)$/i.test(String(nome).trim());
+    // 🆕 vC8: Guard anti-invenzione del nome allargato.
+    // Nei log del 29/05 il modello aveva creato una prenotazione con nome
+    // "da confermare" — la vecchia regex (cliente|sconosciuto|n.d.) non lo
+    // catturava. Ora copre anche "da confermare", "anonimo", "ospite",
+    // "non specificato", "tbd", "?" e stringhe di soli punti/numeri/spazi.
+    const nomeRaw = (nome == null ? '' : String(nome)).trim();
+    const placeholderRe = /^(cliente|sconosciuto|n\.?d\.?|anonimo|ospite|tbd|tba|da\s*confermare|non\s*specificat[oa]|senza\s*nome|nome|\?+|\.+|-+)$/i;
+    const nomeOk = nomeRaw && !placeholderRe.test(nomeRaw) && /[a-zà-ù]/i.test(nomeRaw); // deve contenere almeno una lettera vera
     if (!nomeOk) return { creata: false, manca: 'nome' };
     const dateISO = this._normDate(data);
     const timeN   = this._normTime(ora);
@@ -666,6 +678,23 @@ export class OpenAIRealtimeClient {
   // ── Audio Telnyx → Realtime ──────────────────────────────────────────────
   sendAudio(pcmuBase64) {
     if (this._ws?.readyState !== WebSocket.OPEN) return;
+
+    // ── DIAGNOSTICA: conta byte/chunk audio in ingresso da Telnyx ──
+    // Se mentre parli vedi "0 chunk, 0 byte", l'audio si perde PRIMA del
+    // gateway (tua linea o Telnyx). Se vedi tanti byte ma OpenAI trascrive
+    // garbage, il problema è a valle (formato o lato OpenAI).
+    const len = pcmuBase64 ? pcmuBase64.length : 0;
+    this._diagBytes  = (this._diagBytes  || 0) + len;
+    this._diagChunks = (this._diagChunks || 0) + 1;
+    const now = Date.now();
+    if (!this._diagLast) this._diagLast = now;
+    if (now - this._diagLast >= 2000) {
+      console.log(`🎤 audio IN (ultimi 2s): ${this._diagChunks} chunk, ${this._diagBytes} byte base64`);
+      this._diagBytes = 0;
+      this._diagChunks = 0;
+      this._diagLast = now;
+    }
+
     this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
   }
 
