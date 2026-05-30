@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC6+buffer-2026-05-30 caricato');
+console.log('🟢 openai-realtime.js vC6+buffer+cleanup-2026-05-30 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -215,25 +215,32 @@ export class OpenAIRealtimeClient {
       this._ws = ws;
 
       const onceOpen = () => {
+        // Cancella il timeout di sicurezza: connessione aperta correttamente
+        if (this._openTimeout) { clearTimeout(this._openTimeout); this._openTimeout = null; }
         console.log(`🎙️  Realtime WS aperta (model: ${REALTIME_MODEL})`);
         this._sendSessionUpdate();
         this._fetchRestaurantInfo(); // background
         resolve();
       };
 
-      ws.once('open', onceOpen);
-      ws.on('message', (data) => this._onMessage(data));
-      ws.on('error', (err) => {
-        console.error('❌ Realtime WS error:', err?.message);
-        this.onError(err);
-      });
-      ws.on('close', (code) => {
-        console.log(`🔴 Realtime WS chiusa (${code})`);
-        this.onClose(code);
-      });
+      // vC6+cleanup: salvo riferimenti ai listener per poterli rimuovere alla
+      // chiusura. Senza questo, ogni chiamata lascia closure su `this` che il
+      // GC non può liberare → memory leak progressivo → pause GC → audio singhiozzo.
+      this._wsHandlers = {
+        open:    onceOpen,
+        message: (data) => this._onMessage(data),
+        error:   (err) => { console.error('❌ Realtime WS error:', err?.message); this.onError(err); },
+        close:   (code) => { console.log(`🔴 Realtime WS chiusa (${code})`); this.onClose(code); },
+      };
 
-      // timeout di sicurezza sull'open
-      setTimeout(() => {
+      ws.once('open',    this._wsHandlers.open);
+      ws.on  ('message', this._wsHandlers.message);
+      ws.on  ('error',   this._wsHandlers.error);
+      ws.on  ('close',   this._wsHandlers.close);
+
+      // timeout di sicurezza sull'open — riferimento salvato per cancellarlo
+      // se la connessione si apre prima di 10s (lo scenario normale).
+      this._openTimeout = setTimeout(() => {
         if (ws.readyState !== WebSocket.OPEN) reject(new Error('Realtime WS open timeout'));
       }, 10000);
     });
@@ -698,11 +705,47 @@ export class OpenAIRealtimeClient {
     }
   }
 
-  // ── Chiusura ─────────────────────────────────────────────────────────────
+  // ── Chiusura con cleanup completo ────────────────────────────────────────
+  //
+  // vC6+cleanup: cleanup esplicito per evitare memory leak su Render 512MB.
+  // Senza questo, dopo 3-4 chiamate il container è saturo di:
+  //   - WebSocket "in chiusura" con closure su `this`
+  //   - event listener (message/error/close) ancora registrati
+  //   - timer setTimeout di apertura ancora vivi
+  //   - oggetti _audioBuffer, _audioStats, _lastFound non liberati
+  // Il GC inizia a girare aggressivo → pause event-loop → audio a singhiozzo.
+  // ─────────────────────────────────────────────────────────────────────────
   close() {
+    // 1) Cancella timer di apertura se ancora pendente
+    if (this._openTimeout) {
+      clearTimeout(this._openTimeout);
+      this._openTimeout = null;
+    }
+
+    // 2) Rimuovi tutti gli event listener registrati sulla WS OpenAI
+    if (this._ws && this._wsHandlers) {
+      try {
+        this._ws.removeListener('open',    this._wsHandlers.open);
+        this._ws.removeListener('message', this._wsHandlers.message);
+        this._ws.removeListener('error',   this._wsHandlers.error);
+        this._ws.removeListener('close',   this._wsHandlers.close);
+      } catch {}
+      this._wsHandlers = null;
+    }
+
+    // 3) Chiudi la WS se ancora aperta
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
       try { this._ws.close(1000); } catch {}
     }
+
+    // 4) Azzera lo stato per aiutare il GC
+    this._ws               = null;
+    this._sessionReady     = false;
+    this._lastFound        = null;
+    this._restaurantInfo   = null;
+    this._responseInFlight = false;
+    this._audioBuffer      = null;
+    this._audioStats       = null;
   }
 
   // ── Send helper ──────────────────────────────────────────────────────────
