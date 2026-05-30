@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC6-S2S-GA-2026-05-27 caricato');
+console.log('🟢 openai-realtime.js vC6+buffer-2026-05-30 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -663,10 +663,53 @@ export class OpenAIRealtimeClient {
     return { registrata: false };
   }
 
-  // ── Audio Telnyx → Realtime ──────────────────────────────────────────────
+  // ── Audio Telnyx → Realtime — con micro-buffer anti-jitter ───────────────
+  //
+  // CONTESTO: la tua rete IT mobile → PSTN USA → Render Frankfurt ha jitter
+  // significativo. I pacchetti Telnyx arrivano "a singhiozzo" (a volte 99
+  // chunk in 2s come previsto, a volte 5, a volte 100, a volte 1).
+  //
+  // Il sistema chained vecchio era robusto a questo perché accumulava audio
+  // in un buffer e lo mandava allo STT come blocco completo. Il Realtime,
+  // pass-through chunk per chunk, espone il jitter direttamente al VAD e al
+  // modello, che si confondono.
+  //
+  // SOLUZIONE: micro-buffer di 100ms (5 chunk Telnyx da 20ms) prima di mandare
+  // a OpenAI. Livella il flusso senza aggiungere latenza percepibile.
+  //
+  // Banner del log: contatore byte ogni 2s per diagnosticare jitter residuo.
+  // Se vediamo "99 chunk, 21384 byte" costante, jitter assorbito.
+  // Se ancora "5 chunk, 1080 byte" alternato a "100 chunk", jitter peggiore
+  // di quanto un buffer 100ms può assorbire e dobbiamo ingrandirlo.
+  // ─────────────────────────────────────────────────────────────────────────
   sendAudio(pcmuBase64) {
     if (this._ws?.readyState !== WebSocket.OPEN) return;
-    this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
+
+    // Contatore diagnostico ogni 2s
+    if (!this._audioStats) this._audioStats = { chunks: 0, bytes: 0, lastLog: Date.now() };
+    this._audioStats.chunks++;
+    this._audioStats.bytes += pcmuBase64.length;
+    const now = Date.now();
+    if (now - this._audioStats.lastLog >= 2000) {
+      console.log(`🎤 audio IN (ultimi 2s): ${this._audioStats.chunks} chunk, ${this._audioStats.bytes} byte base64 (atteso ~21k)`);
+      this._audioStats = { chunks: 0, bytes: 0, lastLog: now };
+    }
+
+    // Micro-buffer: accumulo gli ultimi 5 chunk (~100ms) e poi flush
+    if (!this._audioBuffer) this._audioBuffer = [];
+    this._audioBuffer.push(pcmuBase64);
+
+    if (this._audioBuffer.length >= 5) {
+      // Concatena i 5 chunk base64 in un singolo blob.
+      // PCMU è byte-stream senza header, quindi la concatenazione del raw bytes
+      // è valida. Decodifico i 5 base64, li concateno, ri-encodo in base64.
+      const combined = Buffer.concat(
+        this._audioBuffer.map(b64 => Buffer.from(b64, 'base64'))
+      ).toString('base64');
+
+      this._send({ type: 'input_audio_buffer.append', audio: combined });
+      this._audioBuffer = [];
+    }
   }
 
   // ── Chiusura ─────────────────────────────────────────────────────────────
