@@ -1,24 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// MEDIA STREAM HANDLER — vC11 (2026-05-29)
+// MEDIA STREAM HANDLER — RESTORE vC6 (2026-05-30)
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// Riscritto seguendo il pattern del tutorial ufficiale Telnyx per OpenAI Realtime
-// (telnyx.com/resources/outbound-ai-calls-python-openai-realtime, maggio 2026).
-//
-// CAMBI RISPETTO AL vC10:
-//   - I messaggi 'media' inviati a Telnyx NON includono più stream_sid.
-//     Il tutorial ufficiale Telnyx invia solo { event: 'media', media: { payload } }.
-//     stream_sid lo richiede Twilio, non Telnyx, e ce lo eravamo portati dietro
-//     per errore.
-//   - Lifecycle semplificato: la chiamata vive finché la WebSocket vive
-//     (grazie a <Connect> nel TeXML). Niente più gestione di pause artificiali.
+// Ripristino del media-stream del 27 maggio (vC6). Include stream_sid nei
+// messaggi media verso Telnyx, come l'originale funzionante.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { WebSocketServer } from 'ws';
 import { OpenAIRealtimeClient } from './openai-realtime.js';
 import { DateManager } from './openai-realtime.js';
 
-// ─── Cache Registry (Google Sheet multi-tenant) ──────────────────────────────
 const registryCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
 
 async function fetchRegistry() {
@@ -87,7 +78,6 @@ async function getRestaurantConfig(telnyxNumber) {
   return match || null;
 }
 
-// ─── WebSocket handler /media-stream ─────────────────────────────────────────
 export function setupMediaStreamHandler(server, callDataMapExternal) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -111,47 +101,42 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
       try { msg = JSON.parse(raw); } catch { return; }
 
       switch (msg.event) {
-
         case 'connected':
-          // Telnyx ha aperto la WS. Non è ancora arrivata la chiamata.
           console.log('✅ Telnyx connected');
           break;
 
         case 'start': {
-          // La chiamata è agganciata alla WS. Adesso conosciamo CallSid, From, To.
-          const callId     = msg.start?.call_sid  || msg.start?.callSid || `call-${Date.now()}`;
-          const toNumber   = msg.start?.to        || '';
-          const fromNumber = msg.start?.from      || '';
-          streamSid        = msg.start?.stream_sid || callId;
+          const callId    = msg.start?.call_sid || msg.start?.callSid || `call-${Date.now()}`;
+          const toNumber  = msg.start?.to   || '';
+          const fromNumber = msg.start?.from || '';
+          streamSid = msg.start?.stream_sid || callId;
 
           console.log(`📞 CallSid: ${callId} | From: ${fromNumber} | To: ${toNumber}`);
 
-          // Recupera config ristorante dal registry (multi-tenant by phone number).
           const rc = await getRestaurantConfig(toNumber);
 
-          // Crea il client OpenAI Realtime. Il callback onAudioDelta viene impostato
-          // PRIMA di connect() così l'audio del saluto iniziale (che il modello
-          // genera appena la sessione è pronta) trova già il canale di ritorno aperto.
           openaiClient = new OpenAIRealtimeClient({
             apiKey:           process.env.OPENAI_API_KEY,
             restaurantConfig: rc,
+            systemPrompt:     '',
             callerPhone:      fromNumber,
 
-            // Audio del modello → Telnyx.
-            // FORMATO TELNYX UFFICIALE: { event: 'media', media: { payload: base64 } }
-            // NIENTE stream_sid (era un residuo Twilio nel vC10). Confermato dal
-            // tutorial Telnyx OpenAI Realtime di maggio 2026.
-            onAudioDelta: (audioBase64) => {
+            // Audio TTS → Telnyx — INCLUDE stream_sid come nel vC6 originale
+            onAudioDelta: (chunk) => {
               if (telnyxWs.readyState === 1) {
                 telnyxWs.send(JSON.stringify({
-                  event: 'media',
-                  media: { payload: audioBase64 },
+                  event:      'media',
+                  stream_sid: streamSid,
+                  media:      { payload: chunk },
                 }));
               }
             },
 
-            onError: (err) => console.error('❌ OpenAI error:', err),
-            onClose: (code) => {
+            onTranscript() {},
+            onError(err) {
+              console.error('❌ OpenAI error:', err);
+            },
+            onClose(code) {
               isConnected = false;
               console.log(`🔴 OpenAI chiuso (${code})`);
             },
@@ -159,12 +144,11 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
 
           await openaiClient.connect();
           isConnected = true;
-          console.log('✅ Sessione pronta, chiamata attiva');
+          console.log('✅ Dual session pronta, chiamata attiva');
           break;
         }
 
         case 'media':
-          // Audio del cliente (PCMU 8kHz base64) → OpenAI Realtime, pass-through.
           if (openaiClient && isConnected && msg.media?.payload) {
             openaiClient.sendAudio(msg.media.payload);
           }
@@ -173,24 +157,13 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
         case 'stop':
           console.log('🛑 Stop');
           openaiClient?.close();
-          try { telnyxWs.close(); } catch {}
+          telnyxWs.close();
           break;
-
-        case 'dtmf':
-          // Toni del tastierino. Per ora non li gestiamo.
-          console.log('☎️  DTMF:', msg.dtmf);
-          break;
-
-        case 'error':
-          console.error('❌ Telnyx stream error:', msg);
-          break;
-
-        // 'mark', 'clear' e altri eventi: ignorati silenziosamente per ora.
       }
     });
 
     telnyxWs.on('close', () => {
-      console.log('🔌 Telnyx WS chiusa');
+      console.log('🔌 Telnyx chiuso');
       openaiClient?.close();
       isConnected = false;
     });
