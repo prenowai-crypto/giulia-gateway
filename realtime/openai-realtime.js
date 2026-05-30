@@ -17,7 +17,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC6+buffer-2026-05-30 caricato');
+console.log('🟢 openai-realtime.js vC6+buffer+pacer-2026-05-30 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
@@ -202,6 +202,13 @@ export class OpenAIRealtimeClient {
     this._lastFound        = null;   // ultima prenotazione trovata/creata (modify/cancel)
     this._restaurantInfo   = null;   // info locale (per info_locale)
     this._responseInFlight = false;  // c'è una response.create attiva → per gestione interruzioni
+
+    // Pacer audio in uscita (OpenAI → Telnyx).
+    // OpenAI invia chunk in dimensioni/timing variabili. Telnyx si aspetta
+    // pacchetti da 20ms (160 byte raw PCMU) consegnati a ritmo costante,
+    // come una linea telefonica reale. Senza pacing, voce spezzettata.
+    this._outboundQueue = [];
+    this._outboundTimer = null;
   }
 
   // ── Connessione: apre WS verso OpenAI Realtime, configura sessione ────────
@@ -327,9 +334,12 @@ export class OpenAIRealtimeClient {
         }
         break;
 
-      // Audio del modello → forward a Telnyx (nome evento GA: output_audio)
+      // Audio del modello → pacer (non più passaggio diretto a Telnyx).
+      // Il pacer accumula in coda e spedisce 1 pacchetto da 20ms ogni 20ms,
+      // livellando il flusso irregolare di OpenAI in un flusso regolare
+      // che Telnyx può ricostruire in audio analogico pulito.
       case 'response.output_audio.delta':
-        if (msg.delta) this.onAudioDelta(msg.delta);
+        if (msg.delta) this._enqueueOutbound(msg.delta);
         break;
 
       case 'response.output_audio.done':
@@ -712,8 +722,61 @@ export class OpenAIRealtimeClient {
     }
   }
 
+  // ── Pacer audio in uscita (OpenAI → Telnyx) ──────────────────────────────
+  //
+  // OpenAI invia "response.output_audio.delta" con chunk PCMU base64 in
+  // dimensioni e timing variabili (a volte 50ms, a volte 500ms, a volte
+  // raffiche di chunk piccoli). Telnyx si aspetta invece pacchetti regolari
+  // da 20ms (= 160 byte raw PCMU = ~215 byte base64) consegnati ogni 20ms,
+  // come una linea telefonica reale.
+  //
+  // Senza pacing, il jitter di rete fra Render e Telnyx si trasforma in
+  // "voce spezzettata" lato cliente, perché Telnyx riceve pacchetti
+  // in cluster e li gioca a ritmo irregolare.
+  //
+  // Con il pacing: accumulo in coda i chunk in qualunque forma arrivino,
+  // li spezzo in pacchetti raw da 160 byte, e li spedisco a Telnyx uno
+  // ogni 20ms con setInterval. Il flusso lato Telnyx è perfettamente
+  // regolare, indipendentemente da come OpenAI consegna l'audio.
+  // ─────────────────────────────────────────────────────────────────────────
+  _enqueueOutbound(base64Chunk) {
+    // Decodifica base64 → bytes raw PCMU 8kHz
+    const raw = Buffer.from(base64Chunk, 'base64');
+    // Spezza in chunks da 160 byte (= 20ms a 8kHz)
+    const CHUNK_SIZE = 160;
+    for (let i = 0; i < raw.length; i += CHUNK_SIZE) {
+      this._outboundQueue.push(raw.subarray(i, Math.min(i + CHUNK_SIZE, raw.length)));
+    }
+    // Avvia il pacer se non già in corso
+    if (!this._outboundTimer) this._startOutboundPacer();
+  }
+
+  _startOutboundPacer() {
+    // Spedisce 1 chunk ogni 20ms (= 50 chunk/sec, = 8000 byte/sec raw, =
+    // proprio il bitrate di PCMU 8kHz, la "velocità del telefono")
+    this._outboundTimer = setInterval(() => {
+      if (this._outboundQueue.length === 0) {
+        // Coda vuota → ferma il pacer (verrà riavviato al prossimo chunk).
+        // Non lasciamo il timer girare a vuoto per non sprecare CPU.
+        clearInterval(this._outboundTimer);
+        this._outboundTimer = null;
+        return;
+      }
+      const chunk = this._outboundQueue.shift();
+      // Re-encode in base64 e consegna a media-stream tramite onAudioDelta
+      this.onAudioDelta(chunk.toString('base64'));
+    }, 20);
+  }
+
   // ── Chiusura ─────────────────────────────────────────────────────────────
   close() {
+    // Ferma pacer in uscita per non lasciare il timer girare dopo chiusura
+    if (this._outboundTimer) {
+      clearInterval(this._outboundTimer);
+      this._outboundTimer = null;
+    }
+    this._outboundQueue = [];
+
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
       try { this._ws.close(1000); } catch {}
     }
