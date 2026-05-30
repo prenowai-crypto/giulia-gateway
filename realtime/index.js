@@ -1,12 +1,22 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME GATEWAY — RESTORE vC6 (2026-05-30)
+// PRENOW REALTIME GATEWAY — MINIMAL BRIDGE TEST (2026-05-30)
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// Questo è il ripristino esatto del setup vC6-S2S-GA-2026-05-27 che aveva
-// fatto la chiamata "Giovanni sabato 30 maggio alle 21" perfetta. Lo
-// deployamo per avere una baseline funzionante certificata da cui ripartire.
+// Setup MINIMO per isolare la pipeline audio Telnyx ↔ OpenAI Realtime.
 //
-// TeXML: <Start> + 5 Pause come nell'originale (NON <Connect>).
+// Niente:
+//   - Registry / multi-tenant
+//   - System prompt complesso
+//   - Functions / Apps Script / DateManager
+//   - Audio buffer / pacer
+//   - Cleanup elaborato
+//
+// Solo: chiamata arriva → bridge audio bidirezionale → "Ciao sono un test".
+//
+// Obiettivo diagnostico: se i contatori audio IN sono stabili a 99 chunk
+// per tutte le chiamate consecutive, la pipeline base è solida e il problema
+// del nostro sistema sta sopra (prompt, functions, Apps Script).
+// Se sono ballerini anche qui, il problema è infrastrutturale.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -17,28 +27,18 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const PORT    = process.env.PORT    || 10000;
+const PORT     = process.env.PORT     || 10000;
 const BASE_URL = process.env.BASE_URL || 'https://prenow-realtime.onrender.com';
 
-const callDataMap = new Map();
-
-app.get('/', (req, res) => res.send('✅ Prenow Realtime Gateway (restore vC6)'));
+app.get('/', (req, res) => res.send('✅ Minimal Bridge Test'));
 
 app.post('/twiml-stream', (req, res) => {
-  const body = req.body || {};
-  const callSid = body.CallSid || body.call_sid || `unknown-${Date.now()}`;
-  const from    = body.From    || body.from    || '';
-  const to      = body.To      || body.to      || '';
-
-  console.log(`📞 Chiamata in arrivo - CallSid: ${callSid}`);
-  console.log(`   From: ${from}, To: ${to}`);
-
-  callDataMap.set(callSid, { from, to, callSid });
-  console.log(`💾 Salvato call data per CallSid: ${callSid}`);
+  const callSid = req.body?.CallSid || `unknown-${Date.now()}`;
+  const from    = req.body?.From    || '';
+  const to      = req.body?.To      || '';
+  console.log(`📞 Chiamata - CallSid: ${callSid} | From: ${from} | To: ${to}`);
 
   const wsUrl = `${BASE_URL.replace(/^http/, 'ws')}/media-stream`;
-  console.log(`🔌 WebSocket URL: ${wsUrl}`);
-
   const texml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
@@ -50,22 +50,19 @@ app.post('/twiml-stream', (req, res) => {
   <Pause length="60"/>
   <Pause length="60"/>
 </Response>`;
-
-  console.log(`📤 TeXML response: ${texml}`);
   res.type('text/xml').send(texml);
 });
 
 const server = createServer(app);
-setupMediaStreamHandler(server, callDataMap);
+setupMediaStreamHandler(server);
 
 server.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🚀 PRENOW REALTIME GATEWAY — RESTORE vC6                     ║
-║  📍 Porta: ${String(PORT).padEnd(49)}║
-║  🎤 OpenAI Model: gpt-realtime-mini                           ║
-║  📞 TeXML: POST /twiml-stream  <Start>+Pauses PCMU            ║
-║  🔌 WebSocket: /media-stream                                  ║
+║  🧪 MINIMAL BRIDGE TEST                                       ║
+║  📍 Port: ${String(PORT).padEnd(50)}║
+║  🎤 OpenAI: gpt-realtime-mini                                 ║
+║  📞 TeXML: POST /twiml-stream                                 ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
