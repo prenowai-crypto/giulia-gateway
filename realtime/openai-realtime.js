@@ -17,15 +17,10 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js vC11-2026-05-29 caricato');
+console.log('🟢 openai-realtime.js vC6-S2S-GA-2026-05-27 caricato');
 
 // ─── Modello e endpoint ──────────────────────────────────────────────────────
-// vC11: modello FULL (gpt-realtime), non mini.
-// Il tutorial ufficiale Telnyx per OpenAI Realtime e il sample ufficiale Twilio
-// usano entrambi 'gpt-realtime'. Il mini è 5-6× più economico ma è anche più
-// fragile su: audio narrowband 8kHz, schemi tool complessi, system prompt lunghi.
-// Quando l'audio funziona stabile possiamo tornare a 'gpt-realtime-mini' via env.
-const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime';
+const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
 
 // ─── Le 7 function: ESATTAMENTE come nei file forniti ────────────────────────
@@ -244,34 +239,27 @@ export class OpenAIRealtimeClient {
     });
   }
 
-  // ── Configurazione iniziale della sessione ────────────────────────────────
-  // vC11: configurazione MINIMALE, allineata al tutorial ufficiale Telnyx
-  // (telnyx.com/resources/outbound-ai-calls-python-openai-realtime, maggio 2026)
-  // e al sample ufficiale Twilio per OpenAI Realtime.
-  //
-  // Cosa è cambiato rispetto al vC10:
-  //   • output_modalities: ["audio"] esplicito (sia in session sia in response.create)
-  //   • turn_detection nudo: solo { type: 'server_vad' }, senza threshold/padding/
-  //     silence_duration/create_response/interrupt_response. Lasciamo i default
-  //     OpenAI, che sono testati e raccomandati dal tutorial ufficiale.
-  //   • Rimosso 'transcription: whisper-1' (introduceva log inquinati e pipeline
-  //     parallela non necessaria — il modello principale processa l'audio da sé).
-  //   • Rimosso 'noise_reduction' (parametro extra non nel tutorial ufficiale).
-  //   • Rimosso 'tool_choice: auto' (è il default, ridondante).
+  // ── Configurazione iniziale della sessione (struttura GA, non beta) ──────
   _sendSessionUpdate() {
     const sessionConfig = {
       type: 'realtime',
-      model: REALTIME_MODEL,
       instructions: this._buildSystemPrompt(),
-      output_modalities: ['audio'],
       tools: FUNCTIONS,
+      tool_choice: 'auto',
       audio: {
         input: {
-          format: { type: 'audio/pcmu' },                  // PCMU 8kHz da Telnyx
-          turn_detection: { type: 'server_vad' },          // default OpenAI
+          format: { type: 'audio/pcmu' },           // Telnyx PCMU 8kHz pass-through
+          transcription: { model: 'whisper-1' },   // trascrizione utente per log
+          turn_detection: {
+            type: 'semantic_vad',
+            eagerness: 'auto',
+            create_response: true,
+            interrupt_response: true,
+          },
+          noise_reduction: { type: 'far_field' },
         },
         output: {
-          format: { type: 'audio/pcmu' },                  // PCMU 8kHz a Telnyx
+          format: { type: 'audio/pcmu' },
           voice: this.restaurantConfig?.voice || 'coral',
         },
       },
@@ -322,13 +310,8 @@ export class OpenAIRealtimeClient {
         if (!this._sessionReady) {
           this._sessionReady = true;
           console.log('✅ session.updated → richiedo saluto iniziale');
-          // vC11: output_modalities esplicito anche nel response.create
-          // (pattern del tutorial ufficiale Telnyx). Il system prompt italiano
-          // dice al modello di salutarsi per primo identificandosi come AI.
-          this._send({
-            type: 'response.create',
-            response: { output_modalities: ['audio'] },
-          });
+          // Triggera il modello a parlare: il system prompt gli dice di salutare per primo
+          this._send({ type: 'response.create' });
           this._responseInFlight = true;
         }
         break;
@@ -345,8 +328,6 @@ export class OpenAIRealtimeClient {
         break;
 
       // Audio del modello → forward a Telnyx (nome evento GA: output_audio)
-      // vC10: pass-through diretto, nessuna conversione. OpenAI manda PCMU base64
-      // e Telnyx lo riceve così com'è — è il pattern raccomandato da Telnyx stessa.
       case 'response.output_audio.delta':
         if (msg.delta) this.onAudioDelta(msg.delta);
         break;
@@ -382,15 +363,10 @@ export class OpenAIRealtimeClient {
         }
         break;
 
-      // vC11: log esplicito di quando il VAD rileva voce. Senza transcription
-      // whisper questi sono i segnali di vita più importanti per capire se
-      // il modello sta sentendo l'utente.
+      // Cliente inizia a parlare mentre il bot parla → semantic VAD gestisce
+      // l'interruzione automaticamente (interrupt_response: true).
       case 'input_audio_buffer.speech_started':
-        console.log('🎙️  cliente: speech_started');
-        break;
-
-      case 'input_audio_buffer.speech_stopped':
-        console.log('🎙️  cliente: speech_stopped → response in arrivo');
+        // niente: configurazione VAD lo fa già
         break;
 
       case 'error':
@@ -541,14 +517,8 @@ export class OpenAIRealtimeClient {
 
   // ─── TOOL 3: crea_prenotazione ───────────────────────────────────────────
   async _toolCrea({ nome, data, ora, persone, note }) {
-    // 🆕 vC8: Guard anti-invenzione del nome allargato.
-    // Nei log del 29/05 il modello aveva creato una prenotazione con nome
-    // "da confermare" — la vecchia regex (cliente|sconosciuto|n.d.) non lo
-    // catturava. Ora copre anche "da confermare", "anonimo", "ospite",
-    // "non specificato", "tbd", "?" e stringhe di soli punti/numeri/spazi.
-    const nomeRaw = (nome == null ? '' : String(nome)).trim();
-    const placeholderRe = /^(cliente|sconosciuto|n\.?d\.?|anonimo|ospite|tbd|tba|da\s*confermare|non\s*specificat[oa]|senza\s*nome|nome|\?+|\.+|-+)$/i;
-    const nomeOk = nomeRaw && !placeholderRe.test(nomeRaw) && /[a-zà-ù]/i.test(nomeRaw); // deve contenere almeno una lettera vera
+    // Guard anti-invenzione: nome 'Cliente' (o vuoto) NON è valido
+    const nomeOk = nome && String(nome).trim() && !/^(cliente|sconosciuto|n\.?d\.?)$/i.test(String(nome).trim());
     if (!nomeOk) return { creata: false, manca: 'nome' };
     const dateISO = this._normDate(data);
     const timeN   = this._normTime(ora);
@@ -694,29 +664,8 @@ export class OpenAIRealtimeClient {
   }
 
   // ── Audio Telnyx → Realtime ──────────────────────────────────────────────
-  // vC10: pass-through diretto. Telnyx ci manda PCMU 8kHz base64, lo inoltriamo
-  // a OpenAI così com'è. Nessuna conversione, nessun resample, nessun byteswap.
   sendAudio(pcmuBase64) {
     if (this._ws?.readyState !== WebSocket.OPEN) return;
-
-    // ── DIAGNOSTICA: conta byte/chunk audio in ingresso da Telnyx ──
-    // Numeri ATTESI con PCMU 8kHz mono 8-bit:
-    //   8000 byte/s raw = ~10700 byte/s base64
-    //   In 2 secondi → ~21400 byte base64, ~100 chunk da 20ms.
-    // Se vedi numeri MOLTO inferiori per più cicli, l'audio si perde nel
-    // trasporto rete (problema esterno al codice — successo il 29/05 mattina).
-    const len = pcmuBase64 ? pcmuBase64.length : 0;
-    this._diagBytes  = (this._diagBytes  || 0) + len;
-    this._diagChunks = (this._diagChunks || 0) + 1;
-    const now = Date.now();
-    if (!this._diagLast) this._diagLast = now;
-    if (now - this._diagLast >= 2000) {
-      console.log(`🎤 audio IN (ultimi 2s): ${this._diagChunks} chunk, ${this._diagBytes} byte base64 (atteso ~21k)`);
-      this._diagBytes = 0;
-      this._diagChunks = 0;
-      this._diagLast = now;
-    }
-
     this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
   }
 
