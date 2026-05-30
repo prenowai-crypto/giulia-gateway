@@ -1,14 +1,24 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// MEDIA STREAM HANDLER v4.0 — Dual Session Architecture
-// Gestisce WebSocket Telnyx ↔ OpenAI Realtime (STT + TTS separati)
+// MEDIA STREAM HANDLER — vC11 (2026-05-29)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Riscritto seguendo il pattern del tutorial ufficiale Telnyx per OpenAI Realtime
+// (telnyx.com/resources/outbound-ai-calls-python-openai-realtime, maggio 2026).
+//
+// CAMBI RISPETTO AL vC10:
+//   - I messaggi 'media' inviati a Telnyx NON includono più stream_sid.
+//     Il tutorial ufficiale Telnyx invia solo { event: 'media', media: { payload } }.
+//     stream_sid lo richiede Twilio, non Telnyx, e ce lo eravamo portati dietro
+//     per errore.
+//   - Lifecycle semplificato: la chiamata vive finché la WebSocket vive
+//     (grazie a <Connect> nel TeXML). Niente più gestione di pause artificiali.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { WebSocketServer } from 'ws';
 import { OpenAIRealtimeClient } from './openai-realtime.js';
 import { DateManager } from './openai-realtime.js';
 
-// ─── REGISTRY CACHE ──────────────────────────────────────────────────────────
-
+// ─── Cache Registry (Google Sheet multi-tenant) ──────────────────────────────
 const registryCache = { data: null, time: 0, ttl: 5 * 60 * 1000 };
 
 async function fetchRegistry() {
@@ -17,7 +27,7 @@ async function fetchRegistry() {
     return registryCache.data;
   }
 
-  const SHEET_ID   = process.env.REGISTRY_SHEET_ID || '1AdXq1EagVhPsX-UT4HENfuQ1mxUN39kWtECiY6he8bg';
+  const SHEET_ID   = process.env.REGISTRY_SHEET_ID   || '1AdXq1EagVhPsX-UT4HENfuQ1mxUN39kWtECiY6he8bg';
   const SHEET_NAME = process.env.REGISTRY_SHEET_NAME || 'Registry';
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${SHEET_NAME}`;
 
@@ -77,43 +87,7 @@ async function getRestaurantConfig(telnyxNumber) {
   return match || null;
 }
 
-// ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
-
-function buildSystemPrompt(rc) {
-  const now    = DateManager.getNow();
-  const today  = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayISO = DateManager.toISO(today);
-
-  const closedDays = rc?.closed_days
-    ? String(rc.closed_days).split(',').map(Number)
-    : [1];
-  const dayNames = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-  const closedText = closedDays.map(d => dayNames[d]).join(', ');
-
-  const ls = rc?.lunch_start  || '12:00';
-  const le = rc?.lunch_end    || '14:30';
-  const ds = rc?.dinner_start || '19:00';
-  const de = rc?.dinner_end   || '22:30';
-
-  const allDays = [0,1,2,3,4,5,6];
-  const lunchClosedDays  = rc?.lunch_closed_days  ? String(rc.lunch_closed_days).split(',').map(Number)  : [];
-  const dinnerClosedDays = rc?.dinner_closed_days ? String(rc.dinner_closed_days).split(',').map(Number) : [];
-  const openForLunch  = allDays.filter(d => !closedDays.includes(d) && !lunchClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
-  const openForDinner = allDays.filter(d => !closedDays.includes(d) && !dinnerClosedDays.includes(d)).map(d => dayNames[d]).join(', ');
-
-  const recName = rc?.receptionist_name || 'Giulia';
-  const rName   = rc?.restaurant_name   || 'ristorante';
-
-  return `Sei ${recName}, receptionist di ${rName}.
-Parla in italiano, frasi brevi (max 2 frasi), tono professionale e cordiale.
-Oggi è ${dayNames[now.getDay()]} ${todayISO}.
-Orari pranzo: ${ls}-${le} (aperti: ${openForLunch}).
-Orari cena: ${ds}-${de} (aperti: ${openForDinner}).
-Chiuso il: ${closedText}.`;
-}
-
-// ─── SETUP ───────────────────────────────────────────────────────────────────
-
+// ─── WebSocket handler /media-stream ─────────────────────────────────────────
 export function setupMediaStreamHandler(server, callDataMapExternal) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -137,62 +111,60 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
       try { msg = JSON.parse(raw); } catch { return; }
 
       switch (msg.event) {
+
         case 'connected':
+          // Telnyx ha aperto la WS. Non è ancora arrivata la chiamata.
           console.log('✅ Telnyx connected');
           break;
 
         case 'start': {
-          const callId    = msg.start?.call_sid || msg.start?.callSid || `call-${Date.now()}`;
-          const toNumber  = msg.start?.to   || '';
-          const fromNumber = msg.start?.from || '';
-          streamSid = msg.start?.stream_sid || callId;
+          // La chiamata è agganciata alla WS. Adesso conosciamo CallSid, From, To.
+          const callId     = msg.start?.call_sid  || msg.start?.callSid || `call-${Date.now()}`;
+          const toNumber   = msg.start?.to        || '';
+          const fromNumber = msg.start?.from      || '';
+          streamSid        = msg.start?.stream_sid || callId;
 
           console.log(`📞 CallSid: ${callId} | From: ${fromNumber} | To: ${toNumber}`);
 
+          // Recupera config ristorante dal registry (multi-tenant by phone number).
           const rc = await getRestaurantConfig(toNumber);
 
-          // ── Crea client con callback audio ────────────────────────────────
-          // onAudioDelta viene impostato PRIMA di connect()
-          // così il greeting arriva a Telnyx anche se TTS genera audio
-          // durante la fase finale di connect()
+          // Crea il client OpenAI Realtime. Il callback onAudioDelta viene impostato
+          // PRIMA di connect() così l'audio del saluto iniziale (che il modello
+          // genera appena la sessione è pronta) trova già il canale di ritorno aperto.
           openaiClient = new OpenAIRealtimeClient({
             apiKey:           process.env.OPENAI_API_KEY,
             restaurantConfig: rc,
-            systemPrompt:     buildSystemPrompt(rc),
             callerPhone:      fromNumber,
 
-            // Audio TTS → Telnyx
-            onAudioDelta: (chunk) => {
+            // Audio del modello → Telnyx.
+            // FORMATO TELNYX UFFICIALE: { event: 'media', media: { payload: base64 } }
+            // NIENTE stream_sid (era un residuo Twilio nel vC10). Confermato dal
+            // tutorial Telnyx OpenAI Realtime di maggio 2026.
+            onAudioDelta: (audioBase64) => {
               if (telnyxWs.readyState === 1) {
                 telnyxWs.send(JSON.stringify({
-                  event:      'media',
-                  stream_sid: streamSid,
-                  media:      { payload: chunk },
+                  event: 'media',
+                  media: { payload: audioBase64 },
                 }));
               }
             },
 
-            onTranscript(text, role) {
-              // già loggato internamente
-            },
-            onError(err) {
-              console.error('❌ OpenAI error:', err);
-            },
-            onClose(code) {
+            onError: (err) => console.error('❌ OpenAI error:', err),
+            onClose: (code) => {
               isConnected = false;
               console.log(`🔴 OpenAI chiuso (${code})`);
             },
           });
 
-          // ── Connetti: STT pronta → TTS pronta → greeting ─────────────────
           await openaiClient.connect();
           isConnected = true;
-          console.log('✅ Dual session pronta, chiamata attiva');
+          console.log('✅ Sessione pronta, chiamata attiva');
           break;
         }
 
         case 'media':
-          // Audio Telnyx → STT session
+          // Audio del cliente (PCMU 8kHz base64) → OpenAI Realtime, pass-through.
           if (openaiClient && isConnected && msg.media?.payload) {
             openaiClient.sendAudio(msg.media.payload);
           }
@@ -201,13 +173,24 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
         case 'stop':
           console.log('🛑 Stop');
           openaiClient?.close();
-          telnyxWs.close();
+          try { telnyxWs.close(); } catch {}
           break;
+
+        case 'dtmf':
+          // Toni del tastierino. Per ora non li gestiamo.
+          console.log('☎️  DTMF:', msg.dtmf);
+          break;
+
+        case 'error':
+          console.error('❌ Telnyx stream error:', msg);
+          break;
+
+        // 'mark', 'clear' e altri eventi: ignorati silenziosamente per ora.
       }
     });
 
     telnyxWs.on('close', () => {
-      console.log('🔌 Telnyx chiuso');
+      console.log('🔌 Telnyx WS chiusa');
       openaiClient?.close();
       isConnected = false;
     });
