@@ -54,6 +54,20 @@ app.post('/twiml-stream', (req, res) => {
 });
 
 const server = createServer(app);
+
+// ⚡ FIX RACCOMANDATO DALLA DOCS RENDER per WebSocket / connessioni intermittenti.
+//
+// Default Node.js: keepAliveTimeout=5s, headersTimeout=60s.
+// Default Load Balancer Render: tiene connessioni più a lungo.
+// Mismatch = connessioni "fantasma" lato LB che accumulano dopo ogni chiamata,
+// causando degradazione progressiva sulle successive (esattamente il nostro pattern).
+//
+// Fonte: https://render.com/docs/troubleshooting-deploys
+// "Try increasing the values for server.keepAliveTimeout and server.headersTimeout
+//  (such as to 120000 for 120 seconds)"
+server.keepAliveTimeout = 120000;  // 120 secondi (era 5s default)
+server.headersTimeout   = 120000;  // 120 secondi (era 60s default)
+
 setupMediaStreamHandler(server);
 
 server.listen(PORT, () => {
