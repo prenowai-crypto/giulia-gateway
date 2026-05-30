@@ -96,7 +96,9 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
     let streamSid    = null;
     let isConnected  = false;
 
-    telnyxWs.on('message', async (raw) => {
+    // Handler nominati: salvati per poterli rimuovere alla chiusura.
+    // Senza removeListener il GC non libera le closure e si accumula leak.
+    const onMessage = async (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
 
@@ -121,7 +123,6 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
             systemPrompt:     '',
             callerPhone:      fromNumber,
 
-            // Audio TTS → Telnyx — INCLUDE stream_sid come nel vC6 originale
             onAudioDelta: (chunk) => {
               if (telnyxWs.readyState === 1) {
                 telnyxWs.send(JSON.stringify({
@@ -156,22 +157,62 @@ export function setupMediaStreamHandler(server, callDataMapExternal) {
 
         case 'stop':
           console.log('🛑 Stop');
-          openaiClient?.close();
-          telnyxWs.close();
+          cleanup();
           break;
       }
-    });
+    };
 
-    telnyxWs.on('close', () => {
+    const onClose = () => {
       console.log('🔌 Telnyx chiuso');
-      openaiClient?.close();
-      isConnected = false;
-    });
+      cleanup();
+    };
 
-    telnyxWs.on('error', (err) => {
+    const onError = (err) => {
       console.error('❌ Telnyx WS error:', err.message);
-    });
+      cleanup();
+    };
+
+    // Cleanup centralizzato: rimuove listener, chiude client, azzera riferimenti.
+    // Chiamato da stop/close/error per garantire una sola pulizia.
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
+      // Rimuovi listener Telnyx WS
+      try {
+        telnyxWs.removeListener('message', onMessage);
+        telnyxWs.removeListener('close',   onClose);
+        telnyxWs.removeListener('error',   onError);
+      } catch {}
+
+      // Chiudi client OpenAI (che ha il suo cleanup interno)
+      try { openaiClient?.close(); } catch {}
+
+      // Chiudi Telnyx WS se ancora aperta
+      try {
+        if (telnyxWs.readyState === 1) telnyxWs.close();
+      } catch {}
+
+      // Azzera riferimenti per aiutare il GC
+      openaiClient = null;
+      streamSid    = null;
+      isConnected  = false;
+    };
+
+    telnyxWs.on('message', onMessage);
+    telnyxWs.on('close',   onClose);
+    telnyxWs.on('error',   onError);
   });
 
   console.log('📡 WebSocket handler attivo su /media-stream');
+
+  // vC6+cleanup: monitor memoria ogni 30s.
+  // Se vediamo crescita lineare di heapUsed dopo ogni chiamata e mai discesa,
+  // il leak è ancora presente. Se sale e scende, il GC sta lavorando bene.
+  setInterval(() => {
+    const m = process.memoryUsage();
+    const mb = (n) => Math.round(n / 1024 / 1024);
+    console.log(`💾 mem: rss=${mb(m.rss)}MB heapUsed=${mb(m.heapUsed)}MB heapTotal=${mb(m.heapTotal)}MB external=${mb(m.external)}MB`);
+  }, 30000);
 }
