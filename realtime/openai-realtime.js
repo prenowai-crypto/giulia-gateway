@@ -10,7 +10,7 @@
 
 import WebSocket from 'ws';
 
-console.log('🟢 openai-realtime.js MINIMAL-BRIDGE-2026-05-30 caricato');
+console.log('🟢 openai-realtime.js MINIMAL-BRIDGE+DIAG-2026-05-30 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -24,6 +24,7 @@ export class OpenAIRealtimeClient {
   constructor(opts = {}) {
     this.apiKey       = opts.apiKey;
     this.onAudioDelta = opts.onAudioDelta || (() => {});
+    this.connId       = opts.connId || '????????';  // UUID per tracciare
     this._ws          = null;
     this._sessionReady = false;
   }
@@ -36,14 +37,18 @@ export class OpenAIRealtimeClient {
       this._ws = ws;
 
       ws.once('open', () => {
-        console.log(`🎙️  Realtime WS aperta (model: ${REALTIME_MODEL})`);
+        console.log(`🎙️  [${this.connId}] Realtime WS aperta (model: ${REALTIME_MODEL})`);
+        console.log(`📊 [${this.connId}] listener openaiWs all'apertura: message=${ws.listenerCount('message')} close=${ws.listenerCount('close')} error=${ws.listenerCount('error')}`);
         this._sendSessionUpdate();
         resolve();
       });
 
       ws.on('message', (data) => this._onMessage(data));
-      ws.on('error', (err) => console.error('❌ Realtime WS error:', err?.message));
-      ws.on('close', (code) => console.log(`🔴 Realtime WS chiusa (${code})`));
+      ws.on('error', (err) => console.error(`❌ [${this.connId}] Realtime WS error: ${err?.message}`));
+      ws.on('close', (code) => {
+        console.log(`🔴 [${this.connId}] Realtime WS chiusa (${code})`);
+        console.log(`📊 [${this.connId}] listener openaiWs alla chiusura: message=${ws.listenerCount('message')} close=${ws.listenerCount('close')}`);
+      });
 
       setTimeout(() => {
         if (ws.readyState !== WebSocket.OPEN) reject(new Error('WS open timeout'));
