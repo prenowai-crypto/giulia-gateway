@@ -79,7 +79,7 @@ app.post('/twiml-stream', (req, res) => {
   const texml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Start>
-    <Stream url="${wsUrl}" track="inbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMU" />
+    <Stream url="${wsUrl}" track="inbound_track" bidirectionalMode="rtp" bidirectionalCodec="PCMA" />
   </Start>
   <Pause length="60"/>
   <Pause length="60"/>
