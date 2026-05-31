@@ -66,7 +66,7 @@ export class OpenAIRealtimeClient {
           input: {
             format: { type: 'audio/pcma' },
             transcription: { model: 'gpt-realtime-whisper', language: 'it' },
-            turn_detection: { type: 'semantic_vad', eagerness: 'auto' },
+            turn_detection: { type: 'semantic_vad', eagerness: 'high' },
           },
           output: {
             format: { type: 'audio/pcma' },
