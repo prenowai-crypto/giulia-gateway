@@ -1,22 +1,22 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME GATEWAY — MINIMAL BRIDGE TEST (2026-05-30)
+// PRENOW REALTIME GATEWAY — CALL CONTROL + send_silence_when_idle (2026-05-31)
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// Setup MINIMO per isolare la pipeline audio Telnyx ↔ OpenAI Realtime.
+// MIGRAZIONE: da TeXML a Call Control API per supportare send_silence_when_idle.
 //
-// Niente:
-//   - Registry / multi-tenant
-//   - System prompt complesso
-//   - Functions / Apps Script / DateManager
-//   - Audio buffer / pacer
-//   - Cleanup elaborato
+// Differenza chiave dal sistema precedente (TeXML):
+//   - send_silence_when_idle:true → Telnyx genera pacchetti RTP di silenzio
+//     comfort noise quando l'app non sta mandando audio, mantenendo il flusso
+//     costante a 50pps. Evita frammentazione VAD su OpenAI Realtime.
 //
-// Solo: chiamata arriva → bridge audio bidirezionale → "Ciao sono un test".
+// Flow Call Control:
+//   1. Chiamata arriva al numero → webhook POST /webhooks/telnyx con event_type=call.initiated
+//   2. Risposta 200 OK + API call POST /v2/calls/{id}/actions/answer
+//   3. Webhook event_type=call.answered
+//   4. API call POST /v2/calls/{id}/actions/streaming_start (con send_silence_when_idle:true)
+//   5. Telnyx apre WebSocket → handler esistente in media-stream.js gestisce audio
 //
-// Obiettivo diagnostico: se i contatori audio IN sono stabili a 99 chunk
-// per tutte le chiamate consecutive, la pipeline base è solida e il problema
-// del nostro sistema sta sopra (prompt, functions, Apps Script).
-// Se sono ballerini anche qui, il problema è infrastrutturale.
+// L'endpoint legacy /twiml-stream è mantenuto per rollback rapido se serve.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import express from 'express';
@@ -28,12 +28,44 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const PORT     = process.env.PORT     || 10000;
-const BASE_URL = process.env.BASE_URL || 'https://prenow-realtime.onrender.com';
+const PORT            = process.env.PORT            || 10000;
+const BASE_URL        = process.env.BASE_URL        || 'https://prenow-realtime.onrender.com';
+const TELNYX_API_KEY  = process.env.TELNYX_API_KEY;
+const TELNYX_API_BASE = 'https://api.telnyx.com/v2';
 
-app.get('/', (req, res) => res.send('✅ Minimal Bridge + DIAG. GET /captures per lista, GET /captures/{id}.wav per scaricare.'));
+if (!TELNYX_API_KEY) {
+  console.warn('⚠️  TELNYX_API_KEY non configurata. Call Control non funzionerà.');
+}
 
-// ⚡ ENDPOINT DIAG: lista capture disponibili
+// ─── Helper per chiamate API a Telnyx ───────────────────────────────────────
+async function telnyxApiCall(path, payload = {}) {
+  try {
+    const response = await fetch(`${TELNYX_API_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${TELNYX_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept':       'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`❌ Telnyx API ${path} failed: ${response.status} ${errText}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (e) {
+    console.error(`❌ Telnyx API ${path} exception: ${e.message}`);
+    return null;
+  }
+}
+
+// ─── Endpoint diagnostici (immutati) ────────────────────────────────────────
+app.get('/', (req, res) => res.send('✅ Call Control + DIAG. GET /captures per lista, GET /captures/{id}.wav per scaricare.'));
+
 app.get('/captures', (req, res) => {
   try {
     const files = readdirSync(CAPTURE_DIR).filter(f => f.endsWith('.raw'));
@@ -54,7 +86,6 @@ app.get('/captures', (req, res) => {
   }
 });
 
-// ⚡ ENDPOINT DIAG: scarica capture come WAV (genera header al volo)
 app.get('/captures/:id.wav', (req, res) => {
   try {
     const id = req.params.id;
@@ -69,11 +100,78 @@ app.get('/captures/:id.wav', (req, res) => {
   }
 });
 
+// ─── ENDPOINT CALL CONTROL: webhook eventi Telnyx ──────────────────────────
+app.post('/webhooks/telnyx', async (req, res) => {
+  // Rispondi SUBITO a Telnyx (timeout 25s, dobbiamo essere veloci)
+  res.status(200).json({ received: true });
+
+  const event = req.body?.data;
+  if (!event) return;
+
+  const eventType     = event.event_type;
+  const payload       = event.payload || {};
+  const callControlId = payload.call_control_id;
+  const from          = payload.from;
+  const to            = payload.to;
+  const direction     = payload.direction;
+
+  console.log(`📩 Webhook: ${eventType} | CallControlId: ${callControlId} | From: ${from} | To: ${to} | Direction: ${direction}`);
+
+  // Solo chiamate IN ENTRATA (incoming)
+  if (direction && direction !== 'incoming') return;
+
+  switch (eventType) {
+    case 'call.initiated':
+      console.log(`📞 [${callControlId}] Chiamata in arrivo → invio ANSWER`);
+      // API call per rispondere alla chiamata
+      await telnyxApiCall(`/calls/${callControlId}/actions/answer`, {});
+      break;
+
+    case 'call.answered':
+      console.log(`✅ [${callControlId}] Chiamata risposta → invio STREAMING_START con send_silence_when_idle=true`);
+
+      const wsUrl = `${BASE_URL.replace(/^http/, 'ws')}/media-stream`;
+
+      // ⚡ QUESTA È LA CHIAMATA CRITICA: send_silence_when_idle:true
+      await telnyxApiCall(`/calls/${callControlId}/actions/streaming_start`, {
+        stream_url:                        wsUrl,
+        stream_track:                      'inbound_track',
+        stream_codec:                      'PCMA',
+        stream_bidirectional_mode:         'rtp',
+        stream_bidirectional_codec:        'PCMA',
+        stream_bidirectional_sampling_rate: 8000,
+        send_silence_when_idle:            true,   // ⚡ FIX PRINCIPALE
+      });
+      break;
+
+    case 'streaming.started':
+      console.log(`🎧 [${callControlId}] Streaming attivo`);
+      break;
+
+    case 'streaming.stopped':
+      console.log(`🔇 [${callControlId}] Streaming fermato`);
+      break;
+
+    case 'streaming.failed':
+      console.error(`❌ [${callControlId}] Streaming failed:`, payload);
+      break;
+
+    case 'call.hangup':
+      console.log(`☎️  [${callControlId}] Chiamata terminata (${payload.hangup_cause})`);
+      break;
+
+    default:
+      // Eventi non gestiti vengono solo loggati
+      break;
+  }
+});
+
+// ─── ENDPOINT LEGACY TeXML (mantenuto per rollback) ────────────────────────
 app.post('/twiml-stream', (req, res) => {
   const callSid = req.body?.CallSid || `unknown-${Date.now()}`;
   const from    = req.body?.From    || '';
   const to      = req.body?.To      || '';
-  console.log(`📞 Chiamata - CallSid: ${callSid} | From: ${from} | To: ${to}`);
+  console.log(`📞 [LEGACY TeXML] Chiamata - CallSid: ${callSid} | From: ${from} | To: ${to}`);
 
   const wsUrl = `${BASE_URL.replace(/^http/, 'ws')}/media-stream`;
   const texml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -92,28 +190,21 @@ app.post('/twiml-stream', (req, res) => {
 
 const server = createServer(app);
 
-// ⚡ FIX RACCOMANDATO DALLA DOCS RENDER per WebSocket / connessioni intermittenti.
-//
-// Default Node.js: keepAliveTimeout=5s, headersTimeout=60s.
-// Default Load Balancer Render: tiene connessioni più a lungo.
-// Mismatch = connessioni "fantasma" lato LB che accumulano dopo ogni chiamata,
-// causando degradazione progressiva sulle successive (esattamente il nostro pattern).
-//
-// Fonte: https://render.com/docs/troubleshooting-deploys
-// "Try increasing the values for server.keepAliveTimeout and server.headersTimeout
-//  (such as to 120000 for 120 seconds)"
-server.keepAliveTimeout = 120000;  // 120 secondi (era 5s default)
-server.headersTimeout   = 120000;  // 120 secondi (era 60s default)
+// Fix keepAliveTimeout per Render (raccomandato dalla docs)
+server.keepAliveTimeout = 120000;
+server.headersTimeout   = 120000;
 
 setupMediaStreamHandler(server);
 
 server.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🧪 MINIMAL BRIDGE TEST                                       ║
+║  🧪 CALL CONTROL + send_silence_when_idle                     ║
 ║  📍 Port: ${String(PORT).padEnd(50)}║
 ║  🎤 OpenAI: gpt-realtime-mini                                 ║
-║  📞 TeXML: POST /twiml-stream                                 ║
+║  📞 Webhook: POST /webhooks/telnyx                            ║
+║  📞 Legacy TeXML: POST /twiml-stream                          ║
+║  🔑 TELNYX_API_KEY: ${(TELNYX_API_KEY ? '✅ configured' : '❌ MISSING').padEnd(42)}║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
