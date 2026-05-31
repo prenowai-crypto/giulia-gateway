@@ -140,7 +140,7 @@ app.post('/webhooks/telnyx', async (req, res) => {
         stream_bidirectional_mode:         'rtp',
         stream_bidirectional_codec:        'PCMA',
         stream_bidirectional_sampling_rate: 8000,
-        send_silence_when_idle:            true,   // ⚡ FIX PRINCIPALE
+        send_silence_when_idle:            false,  // ⚠️ DISABILITATO: comfort noise rompeva il VAD OpenAI
       });
       break;
 
@@ -199,7 +199,7 @@ setupMediaStreamHandler(server);
 server.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║  🧪 CALL CONTROL + send_silence_when_idle                     ║
+║  🧪 CALL CONTROL (silence injection OFF)                      ║
 ║  📍 Port: ${String(PORT).padEnd(50)}║
 ║  🎤 OpenAI: gpt-realtime-mini                                 ║
 ║  📞 Webhook: POST /webhooks/telnyx                            ║
