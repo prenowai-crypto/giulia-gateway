@@ -10,7 +10,7 @@
 
 import WebSocket from 'ws';
 
-console.log('🟢 openai-realtime.js MINIMAL-BRIDGE+DIAG+PCMA-2026-05-31 caricato');
+console.log('🟢 openai-realtime.js MINIMAL-BRIDGE+DIAG+PCMA+RTW-IT-2026-05-31 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -65,7 +65,7 @@ export class OpenAIRealtimeClient {
         audio: {
           input: {
             format: { type: 'audio/pcma' },
-            transcription: { model: 'whisper-1' },
+            transcription: { model: 'gpt-realtime-whisper', language: 'it' },
             turn_detection: { type: 'server_vad' },
           },
           output: {
