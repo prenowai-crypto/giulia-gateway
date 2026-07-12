@@ -1,57 +1,91 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// MEDIA STREAM HANDLER — MINIMAL BRIDGE + DIAG vC6-diag-2026-05-30
+// MEDIA STREAM HANDLER — GIULIA v1 MULTI-TENANT (Fase 1)
 // ═══════════════════════════════════════════════════════════════════════════════
-// Aggiunge diagnostici per identificare la causa della degradazione audio
-// nelle chiamate consecutive:
+// Differenze rispetto al minimal bridge:
+//   - Accetta `callInfoByCallControlId` (Map) da index.js.
+//   - Estrae `callControlId` dalla query dell'URL WS.
+//   - Recupera { from, to, restaurantConfig } dalla Map e li passa al client.
 //
-//  1. UUID univoco per ogni connessione (loggato dappertutto)
-//  2. Conteggio listener su telnyxWs e su openaiWs (deve restare a 1)
-//  3. Dump audio raw PCMU su /tmp/capture-{uuid}.raw (primi 15 secondi)
-//  4. Log hex primi 16 bytes dei primi 5 chunk audio
-//  5. Endpoint HTTP per scaricare i capture come WAV
-//
-// L'idea (suggerimento dell'altra IA): se l'audio salvato suona italiano
-// pulito, Telnyx è innocente e il problema è dopo. Se suona distorto,
-// il problema è prima del gateway. Una sola prova ci elimina metà delle ipotesi.
+// Diagnostica invariata: UUID connId, capture WAV, log hex primi 5 chunk.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { WebSocketServer } from 'ws';
 import { OpenAIRealtimeClient } from './openai-realtime.js';
 import { randomUUID } from 'crypto';
-import { writeFileSync, appendFileSync, existsSync } from 'fs';
-import { mkdirSync } from 'fs';
+import { writeFileSync, appendFileSync, readFileSync, mkdirSync } from 'fs';
 
 const CAPTURE_DIR = '/tmp/captures';
 const CAPTURE_SECONDS = 15;
-const CAPTURE_MAX_BYTES = 8000 * CAPTURE_SECONDS; // 8kHz PCMU = 8000 byte/sec raw
+const CAPTURE_MAX_BYTES = 8000 * CAPTURE_SECONDS;
 
-// Crea cartella capture se non esiste
 try { mkdirSync(CAPTURE_DIR, { recursive: true }); } catch {}
 
-export function setupMediaStreamHandler(server) {
+export { CAPTURE_DIR };
+
+// ─── Helper: costruisce un WAV μ-law da raw PCMU ────────────────────────────
+export function buildWavFromMulawRaw(rawBuf) {
+  const dataLen = rawBuf.length;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + dataLen, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(7, 20);       // audio format 7 = μ-law
+  header.writeUInt16LE(1, 22);       // channels
+  header.writeUInt32LE(8000, 24);    // sample rate
+  header.writeUInt32LE(8000, 28);    // byte rate
+  header.writeUInt16LE(1, 32);       // block align
+  header.writeUInt16LE(8, 34);       // bits per sample
+  header.write('data', 36);
+  header.writeUInt32LE(dataLen, 40);
+  return Buffer.concat([header, rawBuf]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// setupMediaStreamHandler
+// ═══════════════════════════════════════════════════════════════════════════════
+export function setupMediaStreamHandler(server, callInfoByCallControlId = new Map()) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
-    if (req.url === '/media-stream') {
+    if (req.url && req.url.startsWith('/media-stream')) {
       wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
     }
   });
 
-  wss.on('connection', (telnyxWs) => {
-    // ⚡ DIAG 1: UUID univoco per ogni connessione
+  wss.on('connection', (telnyxWs, req) => {
     const connId = randomUUID().substring(0, 8);
-    console.log(`🔌 [${connId}] Nuova connessione Telnyx`);
+    console.log(`🔌 [${connId}] Nuova connessione Telnyx (url=${req.url})`);
 
-    // ⚡ DIAG 2: conteggio listener
+    // ─── Estrai callControlId dalla query string ─────────────────────────
+    let callControlId = null;
+    try {
+      const u = new URL(req.url, `http://${req.headers.host || 'x'}`);
+      callControlId = u.searchParams.get('callControlId');
+    } catch {}
+
+    const callInfo = callControlId ? callInfoByCallControlId.get(callControlId) : null;
+    const from = callInfo?.from || '';
+    const to   = callInfo?.to   || '';
+    const restaurantConfig = callInfo?.restaurantConfig || null;
+
+    if (callInfo) {
+      const rn = restaurantConfig?.restaurantName || '(nessuna config)';
+      console.log(`✅ [${connId}] callControlId=${callControlId} from=${from} to=${to} ristorante="${rn}"`);
+    } else {
+      console.log(`⚠️  [${connId}] callControlId=${callControlId || '(mancante)'} — nessuna callInfo`);
+    }
+
     console.log(`📊 [${connId}] listener telnyxWs all'apertura: message=${telnyxWs.listenerCount('message')} close=${telnyxWs.listenerCount('close')} error=${telnyxWs.listenerCount('error')}`);
 
     let openaiClient = null;
     let streamSid    = null;
 
-    // ⚡ DIAG 3+4: stato dump audio
+    // Capture diagnostico
     const capturePath = `${CAPTURE_DIR}/capture-${connId}.raw`;
     let captureBytesWritten = 0;
-    let chunkLogCount = 0; // log hex dei primi 5 chunk
+    let chunkLogCount = 0;
 
     telnyxWs.on('message', async (raw) => {
       let msg;
@@ -65,15 +99,18 @@ export function setupMediaStreamHandler(server) {
         case 'start':
           streamSid = msg.start?.stream_sid || `stream-${Date.now()}`;
           console.log(`📞 [${connId}] Start - streamSid: ${streamSid} - CallSid: ${msg.start?.call_sid}`);
+          console.log(`🔬 [${connId}] msg.start payload: ${JSON.stringify(msg.start).substring(0, 500)}`);
 
-          // Crea file capture vuoto
           try { writeFileSync(capturePath, Buffer.alloc(0)); } catch (e) {
             console.error(`❌ [${connId}] errore creazione capture file: ${e.message}`);
           }
 
           openaiClient = new OpenAIRealtimeClient({
             apiKey: process.env.OPENAI_API_KEY,
-            connId,  // passa l'UUID al client per tracciare
+            connId,
+            from,
+            to,
+            restaurantConfig,   // 🆕 config del ristorante (dal Registry)
             onAudioDelta: (chunk) => {
               if (telnyxWs.readyState === 1) {
                 telnyxWs.send(JSON.stringify({
@@ -91,25 +128,29 @@ export function setupMediaStreamHandler(server) {
 
         case 'media':
           if (openaiClient && msg.media?.payload) {
-            // ⚡ DIAG 4: log hex primi 16 bytes dei primi 5 chunk
             if (chunkLogCount < 5) {
               const buf = Buffer.from(msg.media.payload, 'base64');
               console.log(`🔬 [${connId}] chunk #${chunkLogCount + 1}: len=${buf.length} hex=${buf.subarray(0, 16).toString('hex')}`);
               chunkLogCount++;
             }
-
-            // ⚡ DIAG 3: dump audio raw su file (primi 15 secondi)
             if (captureBytesWritten < CAPTURE_MAX_BYTES) {
               try {
                 const buf = Buffer.from(msg.media.payload, 'base64');
-                appendFileSync(capturePath, buf);
-                captureBytesWritten += buf.length;
+                const remaining = CAPTURE_MAX_BYTES - captureBytesWritten;
+                const toWrite = buf.length <= remaining ? buf : buf.subarray(0, remaining);
+                appendFileSync(capturePath, toWrite);
+                captureBytesWritten += toWrite.length;
                 if (captureBytesWritten >= CAPTURE_MAX_BYTES) {
-                  console.log(`💾 [${connId}] capture completata: ${captureBytesWritten} byte → /captures/${connId}.wav`);
+                  const wavPath = `${CAPTURE_DIR}/${connId}.wav`;
+                  try {
+                    const rawBuf = readFileSync(capturePath);
+                    writeFileSync(wavPath, buildWavFromMulawRaw(rawBuf));
+                    console.log(`💾 [${connId}] capture completata: ${captureBytesWritten} byte → ${wavPath}`);
+                  } catch (e) {
+                    console.error(`❌ [${connId}] errore build wav: ${e.message}`);
+                  }
                 }
-              } catch (e) {
-                console.error(`❌ [${connId}] errore append capture: ${e.message}`);
-              }
+              } catch {}
             }
 
             openaiClient.sendAudio(msg.media.payload);
@@ -118,7 +159,7 @@ export function setupMediaStreamHandler(server) {
 
         case 'stop':
           console.log(`🛑 [${connId}] Stop`);
-          openaiClient?.close();
+          if (openaiClient) openaiClient.close();
           break;
       }
     });
@@ -126,49 +167,13 @@ export function setupMediaStreamHandler(server) {
     telnyxWs.on('close', () => {
       console.log(`🔌 [${connId}] Telnyx chiuso - capture: ${captureBytesWritten} byte salvati in ${capturePath}`);
       console.log(`📊 [${connId}] listener telnyxWs alla chiusura: message=${telnyxWs.listenerCount('message')} close=${telnyxWs.listenerCount('close')}`);
-      openaiClient?.close();
+      if (openaiClient) openaiClient.close();
     });
 
     telnyxWs.on('error', (err) => {
-      console.error(`❌ [${connId}] Telnyx WS error: ${err.message}`);
+      console.error(`❌ [${connId}] Telnyx WS error: ${err?.message}`);
     });
   });
 
-  console.log('📡 WebSocket handler attivo su /media-stream');
-
-  // Monitor memoria + WSS listeners ogni 30s
-  setInterval(() => {
-    const m = process.memoryUsage();
-    const mb = (n) => Math.round(n / 1024 / 1024);
-    console.log(`💾 mem: rss=${mb(m.rss)}MB heapUsed=${mb(m.heapUsed)}MB | WSS clients: ${wss.clients.size} | WSS listenerCount('connection'): ${wss.listenerCount('connection')}`);
-  }, 30000);
+  return wss;
 }
-
-// ─── Endpoint per scaricare i capture come WAV ──────────────────────────────
-// PCMU 8kHz mono → WAV format=7 (WAVE_FORMAT_MULAW)
-// Lo header WAV viene generato al volo dal file raw.
-export function buildWavFromMulawRaw(rawBuf) {
-  const dataLen = rawBuf.length;
-  const header = Buffer.alloc(58);
-  let p = 0;
-  header.write('RIFF', p); p += 4;
-  header.writeUInt32LE(50 + dataLen, p); p += 4;  // ChunkSize
-  header.write('WAVE', p); p += 4;
-  header.write('fmt ', p); p += 4;
-  header.writeUInt32LE(18, p); p += 4;       // Subchunk1Size (18 per non-PCM)
-  header.writeUInt16LE(7, p); p += 2;        // AudioFormat: 7 = µ-law
-  header.writeUInt16LE(1, p); p += 2;        // NumChannels: mono
-  header.writeUInt32LE(8000, p); p += 4;     // SampleRate
-  header.writeUInt32LE(8000, p); p += 4;     // ByteRate (8000 * 1 * 8/8)
-  header.writeUInt16LE(1, p); p += 2;        // BlockAlign
-  header.writeUInt16LE(8, p); p += 2;        // BitsPerSample
-  header.writeUInt16LE(0, p); p += 2;        // cbSize
-  header.write('fact', p); p += 4;
-  header.writeUInt32LE(4, p); p += 4;        // fact chunk size
-  header.writeUInt32LE(dataLen, p); p += 4;  // num samples
-  header.write('data', p); p += 4;
-  header.writeUInt32LE(dataLen, p); p += 4;
-  return Buffer.concat([header, rawBuf]);
-}
-
-export { CAPTURE_DIR };
