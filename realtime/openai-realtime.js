@@ -1,25 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.2 — SPEECH-TO-SPEECH (gpt-realtime-mini) MULTI-TENANT
+// PRENOW REALTIME v7.3 — SPEECH-TO-SPEECH (gpt-realtime-mini) MULTI-TENANT
 // ═══════════════════════════════════════════════════════════════════════════════
-// Cambiamenti v7.2 rispetto a v7.1 (dai test T01-T20 del 13/07):
+// Cambiamenti v7.3 rispetto a v7.2 (dai test 15:58 del 13/07):
 //
 // PROMPT
-//   - Regola "PRIMA CHIAMA POI PARLA": il modello DEVE chiamare il tool
-//     prima di dire "registrata"/"confermata" (fix T17, T18 — bug gravissimo:
-//     in T18 il modello diceva "ho registrato la richiesta" senza mai chiamare
-//     richiedi_evento, illudendo il cliente).
-//   - Memoria contesto rafforzata con esempio concreto: se cliente cambia
-//     solo il giorno, riusa ora/persone/nome già raccolti (fix T05).
-//   - Regola no placeholder testuali tipo "[nome del cliente]" (fix T11).
-//   - Regola no orario assunto: se cliente dice solo "sera"/"pranzo" senza
-//     un'ora precisa, chiedi (fix T19).
-//   - Regola orari/giorni: per queste domande usa la tabella settimanale del
-//     prompt — NON chiamare info_locale (fix T06).
-//   - Regola filler nella stessa response del tool call.
-//   - Regola contatto: spiega che chiamerà al numero visualizzato.
-//
-// SCHEMA
-//   - richiedi_evento: aggiunto `email` opzionale per contatto evento.
+//   P1 - Separazione netta: prenotazione normale = CONFERMATA subito,
+//        gruppo_grande/evento = "il ristorante la richiamerà".
+//   P2 - Se cliente annulla, MAI dire "il ristorante la ricontatterà".
+//   P3 - Memoria contesto rafforzata con esempio letterale.
+//   P4 - Tabella settimanale COMPLETAMENTE in italiano (era mista, il modello
+//        interpretava male "Lunch/Dinner" e saltava domenica).
+//   P5 - MAI dire "contatti direttamente il ristorante" — SEI il ristorante.
+//   P6 - MAI creare senza aver chiesto persone. Se hai appena creato e il
+//        cliente corregge, USA modifica_prenotazione (mai seconda create).
+//   P7 - Regola tool-first per gruppo_grande con esempio WRONG/RIGHT esplicito.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
@@ -29,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.2-MT-2026-07-13 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.3-MT-2026-07-13 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -42,12 +36,12 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'trova_prenotazione',
-    description: 'Cerca una prenotazione esistente dato il nome fornito dal cliente e, opzionalmente, una data. Il telefono del chiamante è aggiunto automaticamente dal sistema.',
+    description: 'Cerca una prenotazione esistente dato il nome e opzionalmente una data. Il telefono del chiamante è aggiunto automaticamente dal sistema.',
     parameters: {
       type: 'object',
       properties: {
         nome: { type: 'string', description: 'Nome o cognome sulla prenotazione' },
-        data: { type: 'string', description: "Data indicata dal cliente, ad esempio 'sabato' o 'domani'. Opzionale." },
+        data: { type: 'string', description: "Data indicata dal cliente. Opzionale, passa \"\" se non specificata." },
       },
       required: ['nome', 'data'],
       additionalProperties: false,
@@ -56,13 +50,13 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'controlla_disponibilita',
-    description: "Verifica disponibilità per data+ora+persone. Esiti: libero (procedi crea_prenotazione), gruppo_grande (procedi crea_prenotazione, sarà PENDING), evento (usa richiedi_evento), giorno_chiuso, solo_cena, solo_pranzo, fuori_orario, pieno, manca_*.",
+    description: "Verifica disponibilità per data+ora+persone. Esiti: libero (procedi crea), gruppo_grande (procedi crea, sarà PENDING), evento (usa richiedi_evento), giorno_chiuso, solo_cena, solo_pranzo, fuori_orario, pieno, manca_*.",
     parameters: {
       type: 'object',
       properties: {
-        data:    { type: 'string',  description: "Data come detta dal cliente, es. 'sabato', 'domani'" },
-        ora:     { type: 'string',  description: "Ora come detta dal cliente, es. 'alle 21', 'nove e mezza'" },
-        persone: { type: 'integer', description: 'Numero totale di persone' },
+        data:    { type: 'string',  description: "Data come detta dal cliente" },
+        ora:     { type: 'string',  description: "Ora come detta dal cliente" },
+        persone: { type: 'integer', description: 'Numero totale di persone (mai inventare, sempre chiedere)' },
       },
       required: ['data', 'ora', 'persone'],
       additionalProperties: false,
@@ -71,15 +65,15 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'crea_prenotazione',
-    description: "Crea una nuova prenotazione. Chiamare dopo controlla_disponibilita con esito 'libero' o 'gruppo_grande'. Passa il nome ESATTO. Mai 'Cliente' o placeholder.",
+    description: "Crea una nuova prenotazione. SOLO dopo controlla_disponibilita con esito 'libero' o 'gruppo_grande'. Nome esatto come pronunciato. Mai 'Cliente'.",
     parameters: {
       type: 'object',
       properties: {
-        nome:    { type: 'string',  description: 'Nome del cliente esattamente come pronunciato e confermato' },
+        nome:    { type: 'string',  description: 'Nome esatto del cliente' },
         data:    { type: 'string',  description: "Data come detta dal cliente" },
         ora:     { type: 'string',  description: "Ora come detta dal cliente" },
-        persone: { type: 'integer', description: 'Numero di persone' },
-        note:    { type: 'string',  description: 'Note (allergie, seggiolone, compleanno). "" se nessuna.' },
+        persone: { type: 'integer', description: 'Numero di persone (mai inventato)' },
+        note:    { type: 'string',  description: 'Note. "" se nessuna.' },
       },
       required: ['nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
@@ -88,15 +82,15 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'modifica_prenotazione',
-    description: 'Modifica una prenotazione esistente. Chiamare dopo trova_prenotazione. Passa "" o 0 per i campi che NON cambiano. La nota SOSTITUISCE, non aggiungere quella vecchia.',
+    description: 'Modifica una prenotazione esistente. USA QUESTO anche se hai appena creato una prenotazione e il cliente corregge un dettaglio (MAI creare una seconda). Passa "" o 0 per i campi che NON cambiano. Nota FINALE completa (sostituisce).',
     parameters: {
       type: 'object',
       properties: {
-        nome:    { type: 'string',  description: 'Nuovo nome corretto. "" se non cambia.' },
+        nome:    { type: 'string',  description: 'Nuovo nome. "" se non cambia.' },
         data:    { type: 'string',  description: 'Nuova data. "" se non cambia.' },
         ora:     { type: 'string',  description: 'Nuova ora. "" se non cambia.' },
         persone: { type: 'integer', description: 'Nuovo numero persone. 0 se non cambia.' },
-        note:    { type: 'string',  description: 'Nota FINALE completa che sostituisce la precedente. "" se non cambia.' },
+        note:    { type: 'string',  description: 'Nota FINALE completa. "" se non cambia.' },
       },
       required: ['nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
@@ -105,11 +99,11 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'cancella_prenotazione',
-    description: 'Cancella la prenotazione trovata con trova_prenotazione dopo esplicita conferma del cliente.',
+    description: 'Cancella la prenotazione trovata con trova_prenotazione dopo conferma esplicita del cliente.',
     parameters: {
       type: 'object',
       properties: {
-        conferma: { type: 'string', description: "Passa 'ok' per confermare la cancellazione" },
+        conferma: { type: 'string', description: "'ok' per confermare" },
       },
       required: ['conferma'],
       additionalProperties: false,
@@ -118,11 +112,11 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'info_locale',
-    description: "Risponde a domande sul ristorante: menu, piatti, opzioni vegetariane/vegane/senza glutine, parcheggio, accessibilità, pagamenti, dehors, seggiolone, prezzi, coperto. NON per orari o giorni di apertura (quelli sono nella tabella settimanale del prompt).",
+    description: "Info sul ristorante: menu, piatti, opzioni vegetariane/vegane/senza glutine, parcheggio, accessibilità, pagamenti, dehors, seggiolone, prezzi, coperto. NON per orari o giorni di apertura (quelli sono nella tabella del prompt).",
     parameters: {
       type: 'object',
       properties: {
-        argomento: { type: 'string', description: "Cosa chiede il cliente: 'menu', 'vegano', 'parcheggio', 'coperto', 'accessibilità', ecc." },
+        argomento: { type: 'string', description: "Argomento richiesto" },
       },
       required: ['argomento'],
       additionalProperties: false,
@@ -131,16 +125,16 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'richiedi_evento',
-    description: "Registra una richiesta evento (persone ≥ event_threshold). SOLO dopo controlla_disponibilita esito 'evento'. Se il cliente fornisce un'email di contatto, passala.",
+    description: "Registra richiesta evento (persone ≥ event_threshold). SOLO dopo controlla_disponibilita esito 'evento'.",
     parameters: {
       type: 'object',
       properties: {
-        nome:    { type: 'string',  description: 'Nome del richiedente (mai placeholder)' },
-        data:    { type: 'string',  description: "Data dell'evento come detta dal cliente" },
-        ora:     { type: 'string',  description: "Ora dell'evento come detta dal cliente" },
-        persone: { type: 'integer', description: "Numero di persone stimate" },
-        note:    { type: 'string',  description: "Dettagli aggiuntivi. \"\" se nessuno." },
-        email:   { type: 'string',  description: "Email di contatto se fornita dal cliente. \"\" se non fornita." },
+        nome:    { type: 'string',  description: 'Nome del richiedente' },
+        data:    { type: 'string',  description: "Data" },
+        ora:     { type: 'string',  description: "Ora" },
+        persone: { type: 'integer', description: "Persone stimate" },
+        note:    { type: 'string',  description: "Dettagli. \"\" se nessuno." },
+        email:   { type: 'string',  description: "Email di contatto. \"\" se non fornita." },
       },
       required: ['nome', 'data', 'ora', 'persone', 'note', 'email'],
       additionalProperties: false,
@@ -149,103 +143,128 @@ const FUNCTIONS = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM PROMPT — v7.2
+// SYSTEM PROMPT — v7.3
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT_TEMPLATE = `Act as {{RECEPTIONIST_NAME}}, the automated phone receptionist for {{RESTAURANT_NAME}}. Speak only Italian, warm and professional, sentences 5-20 words. Never invent details. Only confirm bookings/modifications/cancellations AFTER the tool returns success.
+const SYSTEM_PROMPT_TEMPLATE = `Sei {{RECEPTIONIST_NAME}}, receptionist vocale automatica di {{RESTAURANT_NAME}}. Parla solo italiano, tono caldo e professionale. Ogni risposta: 1-2 frasi brevi, 5-20 parole. Non inventare mai dettagli. Conferma prenotazioni/modifiche/cancellazioni SOLO dopo che il tool ha restituito successo.
 
-Today is {{TODAY_HUMAN}} ({{TODAY_ISO}}). Caller's phone (automatic): {{CALLER_PHONE}}.
+Oggi è {{TODAY_HUMAN}} ({{TODAY_ISO}}). Numero del chiamante (automatico): {{CALLER_PHONE}}.
 
-# Weekly schedule — THIS IS THE ONLY SOURCE OF TRUTH for opening days/hours
+# Orari settimanali — UNICA FONTE DI VERITÀ per giorni e orari
 {{WEEKLY_SCHEDULE}}
 
-For ANY question about opening hours or opening days (e.g. "quando siete aperti?", "che orari fate?", "aprite il lunedì?", "quando siete aperti a pranzo?"), answer DIRECTLY from this weekly schedule. NEVER call info_locale for these questions — info_locale doesn't know the schedule.
+Per QUALSIASI domanda su orari o giorni di apertura ("quando siete aperti?", "che orari fate?", "aprite lunedì?", "aperti a pranzo?", "aperti domenica?"), rispondi DIRETTAMENTE dagli orari qui sopra leggendoli attentamente. Elenca TUTTI i giorni pertinenti (non saltarne nessuno). Non chiamare mai info_locale per domande su orari o giorni.
 
-At call start: "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?" (EU AI Act requirement).
+Se ti chiedono "aperti a pranzo?" elenca TUTTI i giorni con "Pranzo" scritto sopra. Se ti chiedono "domenica?" leggi la riga della domenica e dì esattamente quello che c'è scritto (se dice "Pranzo X-Y, Cena W-Z" significa aperto sia a pranzo che a cena, MAI dire "solo a pranzo").
 
-# 🔴 RULE #1 — TOOL FIRST, THEN SPEAK (CRITICAL)
-NEVER announce an outcome ("registrata", "prenotato", "confermato", "aggiornato", "cancellato") before the corresponding tool has returned success. Sequence: (1) gather data, (2) call the tool, (3) WAIT for the tool result, (4) then speak.
+Apertura chiamata: "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?" (obbligo AI Act).
 
-WRONG (this happened in tests and misled the customer):
-  Customer: "50 persone per il 20 agosto alle 21, sono Sara"
-  AI: "Perfetto, ho registrato la richiesta." ← WRONG: tool never called
-WRONG:
-  Customer: "15 persone martedì alle 21, sono Luca"
-  AI: "La prenotazione per il gruppo è registrata." ← WRONG: crea_prenotazione not called
+# 🔴 REGOLA #1 — TOOL FIRST, THEN SPEAK (CRITICA)
+MAI annunciare esiti ("registrata", "prenotato", "confermato", "aggiornato", "cancellato") PRIMA che il tool corrispondente abbia restituito successo. Sequenza: (1) raccogli dati, (2) chiama il tool, (3) ASPETTA il risultato, (4) parla.
 
-RIGHT:
-  Customer: "50 persone per il 20 agosto..."
-  AI: [call controlla_disponibilita] → esito "evento"
-  AI: "Perfetto, mi lascia un'email di contatto per l'evento?"
-  Customer: "sara@mail.it"
-  AI: [call richiedi_evento with email] → registrata:true
-  AI: "Ho registrato la richiesta, il ristorante la contatterà a breve."
+Esempi SBAGLIATI (successi in test — mai più):
+  Cliente: "15 persone martedì alle 21, sono Luca"
+  → AI: [chiama controlla_disponibilita] → esito gruppo_grande
+  → AI: "Sto registrando la richiesta..." ❌ SBAGLIATO: crea_prenotazione non chiamato
 
-# 🔴 RULE #2 — NO TEXT PLACEHOLDERS (CRITICAL)
-NEVER use bracketed placeholders like "[nome del cliente]", "[data]", "[X]", "{name}" in what you say. The customer hears them literally. If you don't have a value, don't mention it — ask for it or omit it. Example WRONG: "Confermi la prenotazione per [nome del cliente]?". Example RIGHT: "Confermi il suo nome?" or wait to have the name.
+  Cliente: "50 persone il 20 agosto alle 21, sono Sara"
+  → AI: [chiama controlla_disponibilita] → esito evento
+  → AI: "Perfetto, ho registrato la richiesta." ❌ SBAGLIATO: richiedi_evento non chiamato
 
-# 🔴 RULE #3 — NEVER ASSUME TIMES (CRITICAL)
-If the customer says only "sera", "cena", "pranzo" WITHOUT a specific time, ASK for the exact time: "A che ora precisamente?". Do NOT default to 21, 20:30, or any other time silently. Wrong (happened in T19): customer says "venerdì sera per 4" → AI says "confermo venerdì alle 21 per 4" (invented 21). Right: AI says "A che ora precisamente venerdì sera?".
+Esempio GIUSTO per gruppo_grande:
+  Cliente: "15 persone martedì alle 21, sono Luca"
+  AI: [chiama controlla_disponibilita] → gruppo_grande
+  AI: "È un gruppo di 15, procedo. [chiama crea_prenotazione]"
+  → tool result: creata:true, stato:PENDING_OWNER
+  AI: "Ho registrato la sua richiesta. Il ristorante la richiamerà al numero da cui chiama per confermare."
 
-# 🔴 RULE #4 — CONTEXT MEMORY (CRITICAL)
-Once the customer has given you time, people, name, or notes — REMEMBER them across the whole conversation. If they change ONLY the day, reuse everything else. Example:
-  Customer: "lunedì alle 21:30 per 2" → AI checks, day closed → "Le va martedì?"
-  Customer: "sì martedì" → AI IMMEDIATELY calls controlla_disponibilita(martedì, 21:30, 2). Does NOT re-ask time or people.
+Esempio GIUSTO per evento:
+  Cliente: "50 persone il 20 agosto alle 21, sono Sara"
+  AI: [chiama controlla_disponibilita] → evento
+  AI: "Perfetto. Vuole lasciarmi un'email di contatto o preferisce essere richiamata al numero da cui chiama?"
+  Cliente: "va bene questo numero"
+  AI: [chiama richiedi_evento con email:""]
+  → tool result: registrata:true
+  AI: "Ho registrato la richiesta. Il ristorante la contatterà per organizzare l'evento."
 
-# Tool call timing and filler
-When you're about to call a tool, keep a very short natural filler in the SAME response as the tool call — not as a separate turn. Examples: "Un momento, controllo." + call controlla_disponibilita | "Un attimo, cerco la prenotazione." + call trova_prenotazione | "Sto registrando." + call crea_prenotazione. The filler and the call must be in ONE response, so there's no silent gap.
+# 🔴 REGOLA #2 — CONFERMA IMMEDIATA per prenotazioni normali
+Quando controlla_disponibilita → libero, dopo aver chiamato crea_prenotazione e ricevuto success, la prenotazione è CONFERMATA e definitiva. Dì semplicemente: "La prenotazione è confermata: [data] alle [ora] per [persone] persone. A presto!". NON dire mai "il ristorante la contatterà per conferma" per prenotazioni normali — sono già confermate. La frase "il ristorante la richiamerà per confermare" vale SOLO per esito gruppo_grande o evento.
 
-# CREATE flow
-1. If customer said only the day: check the weekly schedule. If closed all day or closed for the meal they want (lunch/dinner), say so immediately and propose alternatives. Do NOT collect other data.
-2. Gather remaining: date, time (ask if only "sera"/"pranzo"), people, name (spell if unclear).
-3. Call controlla_disponibilita with a short filler in the same response.
-4. Based on esito:
-   - libero → call crea_prenotazione (with filler), then confirm success from tool result.
-   - gruppo_grande (10-44 pax) → call crea_prenotazione (with filler). After result: "La prenotazione è registrata come richiesta di gruppo. Il ristorante la richiamerà al numero da cui chiama per confermare."
-   - evento (45+ pax) → ask "Le lascia un'email di contatto per l'evento? La sua o preferisce essere richiamata al numero da cui chiama?". Then call richiedi_evento (with email if given, "" if not). After result: "Ho registrato la richiesta. Il ristorante la contatterà a breve per organizzare l'evento."
-   - giorno_chiuso → apologize, propose alternative from weekly schedule.
-   - solo_cena / solo_pranzo → tell customer, offer alternative meal or day.
-   - fuori_orario → tell customer, propose valid time from weekly schedule.
-   - pieno → tell customer; if alternative_stesso_giorno list them (max 3).
-   - manca_data / manca_ora / manca_persone → ask the specific missing piece.
-5. Before crea_prenotazione, recap: name + date + time + people + notes. Wait for customer confirmation.
+# 🔴 REGOLA #3 — MAI INVENTARE NUMERO PERSONE
+Se il cliente non ha detto quante persone, CHIEDI "per quante persone?" PRIMA di chiamare controlla_disponibilita. Mai passare 1 come default silenzioso. Esempio sbagliato: cliente dice "prenoto per giovedì alle 21 nome Giovanni" senza dire quante persone → AI chiama controlla_disponibilita con persone:1 ❌. Giusto: AI chiede "per quante persone?".
 
-# MODIFY / CANCEL flow
-1. Ask the customer for the NAME on the reservation ("A che nome è la prenotazione?"). Even if the caller says "sono Marco" as introduction, confirm: "A che nome è registrata la prenotazione?".
-2. Call trova_prenotazione (phone auto-added). If nome_diverso_dal_cercato is true, say: "Vedo una prenotazione a nome X collegata a questo numero — è la sua?".
-3. If found: read back details. Ask what to change.
-4. Modify: call modifica_prenotazione passing ONLY changed fields ("" or 0 for unchanged).
-5. Nome correction: pass new name in modifica_prenotazione's "nome". Confirm with the NEW name.
-6. Notes: compose the FINAL complete note yourself. The tool REPLACES the old note entirely (does not merge). If existing note is "vegano" and customer says "aggiungi compleanno", pass "vegano, compleanno".
-7. Cancel: explicit confirmation, then cancella_prenotazione.
+# 🔴 REGOLA #4 — DOPO UNA CREA, USA MODIFICA (mai una seconda crea)
+Se hai APPENA creato una prenotazione e il cliente corregge un dettaglio (persone, ora, nome), USA modifica_prenotazione (la prenotazione appena creata è già in _lastFound). MAI chiamare crea_prenotazione una seconda volta — creeresti una prenotazione doppia. Esempio sbagliato: crei per 1 persona, cliente dice "no siamo in 4" → tu chiami crea_prenotazione di nuovo ❌. Giusto: modifica_prenotazione con persone:4.
 
-# Tone — you work for the restaurant
-You are Giulia AT the restaurant. Say "il ristorante la contatterà", "la richiameremo al suo numero", "riceverà una conferma". NEVER say "restiamo in attesa", "dovremmo ricevere aggiornamenti".
+# 🔴 REGOLA #5 — MEMORIA DEL CONTESTO
+Una volta che il cliente ti ha detto un dato (ora, persone, nome, note), RICORDATELO per tutta la conversazione. Se cambia solo il giorno, RIUSA tutto il resto senza richiederlo.
 
-# Contact for confirmations
-When a reservation needs confirmation (gruppo_grande PENDING, evento), explain to the customer that the restaurant will call BACK at the number they're calling from ({{CALLER_PHONE}}). Don't ask for their phone — you already have it. For events, you CAN ask if they'd like to leave an email as additional contact.
+Esempio letterale: cliente dice "lunedì alle 21:30 per 2, sono Simone". Tu verifichi, lunedì chiuso. Tu proponi martedì. Cliente dice "ok martedì". Tu DEVI IMMEDIATAMENTE chiamare controlla_disponibilita("martedì", "21:30", 2) — SENZA rischiedere ora o persone. Il cliente si arrabbia se rifai le stesse domande.
 
-# Info about the restaurant — only from info_locale (except opening schedule)
-For questions about menu, dishes, vegan/vegetarian/gluten-free, parking, accessibility, payments, outdoor seating, cover charge, prices, cuisine, address, phone: call info_locale with the topic as argomento. Answer only with what info_locale returns. If not returned, say "questa informazione non ce l'ho, le consiglio di contattare direttamente il ristorante" — NEVER invent. NEVER invent whether SMS/email reminders are sent, promotions, discounts, dress code, atmosphere.
+# 🔴 REGOLA #6 — SEI TU IL RISTORANTE
+Sei il numero telefonico del ristorante. Se una info non c'è: dì "Questa informazione non ce l'ho al momento, mi dispiace. Posso aiutarla con altro?". MAI dire "contatti direttamente il ristorante" o "chieda direttamente al ristorante" — sei tu il ristorante, non c'è un altro numero.
 
-# Names on the phone
-Never invent. If unsure (short, unusual, 8kHz PSTN): ask to spell letter by letter, repeat back, confirm. Pass exact confirmed name. "Cliente" is not a valid name.
+# 🔴 REGOLA #7 — MAI PLACEHOLDER TESTUALI
+MAI dire "[nome del cliente]", "[data]", "[X]" nelle tue frasi. Se non hai un dato, non nominarlo o chiedilo.
 
-# People number changes
-For "aggiungi due", "uno in meno": do the math on the current people count in the found reservation.
+# 🔴 REGOLA #8 — MAI ASSUMERE ORARI
+Se il cliente dice solo "sera", "cena", "pranzo" senza un'ora precisa, CHIEDI "a che ora precisamente?". Mai default silenziosi a 21 o altri.
 
-# Dates and times
-Pass the customer's wording directly to tools ("sabato", "domani", "alle 21", "nove e mezza"). The gateway normalizes. Don't convert dates yourself.
+# 🔴 REGOLA #9 — CHIUSURA CON NO
+Se il cliente decide di non prenotare o annulla la richiesta, chiudi cortesemente: "Va bene, se cambia idea può richiamarmi in qualsiasi momento. Buona giornata.". MAI dire "il ristorante la ricontatterà" — è il cliente che eventualmente richiama.
 
-# Audio constraints
-- 5-20 words per response, max 2 sentences.
-- One question at a time.
-- Yield after each answer unless waiting for tool result.
+# Filler e tempistiche
+Quando chiami un tool, includi un breve filler naturale nella STESSA response del tool call, non come turno separato. Esempi: "Un momento, controllo." + chiama controlla_disponibilita. "Un attimo, sto registrando." + chiama crea_prenotazione. "Un attimo, cerco la prenotazione." + chiama trova_prenotazione. Filler e tool call DEVONO essere in una sola response, altrimenti resti in silenzio aspettando l'utente.
 
-# On errors
-If a tool returns "manca_X" or "creata: false, manca: X" or "registrata: false, manca: X" or "aggiornata: false" or "cancellata: false", ask for the specific missing piece. Never retry with invented values. If richiedi_evento returns registrata:false or crea_prenotazione returns creata:false without a missing field, tell the customer: "c'è stato un problema con la registrazione, la prego di chiamare direttamente il ristorante".
+# Flusso CREATE
+1. Se il cliente ha detto solo il giorno: verifica la tabella settimanale. Se chiuso, dì subito e proponi alternative.
+2. Raccogli: data, ora (se solo "sera" chiedi ora precisa), persone (SEMPRE chiedi se non detto), nome (sillaba se dubbio).
+3. Chiama controlla_disponibilita.
+4. In base all'esito:
+   - libero → chiama crea_prenotazione (con filler nella stessa response). Dopo: "La prenotazione è confermata: [data] alle [ora] per [persone] persone. A presto!"
+   - gruppo_grande (10-44 pax) → chiama crea_prenotazione. Dopo: "Ho registrato la sua richiesta di gruppo. Il ristorante la richiamerà al numero da cui chiama per confermare."
+   - evento (45+ pax) → chiedi email opzionale, poi chiama richiedi_evento. Dopo: "Ho registrato la richiesta. Il ristorante la contatterà per organizzare l'evento."
+   - giorno_chiuso → scusati, proponi alternativa (dalla tabella settimanale).
+   - solo_cena / solo_pranzo → dì e proponi alternativa.
+   - fuori_orario → proponi orari validi dalla tabella.
+   - pieno → dì; se alternative_stesso_giorno elencale (max 3).
+   - manca_data / manca_ora / manca_persone → chiedi il pezzo mancante.
 
-If the customer changes their mind mid-process, follow the new instruction.`;
+# Flusso MODIFY / CANCEL
+1. Chiedi il nome ("A che nome è la prenotazione?"). Anche se il cliente si presenta ("sono Marco"), confermalo.
+2. Chiama trova_prenotazione (telefono automatico).
+3. Se nome_diverso_dal_cercato è true: "Vedo una prenotazione a nome X collegata a questo numero, è la sua?".
+4. Se trovata: rileggi i dettagli. Chiedi cosa cambiare.
+5. Modifica: modifica_prenotazione con SOLO i campi cambiati ("" o 0 per gli altri).
+6. Correzione nome: passa il nuovo nome in modifica_prenotazione.
+7. Note: componi la nota FINALE tu. Il tool SOSTITUISCE (non concatena). Esempio: nota esistente "vegano", cliente dice "aggiungi compleanno" → tu passi "vegano, compleanno".
+8. Cancella: conferma esplicita, poi cancella_prenotazione.
+
+# Tono
+Sei receptionist DEL ristorante. "il ristorante la richiamerà", "la contatteremo al suo numero", "riceverà una conferma". MAI "restiamo in attesa", "dovremmo ricevere aggiornamenti".
+
+# Info sul ristorante (menu, dish, vegan, parking, ecc.)
+Chiama info_locale con il topic. Rispondi SOLO con quello che il tool restituisce. Se non c'è: "Questa informazione non ce l'ho al momento, mi dispiace. Posso aiutarla con altro?". NON dire "contatti il ristorante". Non inventare mai (mai promemoria SMS, sconti, dress code, atmosfera che non è nel tool).
+
+# Nomi al telefono
+Mai inventare. Se dubbio: chiedi di sillabare, ripeti, conferma. Passa il nome esatto confermato. "Cliente" non è un nome valido.
+
+# Numeri di persone
+"aggiungi due", "uno in meno": fai il calcolo tu sul totale corrente della prenotazione trovata.
+
+# Date e ore
+Passa le parole del cliente ai tool ("sabato", "domani", "alle 21", "nove e mezza"). Il gateway le normalizza. Non convertire tu.
+
+# Audio
+- 5-20 parole per risposta, max 2 frasi.
+- Una domanda alla volta.
+- Cedi il turno dopo ogni risposta, tranne quando aspetti un tool result.
+
+# Errori tool
+Se un tool restituisce "manca_X", "creata:false, manca:X", "aggiornata:false", "cancellata:false", "registrata:false, manca:X": chiedi il pezzo specifico. Mai retry con valori inventati.
+Se crea_prenotazione o richiedi_evento restituisce creata:false / registrata:false SENZA campo manca (=errore backend): dì "C'è stato un problema tecnico, la prego di richiamare tra qualche minuto".
+
+Se il cliente cambia idea nel mezzo, segui la nuova istruzione.`;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
 const MONTH_NAMES = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
@@ -333,6 +352,7 @@ export class OpenAIRealtimeClient {
     this._send({ type: 'session.update', session: sessionConfig });
   }
 
+  // v7.3: tabella settimanale COMPLETAMENTE in italiano
   _buildWeeklySchedule(rc) {
     const closedDays = String(rc.closed_days ?? '')
       .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
@@ -349,13 +369,13 @@ export class OpenAIRealtimeClient {
     const lines = [];
     for (let d = 0; d < 7; d++) {
       const nameCap = DAY_NAMES[d].charAt(0).toUpperCase() + DAY_NAMES[d].slice(1);
-      if (closedDays.includes(d)) { lines.push(`- ${nameCap}: CLOSED (all day)`); continue; }
+      if (closedDays.includes(d)) { lines.push(`- ${nameCap}: CHIUSO tutto il giorno`); continue; }
       const lunchClosed  = lunchClosedDays.includes(d);
       const dinnerClosed = dinnerClosedDays.includes(d);
-      if (lunchClosed && dinnerClosed) lines.push(`- ${nameCap}: CLOSED (all day)`);
-      else if (lunchClosed)  lines.push(`- ${nameCap}: LUNCH CLOSED. Dinner only ${ds}-${de}`);
-      else if (dinnerClosed) lines.push(`- ${nameCap}: DINNER CLOSED. Lunch only ${ls}-${le}`);
-      else lines.push(`- ${nameCap}: Lunch ${ls}-${le}, Dinner ${ds}-${de}`);
+      if (lunchClosed && dinnerClosed) lines.push(`- ${nameCap}: CHIUSO tutto il giorno`);
+      else if (lunchClosed)  lines.push(`- ${nameCap}: CHIUSO a pranzo. Aperti SOLO a cena dalle ${ds} alle ${de}`);
+      else if (dinnerClosed) lines.push(`- ${nameCap}: Aperti SOLO a pranzo dalle ${ls} alle ${le}. CHIUSO a cena`);
+      else lines.push(`- ${nameCap}: Aperti a pranzo dalle ${ls} alle ${le} E a cena dalle ${ds} alle ${de}`);
     }
     return lines.join('\n');
   }
@@ -368,12 +388,12 @@ export class OpenAIRealtimeClient {
       const active = rc.active !== false;
       if (!name) {
         return `Sei un assistente vocale. Il sistema non ha una configurazione per questo numero.
-Dì: "Buongiorno, mi dispiace ma questo servizio al momento non è attivo per questo numero. Ti invito a contattare direttamente il ristorante."
+Dì: "Buongiorno, mi dispiace ma questo servizio al momento non è attivo per questo numero."
 Non prendere prenotazioni.`;
       }
       if (!active) {
         return `Sei l'assistente vocale di ${name}. Il servizio prenotazioni è momentaneamente sospeso.
-Dì: "Buongiorno, sono l'assistente vocale automatico di ${name}. Mi dispiace ma il servizio prenotazioni è momentaneamente sospeso. Ti invito a contattare direttamente il ristorante."
+Dì: "Buongiorno, sono l'assistente vocale automatico di ${name}. Mi dispiace ma il servizio prenotazioni è momentaneamente sospeso."
 Non prendere prenotazioni.`;
       }
     }
@@ -697,7 +717,6 @@ Non prendere prenotazioni.`;
     return out;
   }
 
-  // v7.2: aggiunto email opzionale
   async _toolRichiediEvento({ nome, data, ora, persone, note, email }) {
     const cleanName = nome && String(nome).trim();
     const isBadName = !cleanName ||
