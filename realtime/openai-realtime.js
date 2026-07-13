@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.3.3-MT-2026-07-13 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.3.4-MT-2026-07-13 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -99,13 +99,13 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'cancella_prenotazione',
-    description: 'Cancella la prenotazione trovata con trova_prenotazione dopo conferma esplicita del cliente.',
+    description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamare SOLO dopo che il cliente ha già dato conferma esplicita (es. "sì confermo", "sì cancella", "esatto grazie"). NON chiedere al cliente di dire una parola specifica come conferma — accetta qualsiasi conferma affermativa naturale.',
     parameters: {
       type: 'object',
       properties: {
-        conferma: { type: 'string', description: "'ok' per confermare" },
+        placeholder: { type: 'string', description: 'Campo tecnico ignorato dal sistema. Passa "confirmed".' },
       },
-      required: ['conferma'],
+      required: ['placeholder'],
       additionalProperties: false,
     },
   },
@@ -629,7 +629,7 @@ Non prendere prenotazioni.`;
 
   async _toolCrea({ nome, data, ora, persone, note }) {
     const nomeOk = nome && String(nome).trim() &&
-                   !/^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito)$/i.test(String(nome).trim());
+                   !/^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|non specificato|non specifica|anonimo|placeholder)$/i.test(String(nome).trim());
     if (!nomeOk) return { creata: false, manca: 'nome' };
 
     const dateISO = this._normDate(data);
@@ -747,7 +747,7 @@ Non prendere prenotazioni.`;
   async _toolRichiediEvento({ nome, data, ora, persone, note, email }) {
     const cleanName = nome && String(nome).trim();
     const isBadName = !cleanName ||
-                      /^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|anonimo)$/i.test(cleanName);
+                      /^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|anonimo|non specificato|non specifica|placeholder)$/i.test(cleanName);
     if (isBadName) return { registrata: false, manca: 'nome' };
 
     const dateISO   = this._normDate(data);
