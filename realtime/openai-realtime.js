@@ -1,39 +1,64 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7 — SPEECH-TO-SPEECH (gpt-realtime-mini)
-// Multi-tenant. Basato sul pattern v6.0 con parsers.js autoritari.
+// PRENOW REALTIME v7.1 — SPEECH-TO-SPEECH (gpt-realtime-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Cambiamenti v7.1 rispetto a v7 (fix dai log del 12/07 sera):
 //
-// Principio chiave: il modello NON normalizza mai date/orari. Passa parole
-// umane ("domani", "sabato", "alle nove e mezza") ai tools; il gateway usa
-// DateManager/TimeManager per convertire in ISO/HH:MM e ValidationPipeline
-// per verificare chiusure prima di chiamare Apps Script.
+// SCHEMA
+//   - modifica_prenotazione: aggiunto campo `nome` (era impossibile correggere
+//     un nome sbagliato — il modello mentiva "aggiornata con X" senza cambiare
+//     nulla nel DB).
+//   - info_locale: aggiunta keyword 'coperto' → mappata al campo prices.
 //
-// Risultato: il modello dice subito "lunedì siamo chiusi" al primo turno,
-// perché il tool controlla_disponibilita risponde `giorno_chiuso` prima
-// che vengano raccolti altri dati. Il modello non "verifica mentalmente".
+// PROMPT
+//   - Tabella settimanale ESPLICITA di aperture/chiusure (pranzo + cena giorno
+//     per giorno). Il modello non deve più dedurre dalle regole generiche
+//     "closed_days" e "lunch_closed_days".
+//   - Rimossa l'istruzione "always say a short filler phrase to cover the
+//     silence while the tool is working". Sulla Realtime API la filler crea
+//     una response separata dalla tool call → il modello aspetta un nuovo
+//     turno del cliente prima di chiamare la function.
+//   - Regola esplicita di distinzione gruppo_grande (10-44 pax → crea_prenotazione,
+//     status PENDING_OWNER) vs evento (45+ pax → richiedi_evento).
+//   - Regola memoria contesto: se il cliente cambia solo il giorno, riusa
+//     ora/persone/nome già raccolti.
+//   - Regola tono receptionist: parla come dipendente del ristorante, mai
+//     "restiamo in attesa" (tono da cliente).
+//   - Regola solo-info-locale per info sul ristorante, mai inventare.
+//   - Se il cliente dice solo la data, verifica subito la tabella settimanale.
+//
+// LOGIC
+//   - _toolModifica accetta `nome` come parametro e lo passa ad Apps Script;
+//     aggiorna anche `_lastFound.name`.
+//   - _toolModifica: NIENTE merge automatico delle note — il modello passa
+//     la nota FINALE completa (il tool sostituisce, non concatena). Fine
+//     duplicati tipo "vegana; vegana, compleanno".
+//   - _toolControlla: non espone owner_email nel result quando esito=evento
+//     (era stata detta al cliente come sua email).
+//   - _toolRichiediEvento: guard esteso contro nomi placeholder ("nome non
+//     fornito", "cliente", ecc.).
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
 import { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying } from './parsers.js';
 
-// Re-export per compat con eventuali consumatori
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7-MT-2026-07-12 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.1-MT-2026-07-12 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LE 7 FUNZIONI — nomi italiani, il modello passa parole umane
+// LE 7 FUNZIONI
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const FUNCTIONS = [
   {
     type: 'function',
     name: 'trova_prenotazione',
-    description: 'Cerca una prenotazione esistente dato il nome fornito dal cliente e, opzionalmente, una data.',
+    description: 'Cerca una prenotazione esistente dato il nome fornito dal cliente e, opzionalmente, una data. Il telefono del chiamante è aggiunto automaticamente dal sistema.',
     parameters: {
       type: 'object',
       properties: {
@@ -47,7 +72,7 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'controlla_disponibilita',
-    description: 'Verifica se è possibile prenotare o spostare a una certa data, ora e numero di persone. USA QUESTO SUBITO appena hai raccolto data+ora+persone, prima di crea_prenotazione. Restituisce esito: libero, giorno_chiuso, solo_cena, solo_pranzo, fuori_orario, pieno, gruppo_grande, evento, manca_*.',
+    description: "Verifica se è possibile prenotare a una certa data/ora per un numero di persone. USA QUESTO SUBITO appena hai raccolto data+ora+persone, prima di crea_prenotazione. Esiti: libero (procedi con crea_prenotazione), gruppo_grande (procedi con crea_prenotazione, sarà PENDING), evento (usa richiedi_evento), giorno_chiuso, solo_cena, solo_pranzo, fuori_orario, pieno, manca_*.",
     parameters: {
       type: 'object',
       properties: {
@@ -62,15 +87,15 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'crea_prenotazione',
-    description: "Crea una nuova prenotazione utilizzando i dati forniti dal cliente. Chiamare solo dopo controlla_disponibilita con esito 'libero' o 'gruppo_grande'.",
+    description: "Crea una nuova prenotazione. Chiamare dopo controlla_disponibilita con esito 'libero' o 'gruppo_grande'. Passa il nome ESATTAMENTE come pronunciato dal cliente. Mai 'Cliente' o placeholder.",
     parameters: {
       type: 'object',
       properties: {
-        nome:    { type: 'string',  description: 'Nome del cliente, esattamente come pronunciato. Mai "Cliente".' },
-        data:    { type: 'string',  description: "Data della prenotazione come detta dal cliente" },
-        ora:     { type: 'string',  description: "Ora della prenotazione come detta dal cliente" },
+        nome:    { type: 'string',  description: 'Nome del cliente, esattamente come pronunciato e confermato' },
+        data:    { type: 'string',  description: "Data come detta dal cliente" },
+        ora:     { type: 'string',  description: "Ora come detta dal cliente" },
         persone: { type: 'integer', description: 'Numero di persone' },
-        note:    { type: 'string',  description: 'Note opzionali (allergie, seggiolone, occasione). Se nessuna, passa "".' },
+        note:    { type: 'string',  description: 'Note (allergie, seggiolone, compleanno). "" se nessuna.' },
       },
       required: ['nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
@@ -79,16 +104,17 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'modifica_prenotazione',
-    description: 'Applica modifiche a una prenotazione esistente. Chiamare dopo trova_prenotazione. Passa solo i campi che cambiano.',
+    description: 'Modifica una prenotazione esistente. Chiamare dopo trova_prenotazione. Passa "" (stringa vuota) o 0 per i campi che NON cambiano. La nota SOSTITUISCE quella vecchia, non aggiungere quella precedente.',
     parameters: {
       type: 'object',
       properties: {
-        data:    { type: 'string',  description: 'Nuova data (parole del cliente o YYYY-MM-DD). "" se non cambia.' },
-        ora:     { type: 'string',  description: 'Nuova ora (parole del cliente o HH:MM). "" se non cambia.' },
+        nome:    { type: 'string',  description: 'Nuovo nome corretto. "" se non cambia.' },
+        data:    { type: 'string',  description: 'Nuova data (parole del cliente). "" se non cambia.' },
+        ora:     { type: 'string',  description: 'Nuova ora (parole del cliente). "" se non cambia.' },
         persone: { type: 'integer', description: 'Nuovo numero totale di persone. 0 se non cambia.' },
-        note:    { type: 'string',  description: 'Nuova nota da aggiungere. "" se non cambia.' },
+        note:    { type: 'string',  description: 'Nota FINALE completa che sostituisce la precedente. "" se non cambia.' },
       },
-      required: ['data', 'ora', 'persone', 'note'],
+      required: ['nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
     },
   },
@@ -108,11 +134,11 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'info_locale',
-    description: 'Risponde a domande sul ristorante: menu, piatti, opzioni vegetariane/vegane/senza glutine, parcheggio, accessibilità, pagamenti, dehors, seggiolone.',
+    description: "Risponde a domande sul ristorante: menu, piatti, opzioni vegetariane/vegane/senza glutine, parcheggio, accessibilità, pagamenti, dehors, seggiolone, prezzi, coperto. Usa questo per QUALSIASI info sul ristorante — mai inventare.",
     parameters: {
       type: 'object',
       properties: {
-        argomento: { type: 'string', description: "Cosa chiede il cliente: 'menu', 'vegano', 'parcheggio', 'pagamenti', 'accessibilità', ecc." },
+        argomento: { type: 'string', description: "Cosa chiede il cliente: 'menu', 'vegano', 'parcheggio', 'coperto', 'accessibilità', ecc." },
       },
       required: ['argomento'],
       additionalProperties: false,
@@ -121,15 +147,15 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'richiedi_evento',
-    description: "Registra una richiesta per un evento grande (in genere ≥ event_threshold persone) e avvisa il ristorante. Chiamare dopo che controlla_disponibilita ha risposto 'evento'.",
+    description: "Registra una richiesta per un evento grande (persone ≥ event_threshold). Chiamare SOLO dopo che controlla_disponibilita ha risposto 'evento'.",
     parameters: {
       type: 'object',
       properties: {
-        nome:    { type: 'string',  description: 'Nome del richiedente' },
+        nome:    { type: 'string',  description: 'Nome del richiedente (mai placeholder)' },
         data:    { type: 'string',  description: "Data dell'evento come detta dal cliente" },
         ora:     { type: 'string',  description: "Ora dell'evento come detta dal cliente" },
         persone: { type: 'integer', description: "Numero di persone stimate" },
-        note:    { type: 'string',  description: "Dettagli aggiuntivi. Passa \"\" se nessuno." },
+        note:    { type: 'string',  description: "Dettagli aggiuntivi. \"\" se nessuno." },
       },
       required: ['nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
@@ -138,53 +164,73 @@ const FUNCTIONS = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM PROMPT — multi-tenant, con placeholders {{...}} sostituiti a runtime
+// SYSTEM PROMPT — v7.1 con fix per i bug B3, B5, B6, B7, B8, B10
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT_TEMPLATE = `Act as {{RECEPTIONIST_NAME}}, the automated phone receptionist for {{RESTAURANT_NAME}}, helping customers create, modify, or cancel reservations by calling appropriate tools based on their intent. Speak only Italian, use a warm, friendly, professional, and quick tone. Keep every response short, with a maximum of 1–2 sentences. Never invent or assume details the customer hasn't provided—always explicitly ask for missing information, especially date, time, number of people, or name as needed, before calling any tool. For confirmations of bookings, modifications, or cancellations, only give these after the appropriate tool returns a result.
+const SYSTEM_PROMPT_TEMPLATE = `Act as {{RECEPTIONIST_NAME}}, the automated phone receptionist for {{RESTAURANT_NAME}}, helping customers create, modify, or cancel reservations by calling appropriate tools. Speak only Italian, warm, friendly, professional, and quick. Keep every response short: 1–2 sentences, 5–20 words. Never invent or assume details the customer hasn't provided — always explicitly ask for missing information (date, time, number of people, name) before calling any tool. For confirmations of bookings, modifications, or cancellations, only speak them AFTER the tool returns a result.
 
-Today is {{TODAY_HUMAN}} ({{TODAY_ISO}}). Opening hours: lunch {{LUNCH_START}}–{{LUNCH_END}}, dinner {{DINNER_START}}–{{DINNER_END}}. Closed on {{CLOSED_DAYS_HUMAN}}.
+Today is {{TODAY_HUMAN}} ({{TODAY_ISO}}).
 
-At the very start of each call, identify yourself as an automated voice assistant (legal requirement under the EU AI Act). Use a natural phrasing in Italian, for example: "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?"
+# Weekly schedule (this is the ONLY source of truth for opening days/hours — never contradict it, never invent)
+{{WEEKLY_SCHEDULE}}
 
-When you need to check availability, create, modify, or cancel a reservation, always say a short filler phrase to cover the silence while the tool is working. Always announce the action being taken, not the outcome, before the result is known.
+At the very start of each call, identify yourself as an automated voice assistant (EU AI Act requirement). Example: "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?"
 
-Do not handle normalizations of date or time—pass the customer's wording directly to the tools (e.g. "sabato", "alle 21", "domani"). The gateway normalizes them. Do not proceed if you are missing any critical information; instead, pause and ask for it.
+# Tool call timing — CRITICAL
+Do NOT say a filler phrase like "un attimo che controllo" as a separate turn before calling a tool. The filler creates a pause where you wait for the customer to speak again, and the tool is never called. Instead: call the tool IMMEDIATELY when you have the required arguments. If some latency is unavoidable, keep the filler in the SAME response as the tool call (not before it as its own turn).
 
-For creating a new reservation, ALWAYS call controlla_disponibilita FIRST (with data, ora, persone) before crea_prenotazione. If controlla_disponibilita returns esito "giorno_chiuso", "solo_cena", "solo_pranzo", or "fuori_orario", immediately tell the customer and propose an alternative WITHOUT collecting more data. Only call crea_prenotazione when controlla_disponibilita returns "libero" or "gruppo_grande".
+# Reservation flow — CREATE
+1. Gather: date, time, number of people, name. Ask only for what's missing.
+2. If the customer mentioned only the day (e.g. "vorrei prenotare per lunedì" without time), check the weekly schedule above IMMEDIATELY. If that day is fully CLOSED, say it and propose an alternative day without asking for time/people first. If the day is CLOSED at lunch (and the customer implied lunch), say it and offer dinner or another day.
+3. Call controlla_disponibilita with data + ora + persone.
+4. Handle the esito:
+   - "libero" → call crea_prenotazione.
+   - "gruppo_grande" (10-44 people) → call crea_prenotazione. Result will have stato "PENDING_OWNER". Tell customer: "La prenotazione per il gruppo è registrata: il ristorante la contatterà per confermare".
+   - "evento" (45+ people) → call richiedi_evento (make sure you have collected the customer's name first). Then say: "Ho registrato la richiesta: il ristorante la contatterà a breve per organizzare l'evento".
+   - "giorno_chiuso" → apologize, propose an alternative day (use the weekly schedule).
+   - "solo_cena" / "solo_pranzo" → tell the customer, offer the alternative meal or another day.
+   - "fuori_orario" → tell the customer, propose a valid time.
+   - "pieno" → tell the customer, if the tool provided alternative_stesso_giorno list them (max 3).
+   - "manca_data", "manca_ora", "manca_persone" → ask the specific missing piece, do not retry with invented values.
+5. Before crea_prenotazione, confirm the full recap: name + date + time + people + notes if any. Wait for the customer's confirmation.
 
-For modifications or cancellations, first find the reservation using trova_prenotazione, then read back the found details and ask for confirmation before proceeding. If the found reservation uses a different name but was matched via the customer's phone number, state this explicitly and confirm it is theirs before continuing.
+# Reservation flow — MODIFY / CANCEL
+1. Call trova_prenotazione (the caller's phone is used automatically). Pass the customer's name if they mention one.
+2. If found: read back the details ("Ho trovato la sua prenotazione per venerdì alle 21, tre persone, a nome X"). Then ask what to change.
+3. Special case: if the found reservation has a different name from the caller (nome_diverso_dal_cercato: true), say so explicitly: "Vedo una prenotazione a nome X collegata a questo numero — è la sua?".
+4. Modify: call modifica_prenotazione passing ONLY the fields that changed. Empty string "" or 0 = don't change.
+5. Nome correction: if the customer corrects the name, pass the new correct name in modifica_prenotazione's "nome" field. Then confirm with the customer using the NEW name.
+6. Notes: modifica_prenotazione's "note" field REPLACES the existing note entirely. If the customer says "aggiungi anche compleanno" and the existing note is "vegano", pass "vegano, compleanno" (you compose the final note; the tool will not merge).
+7. Cancel: ask explicit confirmation ("Vuole davvero cancellare la prenotazione di venerdì alle 21?"), then call cancella_prenotazione.
 
-For changes in people numbers, do the math yourself to calculate the final total, based on the current reservation, when the customer says things like "add two" or "one less."
+# Context memory — CRITICAL
+Once the customer has given you a piece of information (time, number of people, name, dietary notes), REMEMBER it across the rest of the conversation. If they change ONLY the day, reuse the time/people/name they already said — do not ask again. Example: customer wants Monday at 21:30 for 2, Monday is closed, customer says "let's do Tuesday" → immediately call controlla_disponibilita for Tuesday 21:30 for 2, don't re-ask.
 
-For any question about the restaurant itself — menu, dishes, vegan/vegetarian/gluten-free options, parking, accessibility, payment methods, outdoor seating — call info_locale with the topic as argomento. Respond only with what info_locale returns. If the requested detail isn't available, invite the customer to contact the restaurant — never invent.
+# Tone — you are the restaurant's receptionist, not a customer
+NEVER phrase things as if you are a customer waiting alongside the caller. Wrong: "restiamo in attesa", "dovremmo ricevere aggiornamenti", "sto aspettando conferma". Right: "il ristorante la contatterà per confermare", "riceverà una conferma a breve", "le farò sapere quando avremo notizie". You are Giulia, you work FOR the restaurant.
 
-For very large group requests — when controlla_disponibilita returns esito "evento" — call richiedi_evento to register the request, then tell the customer the restaurant will get back to them.
+# Information about the restaurant — only from info_locale
+For ANY question about the restaurant (menu, dishes, vegan / vegetarian / gluten-free options, parking, accessibility, payment methods, outdoor seating, prices, cover charge, cuisine, address, phone): call info_locale with the appropriate argomento. Answer ONLY from what info_locale returns. If a piece of info is not in the returned object, say "questa informazione non ce l'ho, le consiglio di contattare direttamente il ristorante" — NEVER invent. This includes: never invent whether the restaurant sends reminders / SMS / emails; never invent opening hours beyond the weekly schedule above; never invent prices or promotions.
 
-Always pronounce long numbers such as phone numbers digit-by-digit for clarity.
+# Names on the phone
+Never invent a name. If unsure (short name, unusual surname, 8kHz PSTN line): ask the customer to spell it letter by letter, then repeat back and confirm before calling crea_prenotazione. Pass to the tool the EXACT name the customer confirmed. "Cliente" is not a valid name.
 
-Never yield the conversation to the user without either resolving their request or clearly stating what additional information you need.
+# Numbers changes
+For changes in people numbers ("aggiungi due", "uno in meno"), do the math yourself based on the current people count in the found reservation.
 
-# Tool Usage
-- Only call tools after gathering all necessary customer information. Never call tools such as controlla_disponibilita or crea_prenotazione with invented data.
-- Respect tool error messages (e.g., manca_ora, manca_persone, manca_data, manca:"nome")—never retry with invented values, always ask the user to provide the exact missing data.
-- CRITICAL on names: never invent a name. If unsure of what you heard (short names, unusual surnames), ask the customer to spell it letter by letter. Pass to crea_prenotazione the EXACT name the customer said and confirmed, never a "plausible-sounding" Italian name you made up.
+# Dates and times
+Pass the customer's wording directly to the tools (e.g. "sabato", "domani", "alle 21", "nove e mezza"). The gateway normalizes them into ISO/HH:MM. Do NOT try to convert dates yourself.
 
-# Audio Output Constraints
-- Keep all spoken responses short and conversational (5–20 words).
-- Prefer breaking multi-step explanations into short back-and-forth dialogue.
-- After outputting each short answer, yield to the user for the next turn unless explicitly waiting for a tool call result.
-- Never string together three or more sentences in a single answer.
-- Always use lively and emotive intonation, speaking quickly and clearly.
+# Audio output constraints
+- Every spoken response: 5–20 words, max 2 short sentences.
+- One question at a time.
+- Lively, quick, natural intonation.
+- Yield to the customer after each answer, unless waiting for a tool result.
 
-# Notes
-- Always ask for exact missing values; never try to "guess" or fill them in.
-- For modifications or cancellations, always confirm details found via trova_prenotazione with the customer before proceeding.
-- Stick to Italian, friendly and professional tone, short sentences, and a natural phone pace.
-- Only offer information actually present in info_locale's response.
-- If a user changes their mind mid-process (e.g., "no, cancella invece"), follow their instruction—don't force a restart.
-- When the tool returns an error due to missing data, repeat the specific question for the missing piece.
-- "Cliente" is not a valid name; always ask for a real name.`;
+# Tool error messages
+If a tool returns "manca_X" or "creata: false, manca: X", ask the customer specifically for X. Never retry with invented values.
+
+If the customer changes their mind mid-process ("no, cancella invece"), follow the new instruction.`;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
 const MONTH_NAMES = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
@@ -201,19 +247,17 @@ export class OpenAIRealtimeClient {
 
     this.onAudioDelta = opts.onAudioDelta || (() => {});
 
-    // Accetta callerPhone o from (compat con media-stream esistente)
     const raw = opts.callerPhone || opts.from || '';
     this.callerPhone = raw && !raw.startsWith('+') ? '+' + raw : raw;
     this.to = opts.to || '';
 
-    // Stato conversazionale
     this._ws               = null;
     this._sessionReady     = false;
     this._lastFound        = null;   // ultima prenotazione trovata/creata
-    this._restaurantInfo   = null;   // cache info_locale
+    this._lastEventInfo    = null;   // 🔧 v7.1: info interne evento (email owner) senza esporle al modello
+    this._restaurantInfo   = null;
     this._pendingCalls     = new Map();
 
-    // Il modello ha tools se c'è una config attiva con apps_script_url
     this._toolsEnabled = !!(
       this.restaurantConfig &&
       this.restaurantConfig.active !== false &&
@@ -221,7 +265,6 @@ export class OpenAIRealtimeClient {
     );
   }
 
-  // ─── Connessione ─────────────────────────────────────────────────────────
   async connect() {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(REALTIME_URL, {
@@ -234,7 +277,7 @@ export class OpenAIRealtimeClient {
         console.log(`🎙️  [${this.connId}] Realtime WS aperta (model: ${REALTIME_MODEL}) — ristorante="${rn}"`);
         console.log(`📞 [${this.connId}] callerPhone=${this.callerPhone || '(unknown)'} to=${this.to || '(unknown)'} toolsEnabled=${this._toolsEnabled}`);
         this._sendSessionUpdate();
-        if (this._toolsEnabled) this._fetchRestaurantInfo(); // background, non blocca il saluto
+        if (this._toolsEnabled) this._fetchRestaurantInfo();
         resolve();
       });
 
@@ -248,7 +291,6 @@ export class OpenAIRealtimeClient {
     });
   }
 
-  // ─── Session update ──────────────────────────────────────────────────────
   _sendSessionUpdate() {
     const sessionConfig = {
       type: 'realtime',
@@ -257,7 +299,7 @@ export class OpenAIRealtimeClient {
       tool_choice: this._toolsEnabled ? 'auto' : 'none',
       audio: {
         input: {
-          format: { type: 'audio/pcma' },           // Telnyx Italia = PCMA (A-law)
+          format: { type: 'audio/pcma' },
           transcription: { model: 'whisper-1' },
           turn_detection: {
             type: 'semantic_vad',
@@ -276,11 +318,46 @@ export class OpenAIRealtimeClient {
     this._send({ type: 'session.update', session: sessionConfig });
   }
 
-  // ─── System prompt: sostituisce placeholders dal restaurantConfig ─────────
+  // 🔧 v7.1: costruisce tabella settimanale esplicita per il prompt
+  _buildWeeklySchedule(rc) {
+    const closedDays = String(rc.closed_days ?? '')
+      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    const lunchClosedDays = String(rc.lunch_closed_days ?? '')
+      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    const dinnerClosedDays = String(rc.dinner_closed_days ?? '')
+      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+
+    const ls = rc.lunch_start  || rc.lunchStart  || '12:00';
+    const le = rc.lunch_end    || rc.lunchEnd    || '14:30';
+    const ds = rc.dinner_start || rc.dinnerStart || '19:00';
+    const de = rc.dinner_end   || rc.dinnerEnd   || '22:30';
+
+    const lines = [];
+    for (let d = 0; d < 7; d++) {
+      const name = DAY_NAMES[d];
+      const nameCap = name.charAt(0).toUpperCase() + name.slice(1);
+      if (closedDays.includes(d)) {
+        lines.push(`- ${nameCap}: CLOSED (all day)`);
+        continue;
+      }
+      const lunchClosed  = lunchClosedDays.includes(d);
+      const dinnerClosed = dinnerClosedDays.includes(d);
+      if (lunchClosed && dinnerClosed) {
+        lines.push(`- ${nameCap}: CLOSED (all day)`);
+      } else if (lunchClosed) {
+        lines.push(`- ${nameCap}: LUNCH CLOSED. Dinner only ${ds}-${de}`);
+      } else if (dinnerClosed) {
+        lines.push(`- ${nameCap}: DINNER CLOSED. Lunch only ${ls}-${le}`);
+      } else {
+        lines.push(`- ${nameCap}: Lunch ${ls}-${le}, Dinner ${ds}-${de}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
   _buildSystemPrompt() {
     const rc = this.restaurantConfig || {};
 
-    // Se non c'è config valida → messaggio di fallback
     if (!this._toolsEnabled) {
       const name = rc.restaurant_name || rc.restaurantName || '';
       const active = rc.active !== false;
@@ -299,27 +376,16 @@ Non prendere prenotazioni.`;
     const now = DateManager.getNow();
     const todayHuman = `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
     const todayIso   = DateManager.toISO(now);
-
-    const closedCsv = rc.closed_days ?? '1';
-    const closedHuman = String(closedCsv).split(',')
-      .map(s => parseInt(s.trim(), 10))
-      .filter(n => !isNaN(n) && n >= 0 && n <= 6)
-      .map(i => DAY_NAMES[i])
-      .join(', ') || 'lunedì';
+    const weeklySchedule = this._buildWeeklySchedule(rc);
 
     return SYSTEM_PROMPT_TEMPLATE
       .replace(/\{\{RECEPTIONIST_NAME\}\}/g, rc.receptionist_name || rc.receptionistName || 'Giulia')
       .replace(/\{\{RESTAURANT_NAME\}\}/g,   rc.restaurant_name   || rc.restaurantName   || 'il ristorante')
       .replace(/\{\{TODAY_HUMAN\}\}/g,       todayHuman)
       .replace(/\{\{TODAY_ISO\}\}/g,         todayIso)
-      .replace(/\{\{LUNCH_START\}\}/g,       rc.lunch_start  || rc.lunchStart  || '12:30')
-      .replace(/\{\{LUNCH_END\}\}/g,         rc.lunch_end    || rc.lunchEnd    || '14:30')
-      .replace(/\{\{DINNER_START\}\}/g,      rc.dinner_start || rc.dinnerStart || '19:30')
-      .replace(/\{\{DINNER_END\}\}/g,        rc.dinner_end   || rc.dinnerEnd   || '23:00')
-      .replace(/\{\{CLOSED_DAYS_HUMAN\}\}/g, closedHuman);
+      .replace(/\{\{WEEKLY_SCHEDULE\}\}/g,   weeklySchedule);
   }
 
-  // ─── Handler eventi Realtime ─────────────────────────────────────────────
   _onMessage(raw) {
     let msg;
     try { msg = JSON.parse(raw.toString()); }
@@ -417,7 +483,6 @@ Non prendere prenotazioni.`;
     this._send({ type: 'response.create' });
   }
 
-  // ─── Dispatcher ──────────────────────────────────────────────────────────
   async _execTool(name, args) {
     switch (name) {
       case 'trova_prenotazione':      return await this._toolTrova(args);
@@ -432,7 +497,6 @@ Non prendere prenotazioni.`;
   }
 
   // ─── TOOL 1: trova_prenotazione ──────────────────────────────────────────
-  // Fallback: nome+data → nome → telefono
   async _toolTrova({ nome, data }) {
     const cleanName = nome && String(nome).trim();
     const cleanDate = data && String(data).trim();
@@ -473,32 +537,26 @@ Non prendere prenotazioni.`;
   }
 
   // ─── TOOL 2: controlla_disponibilita ─────────────────────────────────────
-  // Il modello passa parole umane; qui normalizziamo e verifichiamo tutto
-  // (chiusure, semi-chiusure, orari, capienza, soglie gruppo/evento).
   async _toolControlla({ data, ora, persone }) {
     const rc = this.restaurantConfig;
     const dateISO = this._normDate(data);
     const timeN   = this._normTime(ora);
     const ppl     = parseInt(persone, 10) || 0;
 
-    // Guard anti-invenzione
     if (!dateISO) return { esito: 'manca_data' };
     if (!timeN)   return { esito: 'manca_ora' };
     if (!ppl)     return { esito: 'manca_persone' };
 
-    // Chiusura settimanale
     if (ValidationPipeline.getDayClosedMessage(dateISO, rc)) {
       return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
     }
-    // Fuori orari di servizio
     if (!ValidationPipeline.isValidTime(timeN, rc)) {
       return {
         esito: 'fuori_orario',
-        pranzo: `${rc?.lunch_start || '12:30'}-${rc?.lunch_end || '14:30'}`,
-        cena:   `${rc?.dinner_start || '19:30'}-${rc?.dinner_end || '23:00'}`,
+        pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
+        cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
       };
     }
-    // Semi-chiusure (pranzo/cena)
     {
       const h = parseInt(timeN.split(':')[0], 10);
       if (h >= 10 && h <= 16 && ValidationPipeline.isLunchClosed(dateISO, rc))
@@ -506,13 +564,16 @@ Non prendere prenotazioni.`;
       if ((h >= 17 || h <= 3) && ValidationPipeline.isDinnerClosed(dateISO, rc))
         return { esito: 'solo_pranzo', giorno: DateManager.getDayName(dateISO) };
     }
-    // Soglie
     const eventTh = Number(rc?.event_threshold) || 45;
     const largeTh = Number(rc?.large_group_threshold) || 10;
-    if (ppl >= eventTh) return { esito: 'evento', email: rc?.owner_email || '' };
-    if (ppl > largeTh)  return { esito: 'gruppo_grande' };
 
-    // Verifica capienza sul backend
+    // 🔧 v7.1 fix B2: NON esporre owner_email nel result — salvala internamente
+    if (ppl >= eventTh) {
+      this._lastEventInfo = { email: rc?.owner_email || '' };
+      return { esito: 'evento' };
+    }
+    if (ppl > largeTh) return { esito: 'gruppo_grande' };
+
     const res = await this._callAppsScript({ action: 'check_availability', data: dateISO, ora: timeN, persone: ppl });
     if (res?.success || res?.reason === 'slot_available') return { esito: 'libero' };
     if (res?.reason === 'day_closed') return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
@@ -528,9 +589,8 @@ Non prendere prenotazioni.`;
 
   // ─── TOOL 3: crea_prenotazione ───────────────────────────────────────────
   async _toolCrea({ nome, data, ora, persone, note }) {
-    // Guard anti-invenzione nome
     const nomeOk = nome && String(nome).trim() &&
-                   !/^(cliente|sconosciuto|n\.?d\.?)$/i.test(String(nome).trim());
+                   !/^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito)$/i.test(String(nome).trim());
     if (!nomeOk) return { creata: false, manca: 'nome' };
 
     const dateISO = this._normDate(data);
@@ -558,40 +618,51 @@ Non prendere prenotazioni.`;
   }
 
   // ─── TOOL 4: modifica_prenotazione ───────────────────────────────────────
-  // Opera su _lastFound. Campi vuoti/0 = non cambia.
-  async _toolModifica({ data, ora, persone, note }) {
+  // 🔧 v7.1: accetta nome + niente merge automatico note
+  async _toolModifica({ nome, data, ora, persone, note }) {
     const base = this._lastFound;
-    if (!base?.eventId) return { aggiornata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
+    if (!base?.eventId) {
+      return { aggiornata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
+    }
 
-    const hasData = data    != null && String(data).trim() !== '';
-    const hasOra  = ora     != null && String(ora).trim()  !== '';
+    const hasNome = nome    != null && String(nome).trim()    !== '';
+    const hasData = data    != null && String(data).trim()    !== '';
+    const hasOra  = ora     != null && String(ora).trim()     !== '';
     const hasPpl  = persone != null && parseInt(persone, 10) > 0;
-    const hasNote = note    != null && String(note).trim() !== '';
+    const hasNote = note    != null && String(note).trim()    !== '';
 
+    // Guard anti-invenzione nome anche in modify
+    if (hasNome && /^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito)$/i.test(String(nome).trim())) {
+      return { aggiornata: false, motivo: 'manca:"nome_valido"' };
+    }
+
+    const newNome   = hasNome ? String(nome).trim() : base.name;
     const newDate   = hasData ? this._normDate(data)  : base.date;
     const newTime   = hasOra  ? this._normTime(ora)   : (base.time?.length === 5 ? base.time + ':00' : base.time);
     const newPeople = hasPpl  ? parseInt(persone, 10) : base.people;
-    const newNotes  = hasNote ? this._mergeNotes(base.notes, note) : (base.notes || '');
+    // 🔧 v7.1 fix B9: la nota SOSTITUISCE, non concatena
+    const newNotes  = hasNote ? String(note).trim() : (base.notes || '');
 
     const r = await this._callAppsScript({
       action: 'update_reservation', eventId: base.eventId,
-      nome: base.name, data: newDate, ora: newTime, persone: newPeople,
+      nome: newNome, data: newDate, ora: newTime, persone: newPeople,
       telefono: base.phone || this.callerPhone || '', notes: newNotes,
     });
     if (r?.success !== false) {
-      this._lastFound = { ...base, date: newDate, time: newTime, people: newPeople, notes: newNotes };
+      this._lastFound = { ...base, name: newNome, date: newDate, time: newTime, people: newPeople, notes: newNotes };
       return {
         aggiornata: true,
+        nome: newNome,
         data: DateManager.formatForDisplay(newDate),
         ora: TimeManager.formatForDisplay(newTime),
         persone: newPeople,
+        note: newNotes || 'nessuna',
       };
     }
     return { aggiornata: false };
   }
 
   // ─── TOOL 5: cancella_prenotazione ───────────────────────────────────────
-  // Opera su _lastFound. Ignora l'argomento conferma (residuo schema strict).
   async _toolCancella(_args) {
     const r = this._lastFound;
     if (!r?.name || !r?.date) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
@@ -605,6 +676,7 @@ Non prendere prenotazioni.`;
   }
 
   // ─── TOOL 6: info_locale ─────────────────────────────────────────────────
+  // 🔧 v7.1: aggiunta keyword 'coperto' → mappata a prices
   async _toolInfoLocale({ argomento }) {
     if (!this._restaurantInfo) await this._fetchRestaurantInfo();
     const info = this._restaurantInfo || {};
@@ -622,7 +694,7 @@ Non prendere prenotazioni.`;
     if (wants(['pag','carta','bancomat','contant']))   filtered.pagamenti     = info.paymentMethods || null;
     if (wants(['dehor','esterno','fuori','giardino','tavoli fuori'])) filtered.dehors = info.outdoorSeating || null;
     if (wants(['seggiolone','bambin']))      filtered.seggiolone    = info.highchair     || null;
-    if (wants(['prezz','costo','quanto cost'])) filtered.prezzi     = info.prices        || null;
+    if (wants(['prezz','costo','quanto cost','coperto'])) filtered.prezzi = info.prices || null;
     if (wants(['cucina','tipo','specialit'])) filtered.cucina       = info.cuisine       || null;
     if (wants(['indirizz','dove','via']))    filtered.indirizzo    = info.address       || null;
     if (wants(['telefono','contatt','numero'])) filtered.telefono   = info.phone         || null;
@@ -642,12 +714,16 @@ Non prendere prenotazioni.`;
   }
 
   // ─── TOOL 7: richiedi_evento ─────────────────────────────────────────────
+  // 🔧 v7.1: guard esteso contro nomi placeholder tipo "nome non fornito"
   async _toolRichiediEvento({ nome, data, ora, persone, note }) {
     const cleanName = nome && String(nome).trim();
+    const isBadName = !cleanName ||
+                      /^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|anonimo)$/i.test(cleanName);
+    if (isBadName) return { registrata: false, manca: 'nome' };
+
     const dateISO   = this._normDate(data);
     const timeN     = this._normTime(ora);
     const ppl       = parseInt(persone, 10) || 0;
-    if (!cleanName) return { registrata: false, manca: 'nome' };
     if (!dateISO)   return { registrata: false, manca: 'data' };
     if (!timeN)     return { registrata: false, manca: 'ora' };
     if (!ppl)       return { registrata: false, manca: 'persone' };
@@ -661,7 +737,7 @@ Non prendere prenotazioni.`;
     return { registrata: false };
   }
 
-  // ─── Audio in da Telnyx → Realtime ───────────────────────────────────────
+  // ─── Audio in ────────────────────────────────────────────────────────────
   sendAudio(pcmuBase64) {
     if (this._ws?.readyState !== WebSocket.OPEN) return;
     this._send({ type: 'input_audio_buffer.append', audio: pcmuBase64 });
@@ -679,7 +755,6 @@ Non prendere prenotazioni.`;
     catch (e) { console.error(`❌ [${this.connId}] WS send: ${e?.message}`); }
   }
 
-  // ─── Helpers normalizzazione (DateManager/TimeManager sono autoritari) ──
   _normDate(s) {
     if (!s) return null;
     const t = String(s).trim();
@@ -697,20 +772,12 @@ Non prendere prenotazioni.`;
     return TimeManager.parseFromText(t);
   }
 
-  _mergeNotes(existing, add) {
-    const arr = existing ? String(existing).split(/;\s*/).map(x => x.trim()).filter(Boolean) : [];
-    String(add).split(/;\s*/).map(x => x.trim()).filter(Boolean).forEach(n => {
-      if (!arr.includes(n)) arr.push(n);
-    });
-    return arr.join('; ');
-  }
-
-  // Filtra hallucination classiche di Whisper (frasi di YouTube subtitles)
   _isGarbage(t) {
     if (!t) return true;
     const s = t.trim().toLowerCase();
     const PATTERNS = ['amara.org','sottotitoli','iscriviti','grazie per aver guardato',
-      'metti mi piace','copyright','all rights reserved','sottotitolat','comunità amara'];
+      'metti mi piace','copyright','all rights reserved','sottotitolat','comunità amara',
+      'sous-titres','sous titres','sous-titrage'];
     if (PATTERNS.some(p => s.includes(p))) {
       console.log(`🚫 [${this.connId}] hallucination filtrata: "${t.slice(0,50)}"`);
       return true;
