@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.3-MT-2026-07-13 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.3.1-MT-2026-07-13 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -771,8 +771,18 @@ Non prendere prenotazioni.`;
     if (!s) return null;
     const t = String(s).trim();
     if (!t) return null;
-    const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-    if (m) return `${m[1].padStart(2, '0')}:${m[2]}:00`;
+    // "21:00", "21:00:00", "21.00", "21,00", "21.30"
+    const m1 = t.match(/^(\d{1,2})[:.,](\d{2})(?::\d{2})?$/);
+    if (m1) {
+      const h = parseInt(m1[1], 10);
+      if (h >= 0 && h <= 23) return `${String(h).padStart(2, '0')}:${m1[2]}:00`;
+    }
+    // Ora intera: "21", "9"
+    const m2 = t.match(/^(\d{1,2})$/);
+    if (m2) {
+      const h = parseInt(m2[1], 10);
+      if (h >= 0 && h <= 23) return `${String(h).padStart(2, '0')}:00:00`;
+    }
     return TimeManager.parseFromText(t);
   }
 
