@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.3.4-MT-2026-07-13 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.3.5-MT-2026-07-14 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -192,6 +192,37 @@ Quando controlla_disponibilita → libero, dopo aver chiamato crea_prenotazione 
 
 # 🔴 REGOLA #3 — MAI INVENTARE NUMERO PERSONE
 Se il cliente non ha detto quante persone, CHIEDI "per quante persone?" PRIMA di chiamare controlla_disponibilita. Mai passare 1 come default silenzioso. Esempio sbagliato: cliente dice "prenoto per giovedì alle 21 nome Giovanni" senza dire quante persone → AI chiama controlla_disponibilita con persone:1 ❌. Giusto: AI chiede "per quante persone?".
+
+# 🔴 REGOLA #3-BIS — MAI INVENTARE DATA, ORA O NOME (CRITICA)
+Se il cliente non ha detto data, ora o nome, NON inventarli MAI. NON usare valori di default. NON usare "chiamante", "cliente", "il chiamante", "utente", "richiedente" o simili come nome.
+Se manca uno di questi dati, chiedilo esplicitamente:
+- Manca data → "Per quale giorno?"
+- Manca ora → "A che ora?"
+- Manca nome → "A che nome posso registrare la prenotazione?"
+
+# 🔴 REGOLA #3-TER — DISTINGUERE DOMANDE INFORMATIVE DA PRENOTAZIONI (CRITICA)
+Il cliente può fare DOMANDE senza voler prenotare. Esempi di domande informative che NON richiedono controlla_disponibilita o crea_prenotazione:
+- "Come funziona da voi per i gruppi?" → rispondi spiegando la policy (sopra 10 la prenotazione va confermata dal ristorante, sopra 45 è un evento). NON chiamare tool di prenotazione.
+- "Quanto costa una cena da voi?" → info_locale
+- "Fino a che ora si mangia?" → rispondi dagli orari settimanali del prompt
+- "Avete disponibilità per un gruppo?" → CHIEDI prima "per quando e quante persone?", poi controlla_disponibilita. NON inventare.
+- "Noi saremo in 15, si può fare?" → rispondi sulla policy gruppi + CHIEDI "per quale giorno e ora?". NON chiamare tool.
+
+REGOLA FERREA: prima di chiamare controlla_disponibilita servono TUTTI e 3 i dati (data, ora, persone) detti ESPLICITAMENTE dal cliente. Prima di crea_prenotazione servono TUTTI e 4 (data, ora, persone, nome). MAI valori inventati o dedotti.
+
+Esempio SBAGLIATO (successo in test T17):
+  Cliente: "Come funziona da voi per i gruppi? Saremo in 15"
+  → AI chiama controlla_disponibilita(martedì, 21, 15) ❌ (data e ora INVENTATE)
+  → AI chiama crea_prenotazione(nome:"chiamante", ...) ❌ (nome INVENTATO)
+  Risultato: prenotazione fantasma nel Calendar.
+
+Esempio GIUSTO:
+  Cliente: "Come funziona da voi per i gruppi? Saremo in 15"
+  → AI: "Per gruppi sopra le 10 persone la prenotazione è soggetta a conferma del ristorante. Vuole procedere? Per quale giorno e ora?"
+  Cliente: "Sì, martedì sera alle 21"
+  → AI: "A che nome?"
+  Cliente: "Luca"
+  → AI: [chiama controlla_disponibilita] → gruppo_grande → [chiama crea_prenotazione]
 
 # 🔴 REGOLA #4 — DOPO UNA CREA, USA MODIFICA (mai una seconda crea)
 Se hai APPENA creato una prenotazione e il cliente corregge un dettaglio (persone, ora, nome), USA modifica_prenotazione (la prenotazione appena creata è già in _lastFound). MAI chiamare crea_prenotazione una seconda volta — creeresti una prenotazione doppia. Esempio sbagliato: crei per 1 persona, cliente dice "no siamo in 4" → tu chiami crea_prenotazione di nuovo ❌. Giusto: modifica_prenotazione con persone:4.
@@ -588,22 +619,31 @@ Non prendere prenotazioni.`;
     if (!timeN)   return { esito: 'manca_ora' };
     if (!ppl)     return { esito: 'manca_persone' };
 
+    // v7.3.5: salva "slot" per fallback memoria contesto e includilo nei
+    // result "chiuso" così il modello viene esplicitamente istruito a riusare
+    // ora+persone quando il cliente cambia solo il giorno.
+    const slotHint = {
+      _slot_memorizzato: { ora_hh_mm: timeN.substring(0,5), persone: ppl },
+      _istruzione: `IMPORTANTE: se il cliente propone un altro giorno, riusa questi valori (ora=${timeN.substring(0,5)}, persone=${ppl}) senza richiederli.`,
+    };
+
     if (ValidationPipeline.getDayClosedMessage(dateISO, rc)) {
-      return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
+      return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO), ...slotHint };
     }
     if (!ValidationPipeline.isValidTime(timeN, rc)) {
       return {
         esito: 'fuori_orario',
         pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
         cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
+        ...slotHint,
       };
     }
     {
       const h = parseInt(timeN.split(':')[0], 10);
       if (h >= 10 && h <= 16 && ValidationPipeline.isLunchClosed(dateISO, rc))
-        return { esito: 'solo_cena', giorno: DateManager.getDayName(dateISO) };
+        return { esito: 'solo_cena', giorno: DateManager.getDayName(dateISO), ...slotHint };
       if ((h >= 17 || h <= 3) && ValidationPipeline.isDinnerClosed(dateISO, rc))
-        return { esito: 'solo_pranzo', giorno: DateManager.getDayName(dateISO) };
+        return { esito: 'solo_pranzo', giorno: DateManager.getDayName(dateISO), ...slotHint };
     }
     const eventTh = Number(rc?.event_threshold) || 45;
     const largeTh = Number(rc?.large_group_threshold) || 10;
@@ -616,20 +656,20 @@ Non prendere prenotazioni.`;
 
     const res = await this._callAppsScript({ action: 'check_availability', data: dateISO, ora: timeN, persone: ppl });
     if (res?.success || res?.reason === 'slot_available') return { esito: 'libero' };
-    if (res?.reason === 'day_closed') return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO) };
+    if (res?.reason === 'day_closed') return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO), ...slotHint };
     if (res?.reason === 'slot_full') {
       const alts = await this._callAppsScript({ action: 'find_available_slots', data: dateISO, ora: timeN, persone: ppl });
       const sameDay = (alts?.availableSlots?.sameDay || [])
         .filter(s => ValidationPipeline.isValidTime(s.time, rc))
         .slice(0, 3).map(s => s.time.substring(0, 5));
-      return { esito: 'pieno', alternative_stesso_giorno: sameDay };
+      return { esito: 'pieno', alternative_stesso_giorno: sameDay, ...slotHint };
     }
     return { esito: 'libero' };
   }
 
   async _toolCrea({ nome, data, ora, persone, note }) {
     const nomeOk = nome && String(nome).trim() &&
-                   !/^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|non specificato|non specifica|anonimo|placeholder)$/i.test(String(nome).trim());
+                   !/^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|non specificato|non specifica|anonimo|placeholder|chiamante|il chiamante|utente|richiedente)$/i.test(String(nome).trim());
     if (!nomeOk) return { creata: false, manca: 'nome' };
 
     const dateISO = this._normDate(data);
@@ -747,7 +787,7 @@ Non prendere prenotazioni.`;
   async _toolRichiediEvento({ nome, data, ora, persone, note, email }) {
     const cleanName = nome && String(nome).trim();
     const isBadName = !cleanName ||
-                      /^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|anonimo|non specificato|non specifica|placeholder)$/i.test(cleanName);
+                      /^(cliente|sconosciuto|n\.?d\.?|nome non fornito|non fornito|anonimo|non specificato|non specifica|placeholder|chiamante|il chiamante|utente|richiedente)$/i.test(cleanName);
     if (isBadName) return { registrata: false, manca: 'nome' };
 
     const dateISO   = this._normDate(data);
