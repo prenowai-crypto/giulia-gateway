@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.3.6-MT-2026-07-14 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.3.7-MT-2026-07-14 caricato');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -331,7 +331,25 @@ Filler e tool call DEVONO essere in una sola response, altrimenti resti in silen
 4. Se trovata: rileggi i dettagli. Chiedi cosa cambiare.
 5. Modifica: modifica_prenotazione con SOLO i campi cambiati ("" o 0 per gli altri).
 6. Correzione nome: passa il nuovo nome in modifica_prenotazione.
-7. Note: componi la nota FINALE tu. Il tool SOSTITUISCE (non concatena). Esempio: nota esistente "vegano", cliente dice "aggiungi compleanno" → tu passi "vegano, compleanno".
+7. Note: componi la nota FINALE completa tu. Il tool SOSTITUISCE (non concatena). Regola d'oro: PRIMA di comporre la nota nuova, RILEGGI la nota esistente restituita da trova_prenotazione e INCLUDI nella nota finale TUTTE le informazioni che devono restare + le NUOVE. Nessuna informazione preesistente deve sparire, a meno che il cliente non abbia esplicitamente chiesto di rimuoverla.
+
+   Esempio base — aggiungere UNA nota:
+     Nota esistente: "vegano"
+     Cliente: "aggiungete anche compleanno"
+     ✅ Passa a modifica_prenotazione: note = "vegano, compleanno"
+     ❌ NON passare: note = "compleanno" (perderesti "vegano")
+
+   Esempio T15 — cliente fa PIÙ MODIFICHE insieme (bug ripetuto nei test):
+     Nota esistente: "Compleanno"
+     Cliente: "Aggiungete che uno è vegano, vorremmo un tavolo esterno, e siamo in 6 invece di 4"
+     ✅ Passa: modifica_prenotazione({ persone: 6, note: "Compleanno, vegano, tavolo esterno", data:"", ora:"", nome:"" })
+     ❌ NON passare: note = "vegano, tavolo esterno" (perderesti "Compleanno")
+     ❌ NON passare: note = "vegano" (perderesti "Compleanno" e "tavolo esterno")
+
+   Esempio rimozione esplicita:
+     Nota esistente: "vegano, compleanno"
+     Cliente: "in realtà non è più il mio compleanno"
+     ✅ Passa: note = "vegano" (rimuovi SOLO l'informazione che il cliente ha esplicitamente rimosso)
 8. Cancella: conferma esplicita, poi cancella_prenotazione.
 
 # Tono
@@ -633,16 +651,23 @@ Non prendere prenotazioni.`;
   _foundResult(res, searchedName) {
     this._lastFound = res;
     const tn = res.time?.length === 5 ? res.time + ':00' : (res.time || '');
-    return {
+    const existingNotes = res.notes || '';
+    const result = {
       trovata: true,
       eventId: res.eventId,
       nome:    res.name,
       data:    DateManager.formatForDisplay(res.date),
       ora:     TimeManager.formatForDisplay(tn),
       persone: res.people,
-      note:    res.notes || 'nessuna',
+      note:    existingNotes || 'nessuna',
       nome_diverso_dal_cercato: !!(searchedName && res.name && res.name.toLowerCase() !== String(searchedName).toLowerCase()),
     };
+    // v7.3.7: hint esplicito quando ci sono note esistenti — evita la perdita
+    // di informazioni preesistenti quando il cliente aggiunge nuove note.
+    if (existingNotes && existingNotes !== 'nessuna' && existingNotes.trim() !== '') {
+      result._istruzione_note = `IMPORTANTE: la nota esistente è "${existingNotes}". Se il cliente aggiunge nuove informazioni, DEVI includere "${existingNotes}" + le nuove nel campo "note" di modifica_prenotazione. Non passare solo le nuove.`;
+    }
+    return result;
   }
 
   async _toolControlla({ data, ora, persone }) {
