@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.3.7-MT-2026-07-14 caricato');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.0-MT-2026-07-14 caricato (Batch 1: GDPR log masking, no ownership check)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -543,14 +543,27 @@ Non prendere prenotazioni.`;
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
-          if (!this._isGarbage(t)) console.log(`💬 [${this.connId}] [user]: ${t}`);
+          if (!this._isGarbage(t)) {
+            // v7.4.0 GDPR: mask user transcripts in production
+            if (process.env.LOG_TRANSCRIPTS === 'true') {
+              console.log(`💬 [${this.connId}] [user]: ${t}`);
+            } else {
+              console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
+            }
+          }
         }
         break;
       case 'response.output_audio.delta':
         if (msg.delta) this.onAudioDelta(msg.delta);
         break;
       case 'response.output_audio_transcript.done':
-        if (msg.transcript) console.log(`💬 [${this.connId}] [AI]: ${msg.transcript}`);
+        if (msg.transcript) {
+          if (process.env.LOG_TRANSCRIPTS === 'true') {
+            console.log(`💬 [${this.connId}] [AI]: ${msg.transcript}`);
+          } else {
+            console.log(`💬 [${this.connId}] [AI]: (${msg.transcript.length} char, transcript masked)`);
+          }
+        }
         break;
       case 'input_audio_buffer.speech_started':
         console.log(`🎙️  [${this.connId}] cliente: speech_started`);
