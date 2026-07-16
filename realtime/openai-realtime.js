@@ -928,6 +928,12 @@ Non prendere prenotazioni.`;
       action: 'update_reservation', eventId: base.eventId,
       nome: newNome, data: newDate, ora: newTime, persone: newPeople,
       telefono: base.phone || this.callerPhone || '', notes: newNotes,
+      // v7.4.3: passiamo dati originali (dal _lastFound salvato da trova_prenotazione)
+      // per identificare in modo affidabile la riga da aggiornare nel LogPrenotazioni.
+      // Evita dipendenza da Calendar getEventById (che può ritornare un proxy senza titolo).
+      original_name: base.name || '',
+      original_date: base.date || '',
+      original_time: base.time?.length === 5 ? base.time + ':00' : (base.time || ''),
     });
     if (r?.success !== false) {
       this._lastFound = { ...base, name: newNome, date: newDate, time: newTime, people: newPeople, notes: newNotes };
