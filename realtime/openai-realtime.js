@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.1-MT-2026-07-15 caricato (Batch 2: anti-injection + crisi mentale)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.2-MT-2026-07-16 caricato (Batch 2 + Fix A modify validation)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -838,6 +838,91 @@ Non prendere prenotazioni.`;
     const newTime   = hasOra  ? this._normTime(ora)   : (base.time?.length === 5 ? base.time + ':00' : base.time);
     const newPeople = hasPpl  ? parseInt(persone, 10) : base.people;
     const newNotes  = hasNote ? String(note).trim() : (base.notes || '');
+
+    // v7.4.2 Fix A: se cambia data o ora, valida il nuovo slot come check_availability
+    const rc = this.restaurantConfig;
+    if (hasData || hasOra) {
+      // Verifica giorno chiuso
+      if (ValidationPipeline.getDayClosedMessage(newDate, rc)) {
+        return {
+          aggiornata: false,
+          esito: 'giorno_chiuso',
+          giorno: DateManager.getDayName(newDate),
+          motivo: 'Il giorno richiesto è di chiusura del ristorante.'
+        };
+      }
+      // Verifica fuori orario
+      if (!ValidationPipeline.isValidTime(newTime, rc)) {
+        return {
+          aggiornata: false,
+          esito: 'fuori_orario',
+          pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
+          cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
+          motivo: 'Orario fuori dai turni di servizio.'
+        };
+      }
+      // Verifica semi-chiusure lunch/dinner
+      const h = parseInt(newTime.split(':')[0], 10);
+      if (h >= 10 && h <= 16 && ValidationPipeline.isLunchClosed(newDate, rc)) {
+        return {
+          aggiornata: false,
+          esito: 'solo_cena',
+          giorno: DateManager.getDayName(newDate),
+          motivo: 'A pranzo il ristorante è chiuso quel giorno.'
+        };
+      }
+      if ((h >= 17 || h <= 3) && ValidationPipeline.isDinnerClosed(newDate, rc)) {
+        return {
+          aggiornata: false,
+          esito: 'solo_pranzo',
+          giorno: DateManager.getDayName(newDate),
+          motivo: 'A cena il ristorante è chiuso quel giorno.'
+        };
+      }
+    }
+
+    // v7.4.2 Fix A: se il nuovo numero persone raggiunge soglia evento, rifiuta
+    // (una modifica normale non può trasformarsi in richiesta evento — va rifatta)
+    if (hasPpl) {
+      const eventTh = Number(rc?.event_threshold) || 45;
+      if (newPeople >= eventTh) {
+        return {
+          aggiornata: false,
+          esito: 'evento',
+          motivo: 'Il numero di persone richiesto configura una richiesta evento. Occorre una nuova richiesta come evento.'
+        };
+      }
+    }
+
+    // v7.4.2 Fix A: capacity check solo se cambia slot (data o ora).
+    // Se cambia solo persone nello stesso slot, per ora si procede senza check
+    // perché check_availability non sa escludere self dal conteggio.
+    // Fix B (successivo) risolverà il caso con excludeEventId lato Apps Script.
+    if (hasData || hasOra) {
+      const availRes = await this._callAppsScript({
+        action: 'check_availability',
+        data: newDate,
+        ora: newTime,
+        persone: newPeople,
+      });
+      if (availRes?.reason === 'slot_full') {
+        const alts = await this._callAppsScript({
+          action: 'find_available_slots',
+          data: newDate,
+          ora: newTime,
+          persone: newPeople,
+        });
+        const sameDay = (alts?.availableSlots?.sameDay || [])
+          .filter(s => ValidationPipeline.isValidTime(s.time, rc))
+          .slice(0, 3).map(s => s.time.substring(0, 5));
+        return {
+          aggiornata: false,
+          esito: 'pieno',
+          alternative_stesso_giorno: sameDay,
+          motivo: 'Slot pieno per il nuovo orario richiesto.'
+        };
+      }
+    }
 
     const r = await this._callAppsScript({
       action: 'update_reservation', eventId: base.eventId,
