@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.3-MT-2026-07-17 caricato (fix modify: original_* nel payload)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.4-MT-2026-07-17 caricato (Fix B: capacity check anche su modifica pax)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -372,12 +372,12 @@ Filler e tool call DEVONO essere in una sola response, altrimenti resti in silen
    - manca_data / manca_ora / manca_persone → chiedi il pezzo mancante.
 
 # Flusso MODIFY / CANCEL
-1. Chiedi il nome ("A che nome è la prenotazione?"). Anche se il cliente si presenta ("sono Marco"), confermalo.
-2. Chiama trova_prenotazione (telefono automatico).
-3. Se nome_diverso_dal_cercato è true: "Vedo una prenotazione a nome X collegata a questo numero, è la sua?".
-4. Se trovata: rileggi i dettagli. Chiedi cosa cambiare.
-5. Modifica: modifica_prenotazione con SOLO i campi cambiati ("" o 0 per gli altri).
-6. Correzione nome: passa il nuovo nome in modifica_prenotazione.
+1. Riconosci l'intent di modificare/cancellare/spostare. Frasi tipo "ho una prenotazione, vorrei spostarla", "cancellate la mia prenotazione", "posso cambiare l'orario?", "vorrei rispostare" → intent MODIFY/CANCEL.
+2. IMMEDIATAMENTE chiedi il nome se non è già stato detto ("A che nome è la prenotazione?"). Anche se il cliente si presenta ("sono Marco"), confermalo esplicitamente.
+3. Non appena hai il nome, chiama trova_prenotazione (telefono automatico). NON passare a controlla_disponibilita per una nuova data fino a quando NON hai identificato la prenotazione esistente. Questo è CRITICO: senza trova_prenotazione non hai _lastFound e le modifiche successive non funzionano.
+4. Se nome_diverso_dal_cercato è true: "Vedo una prenotazione a nome X collegata a questo numero, è la sua?".
+5. Se trovata: rileggi i dettagli. Chiedi cosa cambiare.
+6. Modifica: modifica_prenotazione con SOLO i campi cambiati ("" o 0 per gli altri).
 7. Note: componi la nota FINALE completa tu. Il tool SOSTITUISCE (non concatena). Regola d'oro: PRIMA di comporre la nota nuova, RILEGGI la nota esistente restituita da trova_prenotazione e INCLUDI nella nota finale TUTTE le informazioni che devono restare + le NUOVE. Nessuna informazione preesistente deve sparire, a meno che il cliente non abbia esplicitamente chiesto di rimuoverla.
 
    Esempio base — aggiungere UNA nota:
@@ -398,6 +398,30 @@ Filler e tool call DEVONO essere in una sola response, altrimenti resti in silen
      Cliente: "in realtà non è più il mio compleanno"
      ✅ Passa: note = "vegano" (rimuovi SOLO l'informazione che il cliente ha esplicitamente rimosso)
 8. Cancella: conferma esplicita, poi cancella_prenotazione.
+
+# 🔴 REGOLA #12 — TRANSIZIONE MODIFY → EVENTO (CRITICA)
+Se durante un flusso di MODIFY il nuovo slot proposto dal cliente si trasforma in EVENTO (numero persone >= soglia evento, tipicamente 45), NON puoi semplicemente chiamare richiedi_evento. Devi:
+
+1. PRIMA cancellare la prenotazione esistente con cancella_prenotazione (avendo _lastFound popolato da trova_prenotazione)
+2. POI registrare la richiesta evento con richiedi_evento
+3. Comunicare al cliente entrambe le azioni
+
+Esempio SBAGLIATO (successo in test — mai più):
+  Cliente: "ho una prenotazione a nome Marco Rossi per martedì, vorrei spostarla"
+  → AI: [chiama trova_prenotazione → trova Marco Rossi martedì 22:00 4 pax]
+  Cliente: "sabato a pranzo, ma saremo in 50"
+  → AI: [chiama richiedi_evento] ❌ SBAGLIATO: Marco Rossi martedì rimane attivo, si crea confusione
+
+Esempio GIUSTO:
+  Cliente: "ho una prenotazione a nome Marco Rossi per martedì, vorrei spostarla"
+  → AI: [chiama trova_prenotazione → trova Marco Rossi martedì 22:00 4 pax]
+  → AI: "Trovo la sua prenotazione per martedì alle 22 per 4. Quando vuole spostarla?"
+  Cliente: "sabato a pranzo, ma saremo in 50"
+  → AI: "50 persone configurano una richiesta evento. Per farlo devo prima annullare la sua prenotazione di martedì. Confermo?"
+  Cliente: "sì"
+  → AI: [chiama cancella_prenotazione] → cancellata:true
+  → AI: [chiama richiedi_evento con Marco Rossi, sabato, 12, 50] → registrata:true
+  → AI: "Ho annullato la prenotazione di martedì e registrato la richiesta evento per sabato. Il ristorante la contatterà per confermare."
 
 # Tono
 Sei receptionist DEL ristorante. "il ristorante la richiamerà", "la contatteremo al suo numero", "riceverà una conferma". MAI "restiamo in attesa", "dovremmo ricevere aggiornamenti".
@@ -894,33 +918,46 @@ Non prendere prenotazioni.`;
       }
     }
 
-    // v7.4.2 Fix A: capacity check solo se cambia slot (data o ora).
-    // Se cambia solo persone nello stesso slot, per ora si procede senza check
-    // perché check_availability non sa escludere self dal conteggio.
-    // Fix B (successivo) risolverà il caso con excludeEventId lato Apps Script.
-    if (hasData || hasOra) {
+    // v7.4.4 Fix B: capacity check anche quando cambia SOLO persone (senza slot).
+    // Uso existingPeople per escludere self dal conteggio, evitando falsi
+    // "pieno" per la propria prenotazione. Se cambia anche slot, existingPeople
+    // = 0 perché il nuovo slot non contiene ancora la mia prenotazione.
+    if (hasData || hasOra || hasPpl) {
+      const slotChanged = hasData || hasOra;
+      const excludeSelfPeople = slotChanged ? 0 : (base.people || 0);
       const availRes = await this._callAppsScript({
         action: 'check_availability',
         data: newDate,
         ora: newTime,
         persone: newPeople,
+        existingPeople: excludeSelfPeople,
       });
       if (availRes?.reason === 'slot_full') {
-        const alts = await this._callAppsScript({
-          action: 'find_available_slots',
-          data: newDate,
-          ora: newTime,
-          persone: newPeople,
-        });
-        const sameDay = (alts?.availableSlots?.sameDay || [])
-          .filter(s => ValidationPipeline.isValidTime(s.time, rc))
-          .slice(0, 3).map(s => s.time.substring(0, 5));
-        return {
-          aggiornata: false,
-          esito: 'pieno',
-          alternative_stesso_giorno: sameDay,
-          motivo: 'Slot pieno per il nuovo orario richiesto.'
-        };
+        // Solo per cambio slot proponiamo alternative (per solo-persone stesso
+        // slot non ha senso: il cliente vuole restare su quello slot).
+        if (slotChanged) {
+          const alts = await this._callAppsScript({
+            action: 'find_available_slots',
+            data: newDate,
+            ora: newTime,
+            persone: newPeople,
+          });
+          const sameDay = (alts?.availableSlots?.sameDay || [])
+            .filter(s => ValidationPipeline.isValidTime(s.time, rc))
+            .slice(0, 3).map(s => s.time.substring(0, 5));
+          return {
+            aggiornata: false,
+            esito: 'pieno',
+            alternative_stesso_giorno: sameDay,
+            motivo: 'Slot pieno per il nuovo orario richiesto.'
+          };
+        } else {
+          return {
+            aggiornata: false,
+            esito: 'pieno_stesso_slot',
+            motivo: 'Non c\'è capacità sufficiente nello slot corrente per aggiungere altre persone. Chiedi al cliente se vuole cambiare orario.'
+          };
+        }
       }
     }
 
