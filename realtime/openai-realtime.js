@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.4-MT-2026-07-17 caricato (Fix B: capacity check anche su modifica pax)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.5-MT-2026-07-17 caricato (Fix B v2: excludeEventId per evitare double-count slot overlap)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -918,23 +918,20 @@ Non prendere prenotazioni.`;
       }
     }
 
-    // v7.4.4 Fix B: capacity check anche quando cambia SOLO persone (senza slot).
-    // Uso existingPeople per escludere self dal conteggio, evitando falsi
-    // "pieno" per la propria prenotazione. Se cambia anche slot, existingPeople
-    // = 0 perché il nuovo slot non contiene ancora la mia prenotazione.
+    // v7.4.5: capacity check con excludeEventId per non contare self.
+    // Uno slot dura 90 minuti: anche cambiando ora, lo slot vecchio e nuovo
+    // possono avere overlap → conteggio errato senza esclusione.
+    // Passando eventId, Apps Script salta l'evento self dal conteggio.
     if (hasData || hasOra || hasPpl) {
       const slotChanged = hasData || hasOra;
-      const excludeSelfPeople = slotChanged ? 0 : (base.people || 0);
       const availRes = await this._callAppsScript({
         action: 'check_availability',
         data: newDate,
         ora: newTime,
         persone: newPeople,
-        existingPeople: excludeSelfPeople,
+        excludeEventId: base.eventId || '',
       });
       if (availRes?.reason === 'slot_full') {
-        // Solo per cambio slot proponiamo alternative (per solo-persone stesso
-        // slot non ha senso: il cliente vuole restare su quello slot).
         if (slotChanged) {
           const alts = await this._callAppsScript({
             action: 'find_available_slots',
