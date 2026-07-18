@@ -53,12 +53,39 @@ const Registry = {
       const rows = data.table.rows || [];
       const cols = data.table.cols || [];
       let headers = cols.map(c => c.label || '');
-      if (headers.every(h => h === '')) {
-        if (rows.length > 0 && rows[0].c) {
-          headers = rows[0].c.map(cell => cell ? (cell.v !== null ? String(cell.v) : '') : '');
-          rows.shift();
+
+      // v7.4.7 Fix parsing Registry: se TUTTE le labels sono vuote, usa la prima
+      // riga come header. Se ALCUNE sono vuote (es. colonne nuove aggiunte dopo
+      // il setup gviz), fill-in dalla prima riga solo per quelle vuote,
+      // preservando quelle già valide.
+      const allEmpty = headers.every(h => h === '');
+      const someEmpty = !allEmpty && headers.some(h => h === '');
+
+      if (allEmpty && rows.length > 0 && rows[0].c) {
+        headers = rows[0].c.map(cell => cell ? (cell.v !== null ? String(cell.v) : '') : '');
+        rows.shift();
+      } else if (someEmpty && rows.length > 0 && rows[0].c) {
+        // Alcune labels vuote → prendi il valore dalla prima riga per quelle
+        const firstRow = rows[0].c;
+        let matches = 0;
+        let totalKnown = 0;
+        for (let i = 0; i < headers.length; i++) {
+          if (headers[i] !== '' && firstRow[i]) {
+            totalKnown++;
+            if (String(firstRow[i].v || '') === headers[i]) matches++;
+          }
         }
+        // Se la maggior parte dei valori della prima riga = labels note,
+        // allora la prima riga è header row → riempi vuote e shift
+        const isFirstRowHeader = totalKnown > 0 && (matches / totalKnown) > 0.6;
+        for (let i = 0; i < headers.length; i++) {
+          if (headers[i] === '' && firstRow[i]) {
+            headers[i] = String(firstRow[i].v || '').trim();
+          }
+        }
+        if (isFirstRowHeader) rows.shift();
       }
+      console.log(`📋 Registry headers: [${headers.filter(Boolean).join(', ')}]`);
       const registry = rows.map(row => {
         const obj = {};
         row.c.forEach((cell, idx) => {
