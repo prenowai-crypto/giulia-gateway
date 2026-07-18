@@ -112,9 +112,12 @@ const Registry = {
         dinnerStart: match.dinner_start || '19:00',
         dinnerEnd:   match.dinner_end   || '22:30',
         active:      match.active === true || String(match.active).toUpperCase() === 'TRUE',
+        // v7.4.6 Batch 3: numero fisico del ristorante per transfer chiamata
+        restaurantPhone: (match.restaurant_phone || '').trim(),
       };
       console.log(`✅ Registry match: "${enriched.restaurantName}" (${enriched.receptionistName}) per ${twilioNumber}`);
       console.log(`    Apps Script: ${enriched.appsScriptUrl ? '✓' : '✗ MANCANTE'}`);
+      console.log(`    Restaurant phone: ${enriched.restaurantPhone || '(non configurato)'}`);
       console.log(`    Chiusure: closed=[${enriched.closedDays}] lunch=[${enriched.lunchClosedDays}] dinner=[${enriched.dinnerClosedDays}]`);
       console.log(`    Orari: pranzo ${enriched.lunchStart}-${enriched.lunchEnd}, cena ${enriched.dinnerStart}-${enriched.dinnerEnd}`);
       console.log(`    Attivo: ${enriched.active}`);
