@@ -82,6 +82,7 @@ export function setupMediaStreamHandler(server, callInfoByCallControlId = new Ma
             connId,
             from,
             to,
+            callControlId,
             restaurantConfig,
             onAudioDelta: (chunk) => {
               if (telnyxWs.readyState === 1) {
