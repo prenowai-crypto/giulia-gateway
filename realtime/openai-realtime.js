@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.8-MT-2026-07-18 caricato (Batch 3 v2: transfer con chiusura sessione)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.9-MT-2026-07-18 caricato (transfer con delay 3s pre-transfer)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1164,75 +1164,79 @@ Non prendere prenotazioni.`;
 
     console.log(`📞 [${this.connId}] Transfer richiesto: motivo="${motivo}" → ${restaurantPhone}`);
 
-    try {
-      const telnyxApiKey = process.env.TELNYX_API_KEY;
-      if (!telnyxApiKey) throw new Error('TELNYX_API_KEY non configurata');
-
-      const response = await fetch(`https://api.telnyx.com/v2/calls/${this.callControlId}/actions/transfer`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${telnyxApiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          to: restaurantPhone,
-          timeout_secs: 30,
-          answering_machine_detection: 'disabled',
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error(`❌ [${this.connId}] Telnyx transfer failed: ${response.status} ${errText}`);
-        return {
-          trasferita: false,
-          motivo_fallimento: 'api_error',
-          istruzione: "Comunica al cliente: 'Mi dispiace, il ristorante non risponde al momento. La ricontatteranno appena possibile. Buona giornata.'"
-        };
-      }
-
-      console.log(`✅ [${this.connId}] Transfer avviato verso ${restaurantPhone}`);
-
-      // v7.4.8: dopo transfer riuscito, ferma lo streaming Telnyx e chiudi la
-      // WebSocket Realtime. Senza questo, la nostra sessione resta collegata al
-      // canale audio del cliente ANCHE dopo il transfer → Giulia continua a
-      // sentire tutto e a rispondere sopra la conversazione tra cliente e
-      // ristoratore. Attendiamo 5s per permettere al modello di pronunciare
-      // "un attimo, la sto trasferendo. Buona giornata." prima di chiudere.
-      setTimeout(async () => {
-        try {
-          await fetch(`https://api.telnyx.com/v2/calls/${this.callControlId}/actions/streaming_stop`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${telnyxApiKey}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: JSON.stringify({}),
-          });
-          console.log(`✅ [${this.connId}] Streaming Telnyx fermato dopo transfer`);
-        } catch (e) {
-          console.warn(`⚠️  [${this.connId}] Errore streaming_stop: ${e?.message}`);
-        }
-        if (this.ws && this.ws.readyState === 1) {
-          try { this.ws.close(); } catch {}
-          console.log(`🔴 [${this.connId}] WebSocket Realtime chiusa dopo transfer`);
-        }
-      }, 5000);
-
-      return {
-        trasferita: true,
-        istruzione: "Trasferimento avviato. Saluta brevemente il cliente con: 'Un attimo, la sto trasferendo. Buona giornata.' Poi la chiamata sarà trasferita automaticamente."
-      };
-    } catch (e) {
-      console.error(`❌ [${this.connId}] Transfer exception: ${e?.message}`);
+    // v7.4.9: ritardo di 3s prima di chiamare Telnyx transfer API.
+    // Il modello riceve subito trasferita:true e inizia a dire "un attimo,
+    // la sto trasferendo". Dopo 3s (tempo per pronunciare la frase),
+    // Telnyx avvia effettivamente il transfer verso il ristoratore.
+    // Senza questo ritardo, il bip di ring del ristoratore si sovrappone
+    // alla frase di Giulia e il cliente non capisce cosa succede.
+    const telnyxApiKey = process.env.TELNYX_API_KEY;
+    if (!telnyxApiKey) {
       return {
         trasferita: false,
-        motivo_fallimento: 'exception',
-        istruzione: "Comunica al cliente: 'Mi dispiace, non riesco a trasferirla in questo momento. La ricontatteranno appena possibile.'"
+        motivo_fallimento: 'no_api_key',
+        istruzione: "Comunica al cliente: 'Mi dispiace, si è verificato un problema tecnico. La prego di richiamare tra poco.'"
       };
     }
+
+    setTimeout(async () => {
+      try {
+        const response = await fetch(`https://api.telnyx.com/v2/calls/${this.callControlId}/actions/transfer`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${telnyxApiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify({
+            to: restaurantPhone,
+            timeout_secs: 30,
+            answering_machine_detection: 'disabled',
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error(`❌ [${this.connId}] Telnyx transfer failed: ${response.status} ${errText}`);
+          // Non possiamo più notificare il modello (WS Realtime già in chiusura).
+          // Il cliente sentirà silenzio. In produzione andrebbe gestito con
+          // notifica webhook o fallback su nuovo announcement.
+          return;
+        }
+
+        console.log(`✅ [${this.connId}] Transfer avviato verso ${restaurantPhone}`);
+      } catch (e) {
+        console.error(`❌ [${this.connId}] Transfer exception: ${e?.message}`);
+      }
+
+      // Dopo il transfer, ferma lo streaming Telnyx e chiudi la WS Realtime
+      // per non ricevere più audio della chiamata bridged.
+      try {
+        await fetch(`https://api.telnyx.com/v2/calls/${this.callControlId}/actions/streaming_stop`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${telnyxApiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify({}),
+        });
+        console.log(`✅ [${this.connId}] Streaming Telnyx fermato dopo transfer`);
+      } catch (e) {
+        console.warn(`⚠️  [${this.connId}] Errore streaming_stop: ${e?.message}`);
+      }
+      if (this.ws && this.ws.readyState === 1) {
+        try { this.ws.close(); } catch {}
+        console.log(`🔴 [${this.connId}] WebSocket Realtime chiusa dopo transfer`);
+      }
+    }, 3000);
+
+    // Ritorno subito al modello: il modello dirà la frase di saluto,
+    // poi dopo 3s partirà il transfer vero.
+    return {
+      trasferita: true,
+      istruzione: "Trasferimento in corso. Dì subito e brevemente al cliente: 'Un attimo, la sto trasferendo. Buona giornata.' Il transfer partirà tra 3 secondi automaticamente."
+    };
   }
 
   _isGarbage(t) {
