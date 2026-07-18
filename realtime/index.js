@@ -210,7 +210,31 @@ app.post('/webhooks/telnyx', async (req, res) => {
 
   console.log(`📩 Webhook: ${eventType} | CallControlId: ${callControlId} | From: ${from} | To: ${to} | Direction: ${direction}`);
 
-  if (direction && direction !== 'incoming') return;
+  // v7.4.8: ignoro qualsiasi webhook che non sia inbound. Per la gamba outbound
+  // del transfer, Telnyx emette gli stessi eventi (call.initiated, call.answered)
+  // che senza questo filtro apriranno una NUOVA sessione Realtime che parla al
+  // ristoratore dicendo "servizio non attivo". Il filtro deve essere robusto:
+  // se direction manca, controlliamo se 'to' è un nostro numero Telnyx registrato.
+  const isInbound = direction === 'incoming';
+  const isOutbound = direction === 'outgoing' || direction === 'outbound';
+  if (isOutbound) {
+    console.log(`↩️  [${callControlId}] Ignoro webhook outbound (probabile transfer leg)`);
+    return;
+  }
+  if (!isInbound && (eventType === 'call.initiated' || eventType === 'call.answered')) {
+    // Direction ambigua per call.initiated/answered → se 'to' non matcha un
+    // nostro numero (è il numero del ristoratore), è una gamba outbound.
+    if (to && !to.startsWith('+3902') /* placeholder: aggiungere logica multi-tenant */) {
+      // Controllo se è un nostro numero
+      try {
+        const cfg = await Registry.getConfigForNumber(to);
+        if (!cfg) {
+          console.log(`↩️  [${callControlId}] Ignoro ${eventType}: 'to'=${to} non è un nostro numero Telnyx (probabile transfer leg)`);
+          return;
+        }
+      } catch {}
+    }
+  }
 
   switch (eventType) {
     case 'call.initiated': {
