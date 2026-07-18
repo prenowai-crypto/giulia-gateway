@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.5-MT-2026-07-17 caricato (Fix B v2: excludeEventId per evitare double-count slot overlap)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.6-MT-2026-07-18 caricato (Batch 3: transfer + stay-in-scope)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -137,6 +137,19 @@ const FUNCTIONS = [
         email:   { type: 'string',  description: "Email di contatto. \"\" se non fornita." },
       },
       required: ['nome', 'data', 'ora', 'persone', 'note', 'email'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'trasferisci_al_ristorante',
+    description: "Trasferisce la chiamata alla linea fisica del ristorante. Usa quando: (1) il cliente chiede espressamente di parlare con una persona/umano, (2) situazione fuori scope (crisi, reclamo grave, richiesta che non sai gestire), (3) modifica/richiesta che richiede autorizzazione del proprietario. NON usare per curiosità o domande normali. Dopo il tool, saluta brevemente e attendi il transfer.",
+    parameters: {
+      type: 'object',
+      properties: {
+        motivo: { type: 'string', description: "Motivo breve del transfer per il log (es. 'cliente chiede umano', 'reclamo', 'richiesta speciale')." },
+      },
+      required: ['motivo'],
       additionalProperties: false,
     },
   },
@@ -341,6 +354,33 @@ Attenzione a frasi come:
 - NON continuare il flusso di prenotazione come se nulla fosse
 - NON chiudere bruscamente la chiamata
 
+# 🔴 REGOLA #12 — TRANSFER AL RISTORANTE
+Chiama trasferisci_al_ristorante quando:
+- Cliente chiede espressamente di parlare con "una persona", "un umano", "il gestore", "il proprietario"
+- Cliente ha reclamo grave sulla precedente esperienza al ristorante
+- Cliente richiede autorizzazione speciale (torta compleanno, allergie molto gravi, sala privata)
+- Situazione emotiva delicata (crisi personale, dopo aver dato i numeri di emergenza)
+- Cliente insiste per una richiesta che tu non puoi gestire (sconti, modifiche a menu)
+
+NON chiamare per:
+- Domande normali (menù, orari, indirizzo → rispondi tu)
+- Prenotazioni/modifiche/cancellazioni standard (usali i tool)
+- Semplice curiosità
+
+Dopo la chiamata al tool, se restituisce trasferita:true, segui l'istruzione: saluta brevemente e attendi. Se trasferita:false, comunica al cliente l'istruzione ricevuta senza inventare.
+
+# 🔴 REGOLA #13 — RESTA NEL RUOLO (STAY-IN-SCOPE)
+Sei receptionist per {{RESTAURANT_NAME}}. Se il cliente chiede informazioni NON collegate al ristorante (meteo, traffico, film, notizie, cinema, orari treni, altri ristoranti, dove si trova il parcheggio comunale, ecc.), NON inventare. Rispondi cortesemente: "Mi dispiace, sono solo l'assistente per le prenotazioni di {{RESTAURANT_NAME}}, non ho informazioni su questo. Posso aiutarla con una prenotazione o dettagli sul locale?".
+
+Cose che invece PUOI e DEVI rispondere:
+- Orari del ristorante (dal Config)
+- Indirizzo del ristorante
+- Menù e piatti (dal Config info_locale)
+- Coperto e prezzi (dal Config info_locale)
+- Opzioni vegane/vegetariane/allergeni (dal Config info_locale)
+- Come si arriva al ristorante (dal Config info_locale)
+- Servizio parcheggio del ristorante (dal Config info_locale)
+
 # Filler e tempistiche
 Quando chiami un tool, includi un filler ULTRA-BREVE (massimo 2-3 parole) nella STESSA response del tool call. MAI ripetere i parametri della prenotazione nel filler. MAI spiegare quello che stai facendo. MAI usare doppi filler tipo "Un attimo, sto registrando. Un attimo, procedo" — usane UNO solo.
 
@@ -467,6 +507,8 @@ export class OpenAIRealtimeClient {
     const raw = opts.callerPhone || opts.from || '';
     this.callerPhone = raw && !raw.startsWith('+') ? '+' + raw : raw;
     this.to = opts.to || '';
+    // v7.4.6 Batch 3: callControlId per Telnyx transfer API
+    this.callControlId = opts.callControlId || '';
 
     this._ws               = null;
     this._sessionReady     = false;
@@ -704,6 +746,7 @@ Non prendere prenotazioni.`;
       case 'cancella_prenotazione':   return await this._toolCancella(args);
       case 'info_locale':             return await this._toolInfoLocale(args);
       case 'richiedi_evento':         return await this._toolRichiediEvento(args);
+      case 'trasferisci_al_ristorante': return await this._toolTransfer(args);
       default: return { errore: 'tool sconosciuto: ' + name };
     }
   }
@@ -1097,6 +1140,71 @@ Non prendere prenotazioni.`;
       if (h >= 0 && h <= 23) return `${String(h).padStart(2, '0')}:00:00`;
     }
     return TimeManager.parseFromText(t);
+  }
+
+  // v7.4.6 Batch 3: transfer chiamata al numero fisico del ristorante via Telnyx API
+  async _toolTransfer({ motivo }) {
+    const restaurantPhone = this.restaurantConfig?.restaurantPhone || '';
+    if (!restaurantPhone) {
+      console.warn(`⚠️  [${this.connId}] Transfer richiesto ma restaurant_phone non configurato in Registry`);
+      return {
+        trasferita: false,
+        motivo_fallimento: 'numero_ristorante_non_configurato',
+        istruzione: "Comunica al cliente: 'Mi dispiace, in questo momento non posso trasferirla direttamente. La ricontatteranno appena possibile. Buona giornata.'"
+      };
+    }
+    if (!this.callControlId) {
+      console.error(`❌ [${this.connId}] Transfer impossibile: callControlId mancante`);
+      return {
+        trasferita: false,
+        motivo_fallimento: 'call_control_id_mancante',
+        istruzione: "Comunica al cliente: 'Mi dispiace, si è verificato un problema tecnico. La prego di richiamare tra poco.'"
+      };
+    }
+
+    console.log(`📞 [${this.connId}] Transfer richiesto: motivo="${motivo}" → ${restaurantPhone}`);
+
+    try {
+      const telnyxApiKey = process.env.TELNYX_API_KEY;
+      if (!telnyxApiKey) throw new Error('TELNYX_API_KEY non configurata');
+
+      const response = await fetch(`https://api.telnyx.com/v2/calls/${this.callControlId}/actions/transfer`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${telnyxApiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          to: restaurantPhone,
+          timeout_secs: 30,
+          answering_machine_detection: 'disabled',
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`❌ [${this.connId}] Telnyx transfer failed: ${response.status} ${errText}`);
+        return {
+          trasferita: false,
+          motivo_fallimento: 'api_error',
+          istruzione: "Comunica al cliente: 'Mi dispiace, il ristorante non risponde al momento. La ricontatteranno appena possibile. Buona giornata.'"
+        };
+      }
+
+      console.log(`✅ [${this.connId}] Transfer avviato verso ${restaurantPhone}`);
+      return {
+        trasferita: true,
+        istruzione: "Trasferimento avviato. Saluta brevemente il cliente con: 'Un attimo, la sto trasferendo. Buona giornata.' Poi la chiamata sarà trasferita automaticamente."
+      };
+    } catch (e) {
+      console.error(`❌ [${this.connId}] Transfer exception: ${e?.message}`);
+      return {
+        trasferita: false,
+        motivo_fallimento: 'exception',
+        istruzione: "Comunica al cliente: 'Mi dispiace, non riesco a trasferirla in questo momento. La ricontatteranno appena possibile.'"
+      };
+    }
   }
 
   _isGarbage(t) {
