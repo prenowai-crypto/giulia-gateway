@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.6-MT-2026-07-18 caricato (Batch 3: transfer + stay-in-scope)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.8-MT-2026-07-18 caricato (Batch 3 v2: transfer con chiusura sessione)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1193,6 +1193,34 @@ Non prendere prenotazioni.`;
       }
 
       console.log(`✅ [${this.connId}] Transfer avviato verso ${restaurantPhone}`);
+
+      // v7.4.8: dopo transfer riuscito, ferma lo streaming Telnyx e chiudi la
+      // WebSocket Realtime. Senza questo, la nostra sessione resta collegata al
+      // canale audio del cliente ANCHE dopo il transfer → Giulia continua a
+      // sentire tutto e a rispondere sopra la conversazione tra cliente e
+      // ristoratore. Attendiamo 5s per permettere al modello di pronunciare
+      // "un attimo, la sto trasferendo. Buona giornata." prima di chiudere.
+      setTimeout(async () => {
+        try {
+          await fetch(`https://api.telnyx.com/v2/calls/${this.callControlId}/actions/streaming_stop`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${telnyxApiKey}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: JSON.stringify({}),
+          });
+          console.log(`✅ [${this.connId}] Streaming Telnyx fermato dopo transfer`);
+        } catch (e) {
+          console.warn(`⚠️  [${this.connId}] Errore streaming_stop: ${e?.message}`);
+        }
+        if (this.ws && this.ws.readyState === 1) {
+          try { this.ws.close(); } catch {}
+          console.log(`🔴 [${this.connId}] WebSocket Realtime chiusa dopo transfer`);
+        }
+      }, 5000);
+
       return {
         trasferita: true,
         istruzione: "Trasferimento avviato. Saluta brevemente il cliente con: 'Un attimo, la sto trasferendo. Buona giornata.' Poi la chiamata sarà trasferita automaticamente."
