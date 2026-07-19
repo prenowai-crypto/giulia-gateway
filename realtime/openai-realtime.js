@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.18-MT-2026-07-19 caricato (Batch 4 v8: session.update con type:realtime obbligatorio)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.19-MT-2026-07-19 caricato (Batch 4 v9: session.update con config completo)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1406,12 +1406,35 @@ After receiving a tool result (from controlla_disponibilita, crea_prenotazione, 
         return;
       }
 
+      // v7.4.19: invio il session config COMPLETO (non solo instructions).
+      // OpenAI Realtime rifiuta session.update parziali senza tutti i campi.
+      const sessionConfig = {
+        type: 'realtime',
+        instructions: newInstructions,
+        tools: this._toolsEnabled ? FUNCTIONS : [],
+        tool_choice: this._toolsEnabled ? 'auto' : 'none',
+        audio: {
+          input: {
+            format: { type: 'audio/pcma' },
+            transcription: { model: 'whisper-1' },
+            turn_detection: {
+              type: 'semantic_vad',
+              eagerness: 'auto',
+              create_response: true,
+              interrupt_response: true,
+            },
+            noise_reduction: { type: 'far_field' },
+          },
+          output: {
+            format: { type: 'audio/pcma' },
+            voice: this.restaurantConfig?.voice || 'coral',
+          },
+        },
+      };
+
       this._ws.send(JSON.stringify({
         type: 'session.update',
-        session: {
-          type: 'realtime',
-          instructions: newInstructions
-        }
+        session: sessionConfig,
       }));
       console.log(`🌐 [${this.connId}] Language lock via session.update: ${langName} (prompt len: ${newInstructions.length})`);
     } catch (e) {
