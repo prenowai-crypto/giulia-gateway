@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.17-MT-2026-07-19 caricato (Batch 4 v7: fix nome attributo this._ws)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.18-MT-2026-07-19 caricato (Batch 4 v8: session.update con type:realtime obbligatorio)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1408,7 +1408,10 @@ After receiving a tool result (from controlla_disponibilita, crea_prenotazione, 
 
       this._ws.send(JSON.stringify({
         type: 'session.update',
-        session: { instructions: newInstructions }
+        session: {
+          type: 'realtime',
+          instructions: newInstructions
+        }
       }));
       console.log(`🌐 [${this.connId}] Language lock via session.update: ${langName} (prompt len: ${newInstructions.length})`);
     } catch (e) {
