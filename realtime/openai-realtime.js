@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.19-MT-2026-07-19 caricato (Batch 4 v9: session.update con config completo)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.20-MT-2026-07-19 caricato (Batch 4 v10: response.create con instructions override)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -802,15 +802,23 @@ Non prendere prenotazioni.`;
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(result) },
     });
 
-    // v7.4.16: se la conversazione non è in italiano, rinvio il language lock
-    // PRIMA della response.create per evitare che il modello regredisca in
-    // italiano nella risposta post-tool. Questo è il fix del comportamento
-    // osservato in v7.4.15 dove solo la prima risposta dopo tool era italiana.
+    // v7.4.20: se lingua conversazione != italiano, uso response.create con
+    // instructions OVERRIDE per la risposta specifica. Questo è più forte del
+    // session.update generale perché applica direttamente alla generazione
+    // corrente. Session.update resta comunque per il context globale.
     if (this._currentLanguage && this._currentLanguage !== 'it') {
-      this._sendLanguageLock(this._currentLanguage);
+      const langNames = { en: 'English', fr: 'French', de: 'German', es: 'Spanish' };
+      const langName = langNames[this._currentLanguage] || this._currentLanguage;
+      const italianFillers = { en: 'certo, un attimo, perfetto, va bene, sì, mi dispiace, prego', fr: 'certo, un attimo, perfetto, mi dispiace', de: 'certo, un attimo, perfetto, mi dispiace', es: 'certo, un attimo, perfetto, mi dispiace' };
+      const overrideInstructions = `CRITICAL: Your reply MUST be in ${langName} ONLY. The current conversation is in ${langName}. Do NOT reply in Italian. Do NOT use any Italian words including filler phrases like "${italianFillers[this._currentLanguage] || 'certo, un attimo, perfetto'}". Translate every phrase to ${langName}. Proper nouns (restaurant name, customer names) stay in original form.`;
+      this._send({
+        type: 'response.create',
+        response: { instructions: overrideInstructions }
+      });
+      console.log(`🌐 [${this.connId}] response.create con language override: ${langName}`);
+    } else {
+      this._send({ type: 'response.create' });
     }
-
-    this._send({ type: 'response.create' });
   }
 
   async _execTool(name, args) {
