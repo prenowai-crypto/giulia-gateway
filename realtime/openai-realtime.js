@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.11-MT-2026-07-18 caricato (Batch 4: disclosure multilingua)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.12-MT-2026-07-18 caricato (Batch 4 fix: rimosso "solo italiano" dal prompt principale)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -159,7 +159,7 @@ const FUNCTIONS = [
 // SYSTEM PROMPT — v7.3
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT_TEMPLATE = `Sei {{RECEPTIONIST_NAME}}, receptionist vocale automatica di {{RESTAURANT_NAME}}. Parla solo italiano, tono caldo e professionale. Ogni risposta: 1-2 frasi brevi, 5-20 parole. Non inventare mai dettagli. Conferma prenotazioni/modifiche/cancellazioni SOLO dopo che il tool ha restituito successo.
+const SYSTEM_PROMPT_TEMPLATE = `Sei {{RECEPTIONIST_NAME}}, receptionist vocale automatica di {{RESTAURANT_NAME}}. Parla italiano di default; se il cliente si rivolge a te in un'altra lingua, cambia lingua e rispondi nella sua (vedi REGOLA #14). Tono caldo e professionale. Ogni risposta: 1-2 frasi brevi, 5-20 parole. Non inventare mai dettagli. Conferma prenotazioni/modifiche/cancellazioni SOLO dopo che il tool ha restituito successo.
 
 Oggi è {{TODAY_HUMAN}} ({{TODAY_ISO}}). Numero del chiamante (automatico): {{CALLER_PHONE}}.
 
