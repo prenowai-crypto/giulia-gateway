@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.14-MT-2026-07-19 caricato (Batch 4 v4: language lock dinamico via system message)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.15-MT-2026-07-19 caricato (Batch 4 v5: language lock via session.update — approccio OpenAI ufficiale)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1354,24 +1354,47 @@ Non prendere prenotazioni.`;
   _sendLanguageLock(lang) {
     const langNames = { en: 'English', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian' };
     const langName = langNames[lang] || lang;
-    const italianFillers = { en: 'certo, un attimo, perfetto, va bene, sì', fr: 'certo, un attimo, perfetto', de: 'certo, un attimo, perfetto', es: 'certo, un attimo, perfetto' };
-    const reminder = `LANGUAGE LOCK: The customer is speaking ${langName}. From now on, ALL your responses MUST be in ${langName}, INCLUDING responses generated after tool calls (controlla_disponibilita, crea_prenotazione, trova_prenotazione, modifica_prenotazione, cancella_prenotazione, richiedi_evento). ` +
-      (lang !== 'it' ? `NEVER use Italian filler words (${italianFillers[lang] || 'certo, un attimo, perfetto'}) — always translate them to ${langName}. ` : '') +
-      `The only exceptions are proper nouns (restaurant name, day names in bookings, customer names) which stay in original form.`;
+
+    // v7.4.15: uso session.update per aggiornare il system prompt della sessione.
+    // Aggiungo una sezione Language rigida in coda al prompt originale.
+    // Fonte: OpenAI Realtime Prompting Guide raccomanda session.update per language lock
+    // dinamico + istruzioni esplicite contro switch su accento/filler.
+
+    let languageAddendum;
+    if (lang === 'it') {
+      // ritorno a italiano: rimuovo l'appendix (uso solo il prompt base)
+      languageAddendum = '';
+    } else {
+      languageAddendum = `
+
+# 🔴🔴🔴 LANGUAGE OVERRIDE (highest priority — overrides all Italian examples above)
+
+## Language
+- The conversation is now in ${langName}.
+- ALL your responses from now on MUST be in ${langName}, without exception.
+- This includes: responses after tool calls, filler phrases, confirmations, closings.
+- Do NOT respond in Italian even if the user mixes Italian words.
+- Do NOT switch language based on user's accent, filler sounds, or isolated foreign words.
+- Only switch language back if the user explicitly asks or produces a substantive utterance in a different language.
+- Italian filler words like "certo", "un attimo", "perfetto", "va bene", "sì", "prego" must be TRANSLATED to their ${langName} equivalents.
+- Proper nouns (restaurant name, customer names, day names when confirming) stay in original form.
+
+## Post-tool responses
+After receiving a tool result (from controlla_disponibilita, crea_prenotazione, trova_prenotazione, modifica_prenotazione, cancella_prenotazione, richiedi_evento), your reply MUST still be in ${langName}. Do NOT default back to Italian.
+`;
+    }
+
+    const newInstructions = this._buildSystemPrompt() + languageAddendum;
 
     if (this.ws && this.ws.readyState === 1) {
       try {
         this.ws.send(JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'message',
-            role: 'system',
-            content: [{ type: 'input_text', text: reminder }]
-          }
+          type: 'session.update',
+          session: { instructions: newInstructions }
         }));
-        console.log(`🌐 [${this.connId}] Language lock inviato: ${langName}`);
+        console.log(`🌐 [${this.connId}] Language lock via session.update: ${langName} (prompt len: ${newInstructions.length})`);
       } catch (e) {
-        console.warn(`⚠️  [${this.connId}] Errore invio language lock: ${e?.message}`);
+        console.warn(`⚠️  [${this.connId}] Errore session.update per language lock: ${e?.message}`);
       }
     }
   }
