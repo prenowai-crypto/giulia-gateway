@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.16-MT-2026-07-19 caricato (Batch 4 v6: language lock blindato + rinvio post-tool)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.17-MT-2026-07-19 caricato (Batch 4 v7: fix nome attributo this._ws)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1326,8 +1326,8 @@ Non prendere prenotazioni.`;
     } catch (e) {
       console.warn(`⚠️  [${this.connId}] Errore streaming_stop: ${e?.message}`);
     }
-    if (this.ws && this.ws.readyState === 1) {
-      try { this.ws.close(); } catch {}
+    if (this._ws && this._ws.readyState === 1) {
+      try { this._ws.close(); } catch {}
       console.log(`🔴 [${this.connId}] WebSocket Realtime chiusa dopo transfer`);
     }
   }
@@ -1366,7 +1366,7 @@ Non prendere prenotazioni.`;
       const langNames = { en: 'English', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian' };
       const langName = langNames[lang] || lang;
 
-      console.log(`🌐 [${this.connId}] _sendLanguageLock start: lang=${lang}, wsReady=${this.ws?.readyState}`);
+      console.log(`🌐 [${this.connId}] _sendLanguageLock start: lang=${lang}, wsReady=${this._ws?.readyState}`);
 
       let languageAddendum;
       if (lang === 'it') {
@@ -1401,12 +1401,12 @@ After receiving a tool result (from controlla_disponibilita, crea_prenotazione, 
 
       const newInstructions = basePrompt + languageAddendum;
 
-      if (!this.ws || this.ws.readyState !== 1) {
-        console.warn(`⚠️  [${this.connId}] Language lock skipped: WS not open (readyState=${this.ws?.readyState})`);
+      if (!this._ws || this._ws.readyState !== 1) {
+        console.warn(`⚠️  [${this.connId}] Language lock skipped: WS not open (readyState=${this._ws?.readyState})`);
         return;
       }
 
-      this.ws.send(JSON.stringify({
+      this._ws.send(JSON.stringify({
         type: 'session.update',
         session: { instructions: newInstructions }
       }));
