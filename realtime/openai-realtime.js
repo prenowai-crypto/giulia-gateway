@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.15-MT-2026-07-19 caricato (Batch 4 v5: language lock via session.update — approccio OpenAI ufficiale)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.16-MT-2026-07-19 caricato (Batch 4 v6: language lock blindato + rinvio post-tool)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -801,6 +801,15 @@ Non prendere prenotazioni.`;
       type: 'conversation.item.create',
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(result) },
     });
+
+    // v7.4.16: se la conversazione non è in italiano, rinvio il language lock
+    // PRIMA della response.create per evitare che il modello regredisca in
+    // italiano nella risposta post-tool. Questo è il fix del comportamento
+    // osservato in v7.4.15 dove solo la prima risposta dopo tool era italiana.
+    if (this._currentLanguage && this._currentLanguage !== 'it') {
+      this._sendLanguageLock(this._currentLanguage);
+    }
+
     this._send({ type: 'response.create' });
   }
 
@@ -1352,20 +1361,18 @@ Non prendere prenotazioni.`;
   }
 
   _sendLanguageLock(lang) {
-    const langNames = { en: 'English', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian' };
-    const langName = langNames[lang] || lang;
+    // v7.4.16: blindaggio totale contro fallimenti silenziosi
+    try {
+      const langNames = { en: 'English', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian' };
+      const langName = langNames[lang] || lang;
 
-    // v7.4.15: uso session.update per aggiornare il system prompt della sessione.
-    // Aggiungo una sezione Language rigida in coda al prompt originale.
-    // Fonte: OpenAI Realtime Prompting Guide raccomanda session.update per language lock
-    // dinamico + istruzioni esplicite contro switch su accento/filler.
+      console.log(`🌐 [${this.connId}] _sendLanguageLock start: lang=${lang}, wsReady=${this.ws?.readyState}`);
 
-    let languageAddendum;
-    if (lang === 'it') {
-      // ritorno a italiano: rimuovo l'appendix (uso solo il prompt base)
-      languageAddendum = '';
-    } else {
-      languageAddendum = `
+      let languageAddendum;
+      if (lang === 'it') {
+        languageAddendum = '';
+      } else {
+        languageAddendum = `
 
 # 🔴🔴🔴 LANGUAGE OVERRIDE (highest priority — overrides all Italian examples above)
 
@@ -1382,20 +1389,30 @@ Non prendere prenotazioni.`;
 ## Post-tool responses
 After receiving a tool result (from controlla_disponibilita, crea_prenotazione, trova_prenotazione, modifica_prenotazione, cancella_prenotazione, richiedi_evento), your reply MUST still be in ${langName}. Do NOT default back to Italian.
 `;
-    }
-
-    const newInstructions = this._buildSystemPrompt() + languageAddendum;
-
-    if (this.ws && this.ws.readyState === 1) {
-      try {
-        this.ws.send(JSON.stringify({
-          type: 'session.update',
-          session: { instructions: newInstructions }
-        }));
-        console.log(`🌐 [${this.connId}] Language lock via session.update: ${langName} (prompt len: ${newInstructions.length})`);
-      } catch (e) {
-        console.warn(`⚠️  [${this.connId}] Errore session.update per language lock: ${e?.message}`);
       }
+
+      let basePrompt;
+      try {
+        basePrompt = this._buildSystemPrompt();
+      } catch (e) {
+        console.error(`❌ [${this.connId}] _buildSystemPrompt failed: ${e?.message}`);
+        return;
+      }
+
+      const newInstructions = basePrompt + languageAddendum;
+
+      if (!this.ws || this.ws.readyState !== 1) {
+        console.warn(`⚠️  [${this.connId}] Language lock skipped: WS not open (readyState=${this.ws?.readyState})`);
+        return;
+      }
+
+      this.ws.send(JSON.stringify({
+        type: 'session.update',
+        session: { instructions: newInstructions }
+      }));
+      console.log(`🌐 [${this.connId}] Language lock via session.update: ${langName} (prompt len: ${newInstructions.length})`);
+    } catch (e) {
+      console.error(`❌ [${this.connId}] _sendLanguageLock exception: ${e?.message} | stack: ${e?.stack?.split('\n')[0]}`);
     }
   }
 
