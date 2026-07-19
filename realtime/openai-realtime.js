@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.13-MT-2026-07-19 caricato (Batch 4 v3: REGOLA #14 sticky language rinforzata)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.14-MT-2026-07-19 caricato (Batch 4 v4: language lock dinamico via system message)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -566,6 +566,8 @@ export class OpenAIRealtimeClient {
     this.to = opts.to || '';
     // v7.4.6 Batch 3: callControlId per Telnyx transfer API
     this.callControlId = opts.callControlId || '';
+    // v7.4.14: tracking lingua conversazione per language lock dinamico
+    this._currentLanguage = 'it';
 
     this._ws               = null;
     this._sessionReady     = false;
@@ -720,6 +722,8 @@ Non prendere prenotazioni.`;
             } else {
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
+            // v7.4.14: rileva lingua e inietta language lock se cambiata
+            this._detectAndLockLanguage(t);
           }
         }
         break;
@@ -1316,6 +1320,59 @@ Non prendere prenotazioni.`;
     if (this.ws && this.ws.readyState === 1) {
       try { this.ws.close(); } catch {}
       console.log(`🔴 [${this.connId}] WebSocket Realtime chiusa dopo transfer`);
+    }
+  }
+
+  // v7.4.14: rileva lingua della trascrizione utente e, se diversa dalla
+  // corrente, inietta un system message che forza la lingua nelle risposte
+  // successive (inclusi post-tool). Fix per il bug della regressione italiana.
+  _detectAndLockLanguage(text) {
+    const detected = this._detectLanguage(text);
+    if (!detected) return;
+    if (detected === this._currentLanguage) return;
+    console.log(`🌐 [${this.connId}] Lingua rilevata: ${detected} (era ${this._currentLanguage})`);
+    this._currentLanguage = detected;
+    this._sendLanguageLock(detected);
+  }
+
+  _detectLanguage(text) {
+    const t = text.toLowerCase();
+    // Marker forti per ogni lingua (parole/costrutti che quasi mai appaiono in altre)
+    const markers = {
+      en: /\b(hello|hi|hey|please|thanks|thank you|would like|i'd like|i want|can you|do you|table|booking|reservation|reserve|book|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|for two|for three|for four|for five|for six|good morning|good evening|good afternoon)\b/,
+      fr: /\b(bonjour|bonsoir|salut|merci|s'il vous plaît|je voudrais|réserver|table|ce soir|demain|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|s'il te plaît|comment allez|pour deux|pour trois|pour quatre)\b/,
+      de: /\b(hallo|guten tag|guten abend|guten morgen|danke|bitte|ich möchte|reservieren|tisch|heute abend|morgen|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|für zwei|für drei|für vier)\b/,
+      es: /\b(hola|buenos días|buenas tardes|buenas noches|gracias|por favor|quisiera|querría|reservar|mesa|esta noche|mañana|lunes|martes|miércoles|jueves|viernes|sábado|domingo|para dos|para tres|para cuatro)\b/,
+      it: /\b(ciao|salve|buongiorno|buonasera|grazie|per favore|vorrei|prenotare|tavolo|stasera|domani|lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica|per due|per tre|per quattro|va bene|certo)\b/,
+    };
+    for (const [lang, regex] of Object.entries(markers)) {
+      if (regex.test(t)) return lang;
+    }
+    return null;
+  }
+
+  _sendLanguageLock(lang) {
+    const langNames = { en: 'English', fr: 'French', de: 'German', es: 'Spanish', it: 'Italian' };
+    const langName = langNames[lang] || lang;
+    const italianFillers = { en: 'certo, un attimo, perfetto, va bene, sì', fr: 'certo, un attimo, perfetto', de: 'certo, un attimo, perfetto', es: 'certo, un attimo, perfetto' };
+    const reminder = `LANGUAGE LOCK: The customer is speaking ${langName}. From now on, ALL your responses MUST be in ${langName}, INCLUDING responses generated after tool calls (controlla_disponibilita, crea_prenotazione, trova_prenotazione, modifica_prenotazione, cancella_prenotazione, richiedi_evento). ` +
+      (lang !== 'it' ? `NEVER use Italian filler words (${italianFillers[lang] || 'certo, un attimo, perfetto'}) — always translate them to ${langName}. ` : '') +
+      `The only exceptions are proper nouns (restaurant name, day names in bookings, customer names) which stay in original form.`;
+
+    if (this.ws && this.ws.readyState === 1) {
+      try {
+        this.ws.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'system',
+            content: [{ type: 'input_text', text: reminder }]
+          }
+        }));
+        console.log(`🌐 [${this.connId}] Language lock inviato: ${langName}`);
+      } catch (e) {
+        console.warn(`⚠️  [${this.connId}] Errore invio language lock: ${e?.message}`);
+      }
     }
   }
 
