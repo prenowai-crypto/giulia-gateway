@@ -33,7 +33,7 @@ jobs:
       - name: Run Level A tests
         env:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
-        run: node tests/runner-a.js
+        run: node tests/runner-a.cjs
 
       - name: Upload reports as artifact
         if: always()
@@ -73,7 +73,7 @@ jobs:
         env:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: node tests/runner-b.js
+        run: node tests/runner-b.cjs
 
       - name: Upload reports as artifact
         if: always()
