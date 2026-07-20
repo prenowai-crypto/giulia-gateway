@@ -1,0 +1,61 @@
+[
+  {
+    "id": "A-001",
+    "category": "booking-basic",
+    "description": "Create + verify + cleanup standard evening booking",
+    "setup": [],
+    "steps": [
+      {
+        "action": "check_availability",
+        "params": { "data": "$NEXT_WED", "ora": "21:00:00", "persone": 3 },
+        "assert": [
+          { "path": "esito", "in": ["libero", "gruppo_grande"] }
+        ]
+      },
+      {
+        "action": "create_reservation",
+        "params": {
+          "nome": "Test User A001",
+          "persone": 3,
+          "data": "$NEXT_WED",
+          "ora": "21:00:00",
+          "telefono": "+390000000001",
+          "notes": ""
+        },
+        "assert": [
+          { "path": "creata", "equals": true },
+          { "path": "stato", "in": ["CONFIRMED", "PENDING_OWNER"] },
+          { "path": "eventId", "exists": true }
+        ],
+        "save": { "eventId": "eventId" }
+      },
+      {
+        "action": "find_reservation",
+        "params": { "nome": "Test User A001", "data": "$NEXT_WED", "sheet": "Prenotazioni" },
+        "assert": [
+          { "path": "trovata", "equals": true },
+          { "path": "persone", "equals": 3 }
+        ]
+      }
+    ],
+    "cleanup": [
+      { "action": "cancel_reservation", "params": { "eventId": "$eventId" } }
+    ]
+  },
+  {
+    "id": "A-002",
+    "category": "availability-edge",
+    "description": "Closed day (Monday) must return giorno_chiuso",
+    "setup": [],
+    "steps": [
+      {
+        "action": "check_availability",
+        "params": { "data": "$NEXT_MONDAY", "ora": "21:00:00", "persone": 2 },
+        "assert": [
+          { "path": "esito", "equals": "giorno_chiuso" }
+        ]
+      }
+    ],
+    "cleanup": []
+  }
+]
