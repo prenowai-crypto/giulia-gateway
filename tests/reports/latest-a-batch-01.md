@@ -1,9 +1,9 @@
 # Batch A-01 (tests 1-2)
-Run: 2026-07-21T10:26:37.354Z | Total: 2 | Passed: 1 (50%) | Failed: 1
+Run: 2026-07-21T10:40:43.721Z | Total: 2 | Passed: 1 (50%) | Failed: 1
 
 ## ✅ Passed (1)
 
-- **A-002** `availability-edge`: Closed day (Monday) must return day_closed (1948ms)
+- **A-002** `availability-edge`: Closed day (Monday) must return day_closed (1805ms)
 
 ## ❌ Failed (1)
 
@@ -12,7 +12,7 @@ Run: 2026-07-21T10:26:37.354Z | Total: 2 | Passed: 1 (50%) | Failed: 1
 
 **Reason**: steps[1] create_reservation: path 'success': expected true, got false; path 'eventId': exists=true expected, actual has=false | actual={"success":false,"error":"Error: Data/ora non valide per evento Calendar","statusCode":500}
 
-**Duration**: 8632ms
+**Duration**: 8246ms
 
 **Steps executed**:
 ```
