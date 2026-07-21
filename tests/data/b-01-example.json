@@ -2,10 +2,11 @@
   {
     "id": "B-001",
     "category": "booking-flow",
-    "description": "Standard Italian booking flow — 4 people Saturday 20:30",
+    "description": "Standard Italian booking flow — 4 people Saturday 20:30, complete with confirmation",
     "userTurns": [
       "Vorrei prenotare un tavolo per sabato prossimo alle 8 e mezza di sera per 4 persone",
-      "A nome Marco Rossi"
+      "A nome Marco Rossi",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       { "name": "controlla_disponibilita" },
@@ -18,16 +19,17 @@
   {
     "id": "B-002",
     "category": "multilingua",
-    "description": "English caller switch: must reply in English post-tool",
+    "description": "English caller switch: must complete booking in English",
     "userTurns": [
       "Hi, do you speak English?",
-      "I'd like to book a table for Saturday at 8:30 pm for 2 people. My name is John Smith."
+      "I'd like to book a table for Saturday at 8:30 pm for 2 people. My name is John Smith.",
+      "Yes, please confirm"
     ],
     "expectedToolCalls": [
       { "name": "controlla_disponibilita" },
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
-    "replyMustNotContain": ["un attimo", "certo", "perfetto,", "prenotazione confermata"],
+    "replyMustNotContain": ["prenotazione confermata", "a presto", "buona giornata"],
     "replyLanguage": "en"
   },
   {
