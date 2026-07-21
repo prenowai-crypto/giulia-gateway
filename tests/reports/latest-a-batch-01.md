@@ -1,23 +1,23 @@
 # Batch A-01 (tests 1-2)
-Run: 2026-07-20T19:33:51.651Z | Total: 2 | Passed: 0 (0%) | Failed: 2
+Run: 2026-07-21T10:26:37.354Z | Total: 2 | Passed: 1 (50%) | Failed: 1
 
-## ❌ Failed (2)
+## ✅ Passed (1)
+
+- **A-002** `availability-edge`: Closed day (Monday) must return day_closed (1948ms)
+
+## ❌ Failed (1)
 
 ### A-001 — `booking-basic`
 **Description**: Create + verify + cleanup standard evening booking
 
-**Reason**: steps[0] check_availability: path 'esito': expected one of ["libero","gruppo_grande"], got undefined | actual={"success":true,"reason":"slot_available"}
+**Reason**: steps[1] create_reservation: path 'success': expected true, got false; path 'eventId': exists=true expected, actual has=false | actual={"success":false,"error":"Error: Data/ora non valide per evento Calendar","statusCode":500}
 
-**Duration**: 5318ms
+**Duration**: 8632ms
 
----
-
-### A-002 — `availability-edge`
-**Description**: Closed day (Monday) must return giorno_chiuso
-
-**Reason**: steps[0] check_availability: path 'esito': expected "giorno_chiuso", got undefined | actual={"success":false,"reason":"day_closed","message":"Il ristorante è chiuso il lunedì."}
-
-**Duration**: 2396ms
+**Steps executed**:
+```
+  steps[0] check_availability: ok
+```
 
 ---
 

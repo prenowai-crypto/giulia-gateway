@@ -1,11 +1,11 @@
 # Summary — Runner A
-Run: 2026-07-20T19:33:51.652Z
+Run: 2026-07-21T10:26:37.354Z
 
-**Total**: 2 | **Passed**: 0 (0%) | **Failed**: 2
+**Total**: 2 | **Passed**: 1 (50%) | **Failed**: 1
 
 ## By category
 
 | Category | Total | Passed | Failed | Pass rate |
 |---|---|---|---|---|
-| `availability-edge` | 1 | 0 | 1 | 0% |
+| `availability-edge` | 1 | 1 | 0 | 100% |
 | `booking-basic` | 1 | 0 | 1 | 0% |
