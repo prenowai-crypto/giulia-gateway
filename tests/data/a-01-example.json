@@ -20,8 +20,7 @@
           "persone": 3,
           "data": "$NEXT_WED",
           "ora": "21:00:00",
-          "telefono": "+390000000001",
-          "notes": ""
+          "note": ""
         },
         "assert": [
           { "path": "success", "equals": true },
