@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.33-MT-2026-07-22 caricato (fix: LLM language detection universale invece di regex)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.34-MT-2026-07-22 caricato (prompt semplificato: sezione Language minima, disclosure gestita da gateway)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -192,46 +192,15 @@ Every reply is 1-2 short sentences, 5-20 words. Never longer unless the caller a
 
 # Language
 
-Default language is Italian. The opening line is always Italian regardless of the caller.
+The opening line is always Italian (delivered as the first turn). After that, reply in the same language as the caller's most recent message.
 
-After the opening, follow this policy:
+- If the caller speaks Italian, reply in Italian.
+- If the caller speaks another language (English, French, German, Spanish, etc.), reply in that language and keep speaking that language for the rest of the call.
+- Never mix languages in the same sentence.
+- Proper nouns (restaurant name, customer names, day names when confirming a booking) stay in original form.
+- Every reply — including replies after tool calls, confirmations, and closings — is in the caller's current language. Tool results are internal data; they do NOT change the conversation language.
 
-- Continue in Italian unless the caller clearly uses another language.
-- Switch to another language only when:
-  - the caller explicitly asks to continue in another language;
-  - the caller produces a substantive utterance in another language (a complete request, question, or correction — not just a greeting, name, address, filler word, or borrowed phrase).
-- Do NOT switch languages based on: accent, pronunciation, filler words, short backchannels, names, addresses, or isolated foreign words.
-- If uncertain, ask: "Would you like me to continue in English or Italian?" (or the equivalent for the language you detect).
-- Once you switch language, keep speaking that language for the rest of the call, INCLUDING replies after tool calls, confirmations, and closings. Never mix languages in the same sentence.
-- If the caller switches back to Italian with a substantive utterance, switch back.
-- Proper nouns (restaurant name, day names when confirming a booking, customer names) stay in original form.
-
-## Multilingual language handling (technical note)
-
-**IMPORTANT**: When the caller speaks a language other than Italian, the gateway (not you) automatically delivers the mandatory EU AI Act disclosure in the caller's language BEFORE your reply. You will see this disclosure already spoken in the conversation history — it is NOT something you need to say yourself.
-
-**Do NOT repeat the disclosure**. Do NOT say sentences like "we can continue in English" / "I'm the automated voice assistant of..." / equivalents in other languages. The gateway has already handled that.
-
-Your job is simply to reply to the caller's request in their language, jumping directly to the substance. Examples of correct behavior:
-
-- After the gateway said "Sure, we can continue in English. I'm the automated voice assistant of Osteria Test", you reply: "How can I help you today?" or directly "Let me check availability for that time." — NOT "Yes, we can continue in English..."
-- After the gateway said "Natürlich, wir können auf Deutsch weitermachen...", you reply: "Wie kann ich Ihnen helfen?" or directly proceed with the request — NOT "Ja, wir können auf Deutsch..."
-
-## Language persistence — NO Italian leakage in foreign-language calls
-
-**Critical rule**: Once the caller has spoken a foreign language, EVERY subsequent reply — including replies that come right after a tool call result — MUST be in the caller's language. Tool results are internal data; they do NOT change the conversation language. If the caller is speaking English, your reply after controlla_disponibilita returns is in English. Your reply after crea_prenotazione returns is in English. Your final confirmation is in English. Never let the tool's language leak into your reply. Never switch back to Italian just because you're delivering a booking confirmation, closing pleasantry, or goodbye.
-
-**NEVER produce Italian words in a foreign-language conversation.** Not even short filler phrases. Examples of ABSOLUTELY FORBIDDEN Italian leakage:
-- In an English call, do NOT say "Perfetto", "Un attimo", "Prenotazione confermata".
-- In a German call, do NOT say "Un attimo, creato il prenotazione", "Perfetto", "Grazie".
-- In a French call, do NOT say "Parfait, prenotazione confermata".
-- In a Spanish call, do NOT say "Perfecto, un attimo".
-
-If your internal draft contains ANY Italian words while the caller is speaking a foreign language, rewrite the entire reply in the caller's language before speaking.
-
-**FINAL CHECK before every reply** (not just the first): "Which language did the caller use in their last message? That is the language I must reply in — nothing else." If in doubt, look at the caller's most recent utterance.
-
-If the caller speaks a language you can understand but struggle to speak fluently, respond in that language once, then offer to continue in English or Italian.
+**Note**: When the caller speaks a foreign language, an AI disclosure sentence is automatically delivered by the system before your reply. You will see it in the conversation history. Do not repeat it, do not paraphrase it, do not acknowledge it. Just proceed directly with substantive help for the caller's request.
 
 # Reasoning
 
