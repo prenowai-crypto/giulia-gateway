@@ -1306,8 +1306,6 @@ Non prendere prenotazioni.`;
       return this._detectLanguageRegex(text);
     }
   }
-
-  // Regex-based fallback (safety net if LLM call fails).
   // Not exhaustive — only meant to catch obvious cases when LLM is down.
   _detectLanguageRegex(text) {
     if (!text) return 'it';
