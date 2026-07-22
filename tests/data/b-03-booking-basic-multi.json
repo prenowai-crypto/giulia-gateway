@@ -1,0 +1,482 @@
+[
+  {
+    "id": "B03-001",
+    "category": "multilingua",
+    "description": "EN — Lunch Saturday 13:00 for 2 — John Smith",
+    "userTurns": [
+      "Good morning, I'd like to book a table for next Saturday at 1 PM for 2 people, under the name John Smith",
+      "Yes, please confirm"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Smith"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-002",
+    "category": "multilingua",
+    "description": "EN — Lunch Sunday 12:30 for 4 — Emma Johnson",
+    "userTurns": [
+      "Hi, I'd like to make a reservation for next Sunday at 12:30 PM for 4 people, under the name Emma Johnson",
+      "Yes confirm"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Johnson"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-003",
+    "category": "multilingua",
+    "description": "EN — Lunch Tuesday 12:00 for 3 — Michael Brown",
+    "userTurns": [
+      "Good morning, a table for next Tuesday at noon for 3 people, the name is Michael Brown",
+      "Yes please"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Brown"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-004",
+    "category": "multilingua",
+    "description": "EN — Lunch Wednesday 13:30 for 5 — Sarah Wilson",
+    "userTurns": [
+      "Hello, I would like a table for next Wednesday at 1:30 PM for 5 people, under the name Sarah Wilson",
+      "Yes, confirm please"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Wilson"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-005",
+    "category": "multilingua",
+    "description": "EN — Dinner Saturday 21:00 for 6 — David Miller",
+    "userTurns": [
+      "Good evening, I would like to book a table for next Saturday at 9 PM for 6 people, name David Miller",
+      "Yes confirm"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 6 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Miller"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-006",
+    "category": "multilingua",
+    "description": "EN — Dinner Sunday 22:00 for 2 — Jennifer Davis",
+    "userTurns": [
+      "Good evening, a table for next Sunday at 10 PM for 2 people, under the name Jennifer Davis",
+      "Yes please confirm"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Davis"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-007",
+    "category": "multilingua",
+    "description": "EN — Dinner Tuesday 22:00 for 4 — Robert Anderson",
+    "userTurns": [
+      "Good evening, I would like to book for next Tuesday evening at 10 PM for 4 people, name Robert Anderson",
+      "Yes"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Anderson"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-008",
+    "category": "multilingua",
+    "description": "EN — Dinner Wednesday 21:30 for 3 — Lisa Taylor",
+    "userTurns": [
+      "Good evening, I'd like a table for next Wednesday at 9:30 PM for 3 people, under the name Lisa Taylor",
+      "Confirm please"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Taylor"],
+    "replyLanguage": "en"
+  },
+  {
+    "id": "B03-009",
+    "category": "multilingua",
+    "description": "FR — Déjeuner samedi 13:00 pour 2 — Jean Dupont",
+    "userTurns": [
+      "Bonjour, je voudrais réserver une table pour samedi prochain à 13h pour 2 personnes, au nom de Jean Dupont",
+      "Oui je confirme"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Dupont"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-010",
+    "category": "multilingua",
+    "description": "FR — Déjeuner dimanche 12:30 pour 4 — Marie Martin",
+    "userTurns": [
+      "Bonjour, je voudrais réserver pour dimanche prochain à 12h30 pour 4 personnes, au nom de Marie Martin",
+      "Oui, confirmez"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Martin"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-011",
+    "category": "multilingua",
+    "description": "FR — Déjeuner mercredi 13:00 pour 3 — Pierre Bernard",
+    "userTurns": [
+      "Bonjour, une table pour mercredi prochain à 13h pour 3 personnes, au nom de Pierre Bernard",
+      "Oui c'est bon"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Bernard"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-012",
+    "category": "multilingua",
+    "description": "FR — Déjeuner mardi 12:00 pour 5 — Sophie Petit",
+    "userTurns": [
+      "Bonjour, je voudrais une table pour mardi prochain à midi pour 5 personnes, au nom de Sophie Petit",
+      "Oui je confirme"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Petit"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-013",
+    "category": "multilingua",
+    "description": "FR — Dîner samedi 21:00 pour 6 — Antoine Moreau",
+    "userTurns": [
+      "Bonsoir, je voudrais réserver une table pour samedi prochain à 21h pour 6 personnes, au nom d'Antoine Moreau",
+      "Oui confirmez"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 6 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Moreau"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-014",
+    "category": "multilingua",
+    "description": "FR — Dîner dimanche 22:00 pour 2 — Camille Rousseau",
+    "userTurns": [
+      "Bonsoir, une table pour dimanche prochain à 22h pour 2 personnes, au nom de Camille Rousseau",
+      "Oui confirmé"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Rousseau"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-015",
+    "category": "multilingua",
+    "description": "FR — Dîner mardi 22:00 pour 4 — Julien Lefevre",
+    "userTurns": [
+      "Bonsoir, je voudrais réserver pour mardi prochain à 22h pour 4 personnes, au nom de Julien Lefevre",
+      "Oui"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Lefevre"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-016",
+    "category": "multilingua",
+    "description": "FR — Dîner vendredi 21:30 pour 3 — Isabelle Girard",
+    "userTurns": [
+      "Bonsoir, je voudrais une table pour vendredi prochain à 21h30 pour 3 personnes, au nom d'Isabelle Girard",
+      "Confirmez s'il vous plaît"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Girard"],
+    "replyLanguage": "fr"
+  },
+  {
+    "id": "B03-017",
+    "category": "multilingua",
+    "description": "DE — Mittagessen Samstag 13:00 für 2 — Hans Müller",
+    "userTurns": [
+      "Guten Tag, ich möchte einen Tisch für nächsten Samstag um 13 Uhr für 2 Personen reservieren, auf den Namen Hans Müller",
+      "Ja bitte bestätigen"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Müller"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-018",
+    "category": "multilingua",
+    "description": "DE — Mittagessen Sonntag 12:30 für 4 — Anna Schmidt",
+    "userTurns": [
+      "Guten Tag, ich möchte für nächsten Sonntag um 12:30 Uhr für 4 Personen reservieren, auf den Namen Anna Schmidt",
+      "Ja, ich bestätige"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Schmidt"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-019",
+    "category": "multilingua",
+    "description": "DE — Mittagessen Mittwoch 13:00 für 3 — Thomas Weber",
+    "userTurns": [
+      "Guten Tag, einen Tisch für nächsten Mittwoch um 13 Uhr für 3 Personen, auf den Namen Thomas Weber",
+      "Ja bitte"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Weber"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-020",
+    "category": "multilingua",
+    "description": "DE — Abendessen Samstag 21:00 für 5 — Petra Wagner",
+    "userTurns": [
+      "Guten Abend, ich möchte für nächsten Samstag um 21 Uhr für 5 Personen reservieren, auf den Namen Petra Wagner",
+      "Ja bestätigen"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Wagner"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-021",
+    "category": "multilingua",
+    "description": "DE — Abendessen Sonntag 22:00 für 2 — Klaus Fischer",
+    "userTurns": [
+      "Guten Abend, einen Tisch für nächsten Sonntag um 22 Uhr für 2 Personen, auf den Namen Klaus Fischer",
+      "Ja bestätige"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Fischer"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-022",
+    "category": "multilingua",
+    "description": "DE — Abendessen Dienstag 22:00 für 4 — Sabine Meyer",
+    "userTurns": [
+      "Guten Abend, ich möchte für nächsten Dienstag um 22 Uhr für 4 Personen reservieren, auf den Namen Sabine Meyer",
+      "Ja"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Meyer"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-023",
+    "category": "multilingua",
+    "description": "DE — Abendessen Freitag 21:30 für 3 — Wolfgang Bauer",
+    "userTurns": [
+      "Guten Abend, einen Tisch für nächsten Freitag um 21:30 Uhr für 3 Personen, auf den Namen Wolfgang Bauer",
+      "Bitte bestätigen"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Bauer"],
+    "replyLanguage": "de"
+  },
+  {
+    "id": "B03-024",
+    "category": "multilingua",
+    "description": "ES — Almuerzo sábado 13:00 para 2 — Carlos García",
+    "userTurns": [
+      "Buenos días, quisiera reservar una mesa para el próximo sábado a las 13 para 2 personas, a nombre de Carlos García",
+      "Sí confirmo"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["García"],
+    "replyLanguage": "es"
+  },
+  {
+    "id": "B03-025",
+    "category": "multilingua",
+    "description": "ES — Almuerzo domingo 12:30 para 4 — María López",
+    "userTurns": [
+      "Buenos días, quisiera reservar para el próximo domingo a las 12:30 para 4 personas, a nombre de María López",
+      "Sí, confirmo"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["López"],
+    "replyLanguage": "es"
+  },
+  {
+    "id": "B03-026",
+    "category": "multilingua",
+    "description": "ES — Almuerzo miércoles 13:00 para 3 — José Fernández",
+    "userTurns": [
+      "Buenos días, una mesa para el próximo miércoles a las 13 para 3 personas, a nombre de José Fernández",
+      "Sí"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Fernández"],
+    "replyLanguage": "es"
+  },
+  {
+    "id": "B03-027",
+    "category": "multilingua",
+    "description": "ES — Cena sábado 21:00 para 5 — Ana Martínez",
+    "userTurns": [
+      "Buenas tardes, quisiera reservar una mesa para el próximo sábado a las 21 para 5 personas, a nombre de Ana Martínez",
+      "Sí confirme"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Martínez"],
+    "replyLanguage": "es"
+  },
+  {
+    "id": "B03-028",
+    "category": "multilingua",
+    "description": "ES — Cena domingo 22:00 para 2 — Miguel Rodríguez",
+    "userTurns": [
+      "Buenas noches, una mesa para el próximo domingo a las 22 para 2 personas, a nombre de Miguel Rodríguez",
+      "Sí, por favor"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Rodríguez"],
+    "replyLanguage": "es"
+  },
+  {
+    "id": "B03-029",
+    "category": "multilingua",
+    "description": "ES — Cena martes 22:00 para 4 — Elena Sánchez",
+    "userTurns": [
+      "Buenas noches, quisiera reservar para el próximo martes a las 22 para 4 personas, a nombre de Elena Sánchez",
+      "Sí"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Sánchez"],
+    "replyLanguage": "es"
+  },
+  {
+    "id": "B03-030",
+    "category": "multilingua",
+    "description": "ES — Cena viernes 21:30 para 3 — Antonio Pérez",
+    "userTurns": [
+      "Buenas noches, una mesa para el próximo viernes a las 21:30 para 3 personas, a nombre de Antonio Pérez",
+      "Confirmo"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Pérez"],
+    "replyLanguage": "es"
+  }
+]
