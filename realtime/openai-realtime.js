@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.26-MT-2026-07-22 caricato (fix: apertura solo disclosure, no aggiunte)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.27-MT-2026-07-22 caricato (fix: language persistence across tool calls)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -210,6 +210,8 @@ After the opening, follow this policy:
 
 When you switch language for the first time in a call, you MUST include an AI disclosure in the new language in your very first reply after the switch. This is a legal requirement under the EU AI Act — the caller must be aware they are speaking with an automated assistant in the language they understand.
 
+**This disclosure is MANDATORY, not optional. It also serves as a language anchor**: skipping it causes the model to drift back to Italian on later turns. Always include it on the very first reply after detecting a language switch, BEFORE any tool call, BEFORE any question, BEFORE any pleasantries.
+
 Examples of correct disclosure in the target language on the first reply after switching:
 
 - **English**: "Sure, we can continue in English. I'm the automated voice assistant of {{RESTAURANT_NAME}} — how can I help you?"
@@ -218,6 +220,10 @@ Examples of correct disclosure in the target language on the first reply after s
 - **Spanish**: "Por supuesto, podemos continuar en español. Soy el asistente vocal automático de {{RESTAURANT_NAME}} — ¿en qué puedo ayudarle?"
 
 Say this disclosure ONLY ONCE, at the moment you first switch language. Do not repeat it in later turns.
+
+## Language persistence across tool calls
+
+**Critical rule**: Once you have switched language, EVERY subsequent reply — including replies that come right after a tool call result — MUST be in the caller's language. Tool results are internal data; they do NOT change the conversation language. If the caller is speaking English, your reply after `controlla_disponibilita` returns is in English. Your reply after `crea_prenotazione` returns is in English. Your final confirmation is in English. Never let the tool's language leak into your reply. Never switch back to Italian just because you're delivering a booking confirmation.
 
 If the caller speaks a language you can understand but struggle to speak fluently, respond in that language once, then offer to continue in English or Italian.
 
