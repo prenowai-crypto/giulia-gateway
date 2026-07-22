@@ -1,8 +1,13 @@
 name: Automated Tests
 
-# Lanciabile manualmente da GitHub UI (workflow_dispatch)
 on:
   workflow_dispatch:
+    inputs:
+      batches:
+        description: 'Batch da lanciare — "all" (tutti) | "B02" (solo B02) | "B02,B03" (più batch) | "B01-B05" (range)'
+        required: true
+        default: 'all'
+        type: string
 
 jobs:
   runner-b:
@@ -26,6 +31,7 @@ jobs:
         env:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          BATCH_FILTER: ${{ github.event.inputs.batches }}
         run: node tests/runner-b.cjs
 
       - name: Upload reports as artifact
