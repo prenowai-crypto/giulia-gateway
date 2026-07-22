@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.34-MT-2026-07-22 caricato (prompt semplificato: sezione Language minima, disclosure gestita da gateway)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.35-MT-2026-07-22 caricato (fix: disclosure + reply unificati in una response, no più stuck waiting)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -625,14 +625,14 @@ Non prendere prenotazioni.`;
               console.log(`🌍 [${this.connId}] detected caller language: ${lang}`);
 
               if (lang !== 'it') {
-                // Force disclosure via response.create with explicit instructions
-                this._pendingLanguageDisclosure = true;
+                // v7.4.35 — UNIFIED response: disclosure + normal reply in one shot.
+                // Avoids "stuck waiting" bug with two separate response.create calls.
                 const disclosureText = this._buildDisclosureText(lang);
                 console.log(`⚖️  [${this.connId}] injecting mandatory ${lang.toUpperCase()} disclosure (EU AI Act Art. 50)`);
                 this._send({
                   type: 'response.create',
                   response: {
-                    instructions: `You MUST say EXACTLY this sentence, verbatim, then stop and add nothing more: "${disclosureText}"`,
+                    instructions: `Your reply MUST begin verbatim with this exact sentence: "${disclosureText}" — do NOT paraphrase, do NOT shorten it, do NOT omit it. After you finish this sentence, continue naturally by responding to the caller's request following your normal system prompt: if you need to check availability or create a booking, call the appropriate tool. Reply in ${lang.toUpperCase()}.`,
                   },
                 });
                 break;
@@ -672,14 +672,6 @@ Non prendere prenotazioni.`;
         if (msg.response?.usage) {
           const u = msg.response.usage;
           console.log(`📊 [${this.connId}] tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
-        }
-        // v7.4.30: if this response.done is for the mandatory disclosure,
-        // now trigger the actual reply to the caller's request.
-        if (this._pendingLanguageDisclosure) {
-          this._pendingLanguageDisclosure = false;
-          console.log(`▶️  [${this.connId}] disclosure delivered → triggering actual reply`);
-          this._send({ type: 'response.create' });
-          break;
         }
         // v7.4.10: se c'è un transfer pendente, il modello ha appena finito
         // di pronunciare la frase di saluto → possiamo far partire il transfer.
