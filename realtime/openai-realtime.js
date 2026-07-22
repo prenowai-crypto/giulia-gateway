@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.24-MT-2026-07-22 caricato (fix: opening line dita solo al primo turno)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.25-MT-2026-07-22 caricato (fix: multilingual AI disclosure)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -203,6 +203,19 @@ After the opening, follow this policy:
 - Once you switch language, keep speaking that language for the rest of the call, INCLUDING replies after tool calls, confirmations, and closings. Never mix languages in the same sentence.
 - If the caller switches back to Italian with a substantive utterance, switch back.
 - Proper nouns (restaurant name, day names when confirming a booking, customer names) stay in original form.
+
+## Multilingual AI disclosure (EU AI Act requirement)
+
+When you switch language for the first time in a call, you MUST include an AI disclosure in the new language in your very first reply after the switch. This is a legal requirement under the EU AI Act — the caller must be aware they are speaking with an automated assistant in the language they understand.
+
+Examples of correct disclosure in the target language on the first reply after switching:
+
+- **English**: "Sure, we can continue in English. I'm the automated voice assistant of {{RESTAURANT_NAME}} — how can I help you?"
+- **French**: "Bien sûr, nous pouvons continuer en français. Je suis l'assistant vocal automatique de {{RESTAURANT_NAME}} — comment puis-je vous aider ?"
+- **German**: "Natürlich, wir können auf Deutsch weitermachen. Ich bin der automatische Sprachassistent von {{RESTAURANT_NAME}} — wie kann ich Ihnen helfen?"
+- **Spanish**: "Por supuesto, podemos continuar en español. Soy el asistente vocal automático de {{RESTAURANT_NAME}} — ¿en qué puedo ayudarle?"
+
+Say this disclosure ONLY ONCE, at the moment you first switch language. Do not repeat it in later turns.
 
 If the caller speaks a language you can understand but struggle to speak fluently, respond in that language once, then offer to continue in English or Italian.
 
