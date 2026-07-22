@@ -194,9 +194,9 @@
   {
     "id": "B02-013",
     "category": "booking-basic",
-    "description": "Cena giovedì prossimo 22:00 per 3 persone — Roberto Barbieri",
+    "description": "Cena giovedì settimana prossima 22:00 per 3 persone — Roberto Barbieri",
     "userTurns": [
-      "Buonasera, vorrei prenotare per giovedì prossimo alle 22 per 3 persone, a nome Roberto Barbieri",
+      "Buonasera, vorrei prenotare per giovedì della prossima settimana alle 22 per 3 persone, a nome Roberto Barbieri",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -290,9 +290,9 @@
   {
     "id": "B02-019",
     "category": "booking-basic",
-    "description": "Cena giovedì prossimo 21:30 (giovedì è solo cena) per 3 persone — Federica Rizzo",
+    "description": "Cena giovedì settimana prossima 21:30 (giovedì è solo cena) per 3 persone — Federica Rizzo",
     "userTurns": [
-      "Buonasera, vorrei prenotare giovedì prossimo sera alle 21:30 per 3 persone, a nome Federica Rizzo",
+      "Buonasera, vorrei prenotare giovedì della prossima settimana sera alle 21:30 per 3 persone, a nome Federica Rizzo",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -356,7 +356,7 @@
     "category": "booking-basic",
     "description": "Variante linguistica: orario 'nove e mezza' (→ 21:30) — Massimo Longo",
     "userTurns": [
-      "Buonasera, vorrei prenotare giovedì prossimo alle nove e mezza di sera per 2 persone, a nome Massimo Longo",
+      "Buonasera, vorrei prenotare giovedì della prossima settimana alle nove e mezza di sera per 2 persone, a nome Massimo Longo",
       "Sì confermo"
     ],
     "expectedToolCalls": [
