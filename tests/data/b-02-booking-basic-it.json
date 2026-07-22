@@ -4,8 +4,7 @@
     "category": "booking-basic",
     "description": "Pranzo sabato prossimo 13:00 per 2 persone — Marco Rossi",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei prenotare un tavolo per sabato prossimo alle 13 per 2 persone, a nome Marco Rossi",
+      "Buongiorno, vorrei prenotare un tavolo per sabato prossimo alle 13 per 2 persone, a nome Marco Rossi",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -21,8 +20,7 @@
     "category": "booking-basic",
     "description": "Pranzo domenica prossima 12:30 per 4 persone — Luigi Bianchi",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei prenotare per domenica prossima a pranzo, alle 12:30, siamo in 4, a nome Luigi Bianchi",
+      "Buongiorno, vorrei prenotare per domenica prossima a pranzo, alle 12:30, siamo in 4, a nome Luigi Bianchi",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -38,8 +36,7 @@
     "category": "booking-basic",
     "description": "Pranzo martedì prossimo 12:00 per 3 persone — Giovanni Verdi",
     "userTurns": [
-      "Buongiorno",
-      "Un tavolo per martedì prossimo a mezzogiorno per 3 persone, il nome è Giovanni Verdi",
+      "Buongiorno, un tavolo per martedì prossimo a mezzogiorno per 3 persone, il nome è Giovanni Verdi",
       "Sì va bene"
     ],
     "expectedToolCalls": [
@@ -55,8 +52,7 @@
     "category": "booking-basic",
     "description": "Pranzo mercoledì prossimo 13:30 per 6 persone (gruppo medio) — Anna Colombo",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei un tavolo per mercoledì prossimo alle 13:30 per 6 persone, a nome Anna Colombo",
+      "Buongiorno, vorrei un tavolo per mercoledì prossimo alle 13:30 per 6 persone, a nome Anna Colombo",
       "Confermo, grazie"
     ],
     "expectedToolCalls": [
@@ -72,8 +68,7 @@
     "category": "booking-basic",
     "description": "Pranzo sabato prossimo 12:00 per 2 persone — Paolo Ferrari",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei prenotare per sabato prossimo a pranzo per 2 persone, alle 12, il nome è Paolo Ferrari",
+      "Buongiorno, vorrei prenotare per sabato prossimo a pranzo per 2 persone, alle 12, il nome è Paolo Ferrari",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -89,8 +84,7 @@
     "category": "booking-basic",
     "description": "Pranzo domenica prossima 14:00 per 5 persone — Sara Ricci",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei prenotare domenica prossima alle 14 per 5 persone, a nome Sara Ricci",
+      "Buongiorno, vorrei prenotare domenica prossima alle 14 per 5 persone, a nome Sara Ricci",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -106,8 +100,7 @@
     "category": "booking-basic",
     "description": "Pranzo martedì prossimo 12:15 (orario preciso non standard) per 4 persone — Franco Marino",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei un tavolo per martedì prossimo alle 12 e un quarto, per 4 persone, a nome Franco Marino",
+      "Buongiorno, vorrei un tavolo per martedì prossimo alle 12 e un quarto, per 4 persone, a nome Franco Marino",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -123,8 +116,7 @@
     "category": "booking-basic",
     "description": "Pranzo mercoledì prossimo 12:30 per 2 persone — Elena Greco",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei prenotare per mercoledì prossimo, pranzo, alle 12:30, per 2 persone, a nome Elena Greco",
+      "Buongiorno, vorrei prenotare per mercoledì prossimo, pranzo, alle 12:30, per 2 persone, a nome Elena Greco",
       "Va bene"
     ],
     "expectedToolCalls": [
@@ -140,8 +132,7 @@
     "category": "booking-basic",
     "description": "Pranzo sabato prossimo 14:00 per 8 persone (sotto large_group_threshold) — Alessandro Costa",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei un tavolo per sabato prossimo alle 14, siamo 8 persone, il cognome è Costa, di nome Alessandro",
+      "Buongiorno, vorrei un tavolo per sabato prossimo alle 14, siamo 8 persone, il cognome è Costa, di nome Alessandro",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -157,8 +148,7 @@
     "category": "booking-basic",
     "description": "Pranzo domenica prossima 13:00 per 3 persone — Chiara Rinaldi",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei prenotare domenica prossima alle 13 per 3 persone, a nome Chiara Rinaldi",
+      "Buongiorno, vorrei prenotare domenica prossima alle 13 per 3 persone, a nome Chiara Rinaldi",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -174,8 +164,7 @@
     "category": "booking-basic",
     "description": "Cena martedì prossimo 21:00 per 2 persone — Antonio Russo",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare martedì prossimo alle 21 per 2 persone, a nome Antonio Russo",
+      "Buonasera, vorrei prenotare martedì prossimo alle 21 per 2 persone, a nome Antonio Russo",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -191,8 +180,7 @@
     "category": "booking-basic",
     "description": "Cena mercoledì prossimo 21:30 per 4 persone — Lucia Esposito",
     "userTurns": [
-      "Buonasera",
-      "Vorrei un tavolo mercoledì prossimo alle 21:30, siamo 4, il nome è Lucia Esposito",
+      "Buonasera, vorrei un tavolo mercoledì prossimo alle 21:30, siamo 4, il nome è Lucia Esposito",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -208,8 +196,7 @@
     "category": "booking-basic",
     "description": "Cena giovedì prossimo 22:00 per 3 persone — Roberto Barbieri",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare per giovedì prossimo alle 22 per 3 persone, a nome Roberto Barbieri",
+      "Buonasera, vorrei prenotare per giovedì prossimo alle 22 per 3 persone, a nome Roberto Barbieri",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -225,8 +212,7 @@
     "category": "booking-basic",
     "description": "Cena venerdì prossimo 22:15 per 5 persone — Silvia Fontana",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare venerdì prossimo alle 22:15 per 5 persone, il nome è Silvia Fontana",
+      "Buonasera, vorrei prenotare venerdì prossimo alle 22:15 per 5 persone, il nome è Silvia Fontana",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -242,8 +228,7 @@
     "category": "booking-basic",
     "description": "Cena sabato prossimo 21:00 per 6 persone — Marco Sanna",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare sabato prossimo sera alle 21 per 6 persone, a nome Marco Sanna",
+      "Buonasera, vorrei prenotare sabato prossimo sera alle 21 per 6 persone, a nome Marco Sanna",
       "Sì va bene"
     ],
     "expectedToolCalls": [
@@ -259,8 +244,7 @@
     "category": "booking-basic",
     "description": "Cena domenica prossima 22:30 (bordo chiusura cena) per 2 persone — Barbara Palumbo",
     "userTurns": [
-      "Buonasera",
-      "Vorrei un tavolo domenica prossima alle 22:30 per 2 persone, a nome Barbara Palumbo",
+      "Buonasera, vorrei un tavolo domenica prossima alle 22:30 per 2 persone, a nome Barbara Palumbo",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -276,8 +260,7 @@
     "category": "booking-basic",
     "description": "Cena martedì prossimo 22:00 per 2 persone — Andrea Gentile",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare martedì prossimo sera alle 22 per 2 persone, a nome Andrea Gentile",
+      "Buonasera, vorrei prenotare martedì prossimo sera alle 22 per 2 persone, a nome Andrea Gentile",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -293,8 +276,7 @@
     "category": "booking-basic",
     "description": "Cena mercoledì prossimo 22:15 per 4 persone — Fabio Piras",
     "userTurns": [
-      "Buonasera",
-      "Vorrei un tavolo per mercoledì prossimo sera alle 22:15 per 4 persone, il nome è Fabio Piras",
+      "Buonasera, vorrei un tavolo per mercoledì prossimo sera alle 22:15 per 4 persone, il nome è Fabio Piras",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -310,8 +292,7 @@
     "category": "booking-basic",
     "description": "Cena giovedì prossimo 21:30 (giovedì è solo cena) per 3 persone — Federica Rizzo",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare giovedì prossimo sera alle 21:30 per 3 persone, a nome Federica Rizzo",
+      "Buonasera, vorrei prenotare giovedì prossimo sera alle 21:30 per 3 persone, a nome Federica Rizzo",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -327,8 +308,7 @@
     "category": "booking-basic",
     "description": "Cena venerdì prossimo 21:00 (venerdì è solo cena) per 5 persone — Stefano Villa",
     "userTurns": [
-      "Buonasera",
-      "Vorrei un tavolo venerdì prossimo sera alle 21 per 5 persone, a nome Stefano Villa",
+      "Buonasera, vorrei un tavolo venerdì prossimo sera alle 21 per 5 persone, a nome Stefano Villa",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -344,8 +324,7 @@
     "category": "booking-basic",
     "description": "Variante linguistica: numero persone scritto in lettere ('quattro') — Davide Marchetti",
     "userTurns": [
-      "Buonasera",
-      "Un tavolo per quattro martedì prossimo sera alle 21:30, a nome Davide Marchetti",
+      "Buonasera, un tavolo per quattro martedì prossimo sera alle 21:30, a nome Davide Marchetti",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -361,8 +340,7 @@
     "category": "booking-basic",
     "description": "Variante linguistica: orario colloquiale 'nove e un quarto' (→ 21:15) — Valentina Ferri",
     "userTurns": [
-      "Buonasera",
-      "Vorrei un tavolo mercoledì prossimo alle nove e un quarto di sera per 3 persone, a nome Valentina Ferri",
+      "Buonasera, vorrei un tavolo mercoledì prossimo alle nove e un quarto di sera per 3 persone, a nome Valentina Ferri",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -378,8 +356,7 @@
     "category": "booking-basic",
     "description": "Variante linguistica: orario 'nove e mezza' (→ 21:30) — Massimo Longo",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare giovedì prossimo alle nove e mezza di sera per 2 persone, a nome Massimo Longo",
+      "Buonasera, vorrei prenotare giovedì prossimo alle nove e mezza di sera per 2 persone, a nome Massimo Longo",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -395,8 +372,7 @@
     "category": "booking-basic",
     "description": "Variante linguistica: orario 'l'una' (→ 13:00 pranzo) — Elisa Gatti",
     "userTurns": [
-      "Buongiorno",
-      "Vorrei un tavolo sabato prossimo all'una del pomeriggio per 3 persone, a nome Elisa Gatti",
+      "Buongiorno, vorrei un tavolo sabato prossimo all'una del pomeriggio per 3 persone, a nome Elisa Gatti",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -412,8 +388,7 @@
     "category": "booking-basic",
     "description": "Variante linguistica: numero 'sei' scritto in lettere — Simone Serra",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare venerdì prossimo alle 22 per sei persone, a nome Simone Serra",
+      "Buonasera, vorrei prenotare venerdì prossimo alle 22 per sei persone, a nome Simone Serra",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -429,8 +404,7 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente dà info in ordine sparso — Nicola Fabbri",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare",
+      "Buonasera, vorrei prenotare",
       "Siamo in 3",
       "Domenica prossima",
       "Alle 21:30",
@@ -450,8 +424,7 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente conferma dopo recap dei dati — Cristina Mancini",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare martedì prossimo alle 21 per 4 persone, a nome Cristina Mancini",
+      "Buonasera, vorrei prenotare martedì prossimo alle 21 per 4 persone, a nome Cristina Mancini",
       "Sì, va bene tutto"
     ],
     "expectedToolCalls": [
@@ -467,8 +440,7 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente specifica nota (compleanno) nel primo turno — Gianluca Conti",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare mercoledì prossimo alle 22 per 4 persone, a nome Gianluca Conti. Volevo segnalare che è un compleanno",
+      "Buonasera, vorrei prenotare mercoledì prossimo alle 22 per 4 persone, a nome Gianluca Conti. Volevo segnalare che è un compleanno",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -484,8 +456,7 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente corregge il numero di persone (da 3 a 4) — Manuela Longhi",
     "userTurns": [
-      "Buonasera",
-      "Vorrei prenotare giovedì prossimo alle 22 per 3 persone",
+      "Buonasera, vorrei prenotare sabato prossimo alle 22 per 3 persone",
       "Anzi, aspetta, siamo in 4",
       "A nome Manuela Longhi",
       "Confermo"
