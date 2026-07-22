@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.31-MT-2026-07-22 caricato (fix: nome ristorante corretto + no disclosure duplicata)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.33-MT-2026-07-22 caricato (fix: LLM language detection universale invece di regex)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -621,7 +621,7 @@ Non prendere prenotazioni.`;
       .replace(/\{\{CALLER_PHONE\}\}/g,      this.callerPhone || '(sconosciuto)');
   }
 
-  _onMessage(raw) {
+  async _onMessage(raw) {
     let msg;
     try { msg = JSON.parse(raw.toString()); }
     catch (e) { return console.error(`❌ [${this.connId}] JSON parse: ${e?.message}`); }
@@ -648,11 +648,11 @@ Non prendere prenotazioni.`;
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
 
-            // v7.4.30 — EU AI Act disclosure injection (Opzione B)
-            // Detect language on first substantive user turn and force disclosure
+            // v7.4.30 → v7.4.33 — EU AI Act disclosure injection (Opzione B)
+            // On first substantive user turn, detect language via LLM and force disclosure if needed.
             if (!this._firstUserTurnHandled && !this._isGarbage(t)) {
               this._firstUserTurnHandled = true;
-              const lang = this._detectLanguage(t);
+              const lang = await this._detectLanguageWithLLM(t);
               console.log(`🌍 [${this.connId}] detected caller language: ${lang}`);
 
               if (lang !== 'it') {
@@ -663,7 +663,7 @@ Non prendere prenotazioni.`;
                 this._send({
                   type: 'response.create',
                   response: {
-                    instructions: `You MUST say EXACTLY this sentence, verbatim, in ${lang.toUpperCase()}, then stop and add nothing more: "${disclosureText}"`,
+                    instructions: `You MUST say EXACTLY this sentence, verbatim, then stop and add nothing more: "${disclosureText}"`,
                   },
                 });
                 break;
@@ -1297,26 +1297,63 @@ Non prendere prenotazioni.`;
     return words.length === 0;
   }
 
-  // v7.4.30 — EU AI Act disclosure injection (Opzione B)
-  // Detects the caller's language from the first substantive transcript.
-  // Order matters: check more specific languages first (they have distinctive words),
-  // fall back to Italian by default (which is the restaurant's default language).
-  _detectLanguage(text) {
+  // v7.4.33 — LLM-based language detection (universal, replaces brittle regex)
+  // Uses gpt-4o-mini to identify the caller's language from the first transcript.
+  // Falls back to _detectLanguageRegex if the LLM call fails.
+  async _detectLanguageWithLLM(text) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a language detector. Reply with ONLY the ISO 639-1 code (2 lowercase letters) of the language of the user text. Examples: it, en, fr, de, es, pt, nl, ru, zh, ja, ar, ko. No explanation, no punctuation, no quotes. Just 2 letters.',
+            },
+            { role: 'user', content: text },
+          ],
+          max_tokens: 5,
+          temperature: 0,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const raw = (data.choices?.[0]?.message?.content || '').trim().toLowerCase();
+      const lang = raw.match(/^[a-z]{2}/)?.[0];
+      if (lang) return lang;
+      console.warn(`⚠️  [${this.connId}] LLM returned unexpected lang: "${raw}", using regex fallback`);
+      return this._detectLanguageRegex(text);
+    } catch (e) {
+      console.warn(`⚠️  [${this.connId}] LLM detection failed (${e.message}), using regex fallback`);
+      return this._detectLanguageRegex(text);
+    }
+  }
+
+  // Regex-based fallback (safety net if LLM call fails).
+  // Not exhaustive — only meant to catch obvious cases when LLM is down.
+  _detectLanguageRegex(text) {
     if (!text) return 'it';
     const t = text.toLowerCase();
-    // French markers
-    if (/\b(bonjour|bonsoir|je voudrais|réserver|réservation|s'il vous plaît|au nom de|voudrais|merci)\b/.test(t)) return 'fr';
-    // German markers
-    if (/\b(guten tag|guten abend|ich möchte|reservieren|reservierung|nächsten|auf den namen|bitte|danke)\b/.test(t)) return 'de';
-    // Spanish markers
-    if (/\b(buenos días|buenas noches|buenas tardes|quisiera|reservar|reserva|a nombre de|por favor|gracias)\b/.test(t)) return 'es';
-    // English markers
-    if (/\b(hello|good morning|good evening|good afternoon|i would like|i'd like|book a table|under the name|thanks|reservation)\b/.test(t)) return 'en';
+    if (/¿|¡/.test(t)) return 'es';
+    if (/\b(hola|buenos días|buenas noches|quisiera|reservar|hablas|español|gracias|por favor)\b/i.test(t)) return 'es';
+    if (/\b(bonjour|bonsoir|je voudrais|réserver|s'il vous plaît|merci|français)\b/i.test(t)) return 'fr';
+    if (/\b(guten tag|guten abend|ich möchte|reservieren|bitte|danke|deutsch)\b/i.test(t)) return 'de';
+    if (/\b(hello|good morning|good evening|good afternoon|i would like|i'd like|book a table|thanks|do you speak)\b/i.test(t)) return 'en';
     if (/^hi[\s,.!?]/.test(t) || /\bhi\b/.test(t)) return 'en';
     return 'it';
   }
 
   // Returns the exact disclosure sentence for the target language (EU AI Act Art. 50).
+  // Supported languages have native disclosures; others fall back to English (lingua franca).
   _buildDisclosureText(lang) {
     const rname = this.restaurantConfig?.restaurant_name
                   || this.restaurantConfig?.restaurantName
@@ -1326,8 +1363,10 @@ Non prendere prenotazioni.`;
       fr: `Bien sûr, nous pouvons continuer en français. Je suis l'assistant vocal automatique de ${rname}.`,
       de: `Natürlich, wir können auf Deutsch weitermachen. Ich bin der automatische Sprachassistent von ${rname}.`,
       es: `Por supuesto, podemos continuar en español. Soy el asistente vocal automático de ${rname}.`,
+      pt: `Claro, podemos continuar em português. Sou o assistente vocal automático de ${rname}.`,
+      nl: `Zeker, we kunnen doorgaan in het Nederlands. Ik ben de geautomatiseerde stemassistent van ${rname}.`,
     };
-    return disclosures[lang] || disclosures.en;
+    return disclosures[lang] || disclosures.en; // fallback to English as lingua franca
   }
 
   async _fetchRestaurantInfo() {
