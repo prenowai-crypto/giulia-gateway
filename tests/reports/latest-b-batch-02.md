@@ -1,24 +1,90 @@
 # Batch B-02 (tests 51-63)
-Run: 2026-07-22T19:52:12.296Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passed: 9 (69%) | Failed: 4
+Run: 2026-07-22T23:29:40.810Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passed: 5 (38%) | Failed: 8
 
-## ✅ Passed (9)
+## ✅ Passed (5)
 
-- **B03-018** `multilingua`: NL — Lars Jansen (20665ms, 2 tool calls)
-- **B03-019** `multilingua`: PL — Piotr Nowak (20682ms, 2 tool calls)
-- **B03-020** `multilingua`: PL — Anna Kowalska (18000ms, 2 tool calls)
-- **B03-024** `multilingua`: RU — Sergei Volkov (20523ms, 2 tool calls)
-- **B03-025** `multilingua`: JA — Hiroshi Tanaka (16191ms, 2 tool calls)
-- **B03-026** `multilingua`: JA — Yuki Sato (16684ms, 2 tool calls)
-- **B03-027** `multilingua`: ZH — Li Wei (19916ms, 2 tool calls)
-- **B03-028** `multilingua`: ZH — Chen Ming (18001ms, 2 tool calls)
-- **B03-030** `multilingua`: AR — Fatima Al-Farsi (20148ms, 2 tool calls)
+- **B03-019** `multilingua`: PL — Piotr Nowak (16076ms, 2 tool calls)
+- **B03-023** `multilingua`: RU — Anna Ivanova (15309ms, 2 tool calls)
+- **B03-024** `multilingua`: RU — Sergei Volkov (13980ms, 2 tool calls)
+- **B03-026** `multilingua`: JA — Yuki Sato (15171ms, 2 tool calls)
+- **B03-028** `multilingua`: ZH — Chen Ming (15744ms, 2 tool calls)
 
-## ❌ Failed (4)
+## ❌ Failed (8)
+
+### B03-018 — `multilingua`
+**Description**: NL — Lars Jansen
+
+**Reason**: expected tool call 'controlla_disponibilita' with args {"persone":3} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-26","ora":"12:30","persone":"3"}},{"name":"crea_prenotazione","args":{"nome":"Lars Jansen","data":"2026-07-26","ora":"12:30","persone":3,"note":""}}]
+
+**Full transcript**:
+
+**[User turn 1]**: Goedendag, een tafel voor volgende zondag om 12:30 uur voor 3 personen, op naam van Lars Jansen
+
+**[AI reply 1]**: "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?"
+
+**[User turn 2]**: Ja
+
+**[AI reply 2]**: Zeker, we kunnen doorgaan in het Nederlands. Ik ben de geautomatiseerde stemassistent van Osteria Test. Ik ga even kijken of die tijd beschikbaar is, en dan maken we eventueel de reservering.
+
+**[AI reply 3]**: Perfect, ik maak de reservering nu voor Lars Jansen. Een momentje.
+
+**[AI reply 4]**: Gereld! Reservering bevestigd voor Lars Jansen, zondag 26 juli om 12:30 uur voor 3 personen.
+
+**[AI reply 5]**: Fijn, dank voor de bevestiging.  
+Wat wil je nu doen: iets aanpassen, een andere reservering maken, of heb je een vraag?
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-26",
+      "ora": "12:30",
+      "persone": "3"
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Lars Jansen",
+      "data": "2026-07-26",
+      "ora": "12:30",
+      "persone": 3,
+      "note": ""
+    }
+  }
+]
+```
+
+**Duration**: 15524ms
+
+---
+
+### B03-020 — `multilingua`
+**Description**: PL — Anna Kowalska
+
+**Reason**: exception: realtime error: {"type":"invalid_request_error","code":"conversation_already_has_active_response","message":"Conversation already has an active response in progress: resp_E4ad9pp0AhkqkshLu7K3Z. Wait until the response is finished before creating a new one.","param":null,"event_id":null}
+
+**Full transcript**:
+
+**[User turn 1]**: Dobry wieczór, na następną środę o 21:00 dla 4 osób, na nazwisko Anna Kowalska
+
+**[User turn 2]**: Tak potwierdzam
+
+**Tool calls made** (0):
+```json
+[]
+```
+
+**Duration**: 4752ms
+
+---
 
 ### B03-021 — `multilingua`
 **Description**: PL — Marek Zieliński
 
-**Reason**: expected tool call 'controlla_disponibilita' with args {"persone":3} not found. Actual: [] | expected tool call 'crea_prenotazione' with args {"persone":3} not found. Actual: [] | reply must contain 'Zieliński' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Jasne, sprawdzę dostępność i potem pomyślimy o rezerwacji. Przepraszam, sprawdzam dostępność dla podanego terminu i pro | reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Jasne, sprawdzę dostępność i potem pomyślimy o rezerwacji. Przepraszam, sprawdzam dostępność dla podanego terminu i pro
+**Reason**: reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Jasne, sprawdzę najpierw dostępność na wskazany termin i godzinę, a potem pomogę z rezerwacją. Zarezerwowałem stolik dl
 
 **Full transcript**:
 
@@ -28,81 +94,187 @@ Run: 2026-07-22T19:52:12.296Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
 
 **[User turn 2]**: Tak
 
-**[AI reply 2]**: Jasne, sprawdzę dostępność i potem pomyślimy o rezerwacji.
+**[AI reply 2]**: Jasne, sprawdzę najpierw dostępność na wskazany termin i godzinę, a potem pomogę z rezerwacją.
 
-**[AI reply 3]**: Przepraszam, sprawdzam dostępność dla podanego terminu i proszę o chwilę cierpliwości.
+**[AI reply 3]**: Zarezerwowałem stolik dla Marka Zielińskiego na niedzielę 26 lipca o 12:30, dla 3 osób.
 
-**[AI reply 4]**: Dziękuję, trwa weryfikacja, proszę pozostać na linii.
+**[AI reply 4]**: Świetnie, rezerwacja jest potwierdzona. Do zobaczenia w niedzielę o 12:30!
 
-**Tool calls made** (0):
+**Tool calls made** (2):
 ```json
-[]
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-26",
+      "ora": "12:30",
+      "persone": 3
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Marek Zieliński",
+      "data": "2026-07-26",
+      "ora": "12:30",
+      "persone": 3,
+      "note": "Rezerwacja na lunch."
+    }
+  }
+]
 ```
 
-**Duration**: 6535ms
+**Duration**: 16218ms
 
 ---
 
 ### B03-022 — `multilingua`
 **Description**: RU — Ivan Petrov
 
-**Reason**: expected tool call 'controlla_disponibilita' with args {"persone":2} not found. Actual: [] | expected tool call 'crea_prenotazione' with args {"persone":2} not found. Actual: [] | reply must contain 'Petrov' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Секунду, я быстро проверю доступность на этот запрос и потом продолжу. Сейчас проверка занята, результат ещё не доступе | reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Секунду, я быстро проверю доступность на этот запрос и потом продолжу. Сейчас проверка занята, результат ещё не доступе
+**Reason**: reply must contain 'voice assistant' — got: "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?" Минуточку, проверю наличие свободных мест, а потом сразу оформим бронирование на нужное имя. Столик забронирован на и
 
 **Full transcript**:
 
 **[User turn 1]**: Здравствуйте, я хотел бы забронировать столик на следующую субботу в 13 часов на 2 человека, на имя Ivan Petrov
 
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+**[AI reply 1]**: "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?"
 
 **[User turn 2]**: Да, подтверждаю
 
-**[AI reply 2]**: Секунду, я быстро проверю доступность на этот запрос и потом продолжу.
+**[AI reply 2]**: Минуточку, проверю наличие свободных мест, а потом сразу оформим бронирование на нужное имя.
 
-**[AI reply 3]**: Сейчас проверка занята, результат ещё не доступен. Пожалуйста, подождите немного, я продолжу, когда проверка завершится.
+**[AI reply 3]**: Столик забронирован на имя Ivan Petrov на 13:00 в субботу, на 2 человека.
 
-**[AI reply 4]**: Спасибо, принято. Проверка ещё выполняется, пожалуйста, немного подождите — я сообщу результат.
+**[AI reply 4]**: Отлично, подтверждение получено. За вами закреплена бронь на Иван Петров, 2026-07-25, в 13:00, на 2 человека.
 
-**Tool calls made** (0):
+**Tool calls made** (2):
 ```json
-[]
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Ivan Petrov",
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2,
+      "note": "Banchiere"
+    }
+  }
+]
 ```
 
-**Duration**: 5691ms
+**Duration**: 16396ms
 
 ---
 
-### B03-023 — `multilingua`
-**Description**: RU — Anna Ivanova
+### B03-025 — `multilingua`
+**Description**: JA — Hiroshi Tanaka
 
-**Reason**: expected tool call 'controlla_disponibilita' with args {"persone":4} not found. Actual: [] | expected tool call 'crea_prenotazione' with args {"persone":4} not found. Actual: [] | reply must contain 'Ivanova' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Хорошо, проверю доступность и затем оформлю бронирование, если всё удачно. Похоже, проверка свободных мест ещё продолжа | reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Хорошо, проверю доступность и затем оформлю бронирование, если всё удачно. Похоже, проверка свободных мест ещё продолжа
+**Reason**: reply must contain 'voice assistant' — got: "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?" ありがとうございます。ちょっと確認してから予約のお手続きを行いますね。 予約が確定しました。Hiroshi Tanaka様、2026年7月25日13:00、2名でご予約です。 はい、承知しました。ご予約は、Hiroshi Tanaka
 
 **Full transcript**:
 
-**[User turn 1]**: Добрый вечер, на следующую среду в 21 час на 4 человека, на имя Anna Ivanova
+**[User turn 1]**: こんにちは、次の土曜日午後1時に2名でテーブルを予約したいのですが、Hiroshi Tanakaの名前でお願いします
+
+**[AI reply 1]**: "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?"
+
+**[User turn 2]**: はい、確認します
+
+**[AI reply 2]**: ありがとうございます。ちょっと確認してから予約のお手続きを行いますね。
+
+**[AI reply 3]**: 予約が確定しました。Hiroshi Tanaka様、2026年7月25日13:00、2名でご予約です。
+
+**[AI reply 4]**: はい、承知しました。ご予約は、Hiroshi Tanaka様で2026年7月25日13:00、2名です。
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Hiroshi Tanaka",
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2,
+      "note": "Prenotazione richiesta via assistente vocale."
+    }
+  }
+]
+```
+
+**Duration**: 12610ms
+
+---
+
+### B03-027 — `multilingua`
+**Description**: ZH — Li Wei
+
+**Reason**: reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? 好的，稍等一下，我先帮您查一下下周六下午一点的房间是否有空档，然后再帮您完成预订。 位置看起来可用，一会儿我会把您的预订登记好。请稍等。 预订成功！Li Wei，2026-07-25下午13:00，2位。确认无误。 好的，已确认：Li W
+
+**Full transcript**:
+
+**[User turn 1]**: 您好，我想预订下周六下午1点两个人的桌子，姓名Li Wei
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Да, подтверждаю
+**[User turn 2]**: 是的，确认
 
-**[AI reply 2]**: Хорошо, проверю доступность и затем оформлю бронирование, если всё удачно.
+**[AI reply 2]**: 好的，稍等一下，我先帮您查一下下周六下午一点的房间是否有空档，然后再帮您完成预订。
 
-**[AI reply 3]**: Похоже, проверка свободных мест ещё продолжается. Пожалуйста, подождите немного — я сообщу результат, когда он придёт.
+**[AI reply 3]**: 位置看起来可用，一会儿我会把您的预订登记好。请稍等。
 
-**[AI reply 4]**: Спасибо, подтверждаю. Пока система ещё не вернула результат проверки, я не могу оформить бронь — подождите, пожалуйста.
+**[AI reply 4]**: 预订成功！Li Wei，2026-07-25下午13:00，2位。确认无误。
 
-**Tool calls made** (0):
+**[AI reply 5]**: 好的，已确认：Li Wei，2026-07-25，下午1点，2位。欢迎到店。
+
+**Tool calls made** (2):
 ```json
-[]
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Li Wei",
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2,
+      "note": ""
+    }
+  }
+]
 ```
 
-**Duration**: 6208ms
+**Duration**: 15417ms
 
 ---
 
 ### B03-029 — `multilingua`
 **Description**: AR — Ahmed Hassan
 
-**Reason**: expected tool call 'controlla_disponibilita' with args {"persone":2} not found. Actual: [] | expected tool call 'crea_prenotazione' with args {"persone":2} not found. Actual: [] | reply must contain 'Hassan' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? حسناً، سأتحقق من توفر الطاولة أولاً، ثم نكمل الحجز إذا كان ممكن. نعم، طلب التحقق من توفر السبت القادم الساعة الواحدة ظه | reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? حسناً، سأتحقق من توفر الطاولة أولاً، ثم نكمل الحجز إذا كان ممكن. نعم، طلب التحقق من توفر السبت القادم الساعة الواحدة ظه
+**Reason**: reply must contain 'Hassan' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? أكيد، أتحقق أولاً من توفر الجدول في تلك الساعة، ثم إذا كان متاحاً أجهز الحجز لكم. حجزتم طاولة لـ احمد حسن يوم السبت 202 | reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? أكيد، أتحقق أولاً من توفر الجدول في تلك الساعة، ثم إذا كان متاحاً أجهز الحجز لكم. حجزتم طاولة لـ احمد حسن يوم السبت 202
 
 **Full transcript**:
 
@@ -112,20 +284,84 @@ Run: 2026-07-22T19:52:12.296Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
 
 **[User turn 2]**: نعم، أؤكد
 
-**[AI reply 2]**: حسناً، سأتحقق من توفر الطاولة أولاً، ثم نكمل الحجز إذا كان ممكن.
+**[AI reply 2]**: أكيد، أتحقق أولاً من توفر الجدول في تلك الساعة، ثم إذا كان متاحاً أجهز الحجز لكم.
 
-**[AI reply 3]**: نعم، طلب التحقق من توفر السبت القادم الساعة الواحدة ظهرًا 2 اشخاص لا يزال جارٍ التنفيذ.  
-يرجى الانتظار قليلًا، وسأراجع النتيجة وأكمل الحجز إذا كان متاحًا.
+**[AI reply 3]**: حجزتم طاولة لـ احمد حسن يوم السبت 2026-07-25 الساعة 13:00، لشخصين.
 
-**[AI reply 4]**: شكرًا لتأكيدك.  
-التحقق ما زال جارٍ، وأحتاج نتيجته قبل إنشاء الحجز.
+**[AI reply 4]**: تمام، تم تأكيد الحجز لـ أحمد حسن يوم السبت 2026-07-25 في الساعة 13:00، لشخصين.
 
-**Tool calls made** (0):
+**Tool calls made** (2):
 ```json
-[]
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Ahmed Hassan",
+      "data": "2026-07-25",
+      "ora": "13:00",
+      "persone": 2,
+      "note": "Prenotazione per 2 persone, sabato prossimo alle 13:00."
+    }
+  }
+]
 ```
 
-**Duration**: 6136ms
+**Duration**: 15904ms
+
+---
+
+### B03-030 — `multilingua`
+**Description**: AR — Fatima Al-Farsi
+
+**Reason**: reply must contain 'voice assistant' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? حاضر، سأتحقق من توفر الحجز أولاً ثم أؤكد الحجز إذا كان ممكنًا. حجزت باسم Fatima Al-Farsi يوم الأربعاء 29 يوليو الساعة 9
+
+**Full transcript**:
+
+**[User turn 1]**: مساء الخير، الأربعاء القادم الساعة التاسعة مساء لأربعة أشخاص باسم Fatima Al-Farsi
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: نعم
+
+**[AI reply 2]**: حاضر، سأتحقق من توفر الحجز أولاً ثم أؤكد الحجز إذا كان ممكنًا.
+
+**[AI reply 3]**: حجزت باسم Fatima Al-Farsi يوم الأربعاء 29 يوليو الساعة 9 مساءً لأربعة أشخاص. بالتوفيق!
+
+**[AI reply 4]**: ممتاز، الحجز تم تأكيده. إذا أردت إضافة ملاحظة، أخبرني بها.
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-29",
+      "ora": "21:00",
+      "persone": 4
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Fatima Al-Farsi",
+      "data": "2026-07-29",
+      "ora": "21:00",
+      "persone": 4,
+      "note": ""
+    }
+  }
+]
+```
+
+**Duration**: 16130ms
 
 ---
 
