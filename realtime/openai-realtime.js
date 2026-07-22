@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.37-MT-2026-07-22 caricato (Soluzione B fixed: aspetto session.updated + rimuovo "no tools" dal prompt disclosure)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.38-MT-2026-07-22 caricato (rollback + unified response: no ping-pong session, no "stop and add nothing more" bug)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -604,16 +604,6 @@ Non prendere prenotazioni.`;
           this._sessionReady = true;
           console.log(`✅ [${this.connId}] session.updated → richiedo saluto iniziale`);
           this._send({ type: 'response.create' });
-        } else if (this._pendingLanguageDisclosure === 'awaiting_session_updated_for_disclosure') {
-          // Step 2/3: la session è aggiornata con le instructions disclosure → trigger response
-          console.log(`⚖️  [${this.connId}] step 2/3: session.updated confermato → response.create per disclosure`);
-          this._pendingLanguageDisclosure = 'awaiting_disclosure_done';
-          this._send({ type: 'response.create' });
-        } else if (this._pendingLanguageDisclosure === 'awaiting_session_updated_for_restore') {
-          // Step 5/5: session ripristinata → trigger vera risposta al cliente
-          console.log(`▶️  [${this.connId}] step 5/5: session ripristinata → response.create per vera risposta`);
-          this._pendingLanguageDisclosure = false;
-          this._send({ type: 'response.create' });
         }
         break;
       case 'conversation.item.input_audio_transcription.completed':
@@ -635,18 +625,16 @@ Non prendere prenotazioni.`;
               console.log(`🌍 [${this.connId}] detected caller language: ${lang}`);
 
               if (lang !== 'it') {
-                // v7.4.37 — Soluzione B (fixed): session.update con instructions temporanee.
-                // Aspettiamo session.updated PRIMA di response.create per evitare race condition.
-                // Istruzioni SEMPLICI (senza "Do NOT call tools" che persistono nella memoria del modello).
+                // v7.4.38 — Unified response: disclosure + risposta in una singola response.create.
+                // Instructions SEMPLICI: chiediamo di iniziare con disclosure e proseguire normalmente.
+                // NO "stop and add nothing more" (causava stuck waiting).
+                // NO "Do NOT call tools" (contaminava il modello nei turni successivi).
                 const disclosureText = this._buildDisclosureText(lang);
-                console.log(`⚖️  [${this.connId}] step 1/3: session.update con instructions disclosure ${lang.toUpperCase()}`);
-                this._pendingLanguageDisclosure = 'awaiting_session_updated_for_disclosure';
-                this._pendingDisclosureText = disclosureText;
+                console.log(`⚖️  [${this.connId}] injecting mandatory ${lang.toUpperCase()} disclosure (EU AI Act Art. 50)`);
                 this._send({
-                  type: 'session.update',
-                  session: {
-                    type: 'realtime',
-                    instructions: `Your next reply must be EXACTLY these words, verbatim: "${disclosureText}"`,
+                  type: 'response.create',
+                  response: {
+                    instructions: `Your reply must begin with this exact sentence, verbatim: "${disclosureText}" — then continue naturally in ${lang.toUpperCase()} to help the caller, calling tools as needed.`,
                   },
                 });
                 break;
@@ -686,20 +674,6 @@ Non prendere prenotazioni.`;
         if (msg.response?.usage) {
           const u = msg.response.usage;
           console.log(`📊 [${this.connId}] tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
-        }
-        // v7.4.37 — Se il response.done era per la disclosure forzata,
-        // ripristino il system prompt originale via session.update (aspettando session.updated).
-        if (this._pendingLanguageDisclosure === 'awaiting_disclosure_done') {
-          console.log(`▶️  [${this.connId}] step 3/5: disclosure detta → session.update restore prompt originale`);
-          this._pendingLanguageDisclosure = 'awaiting_session_updated_for_restore';
-          this._send({
-            type: 'session.update',
-            session: {
-              type: 'realtime',
-              instructions: this._buildSystemPrompt(),
-            },
-          });
-          break;
         }
         // v7.4.10: se c'è un transfer pendente, il modello ha appena finito
         // di pronunciare la frase di saluto → possiamo far partire il transfer.
