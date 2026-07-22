@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.25-MT-2026-07-22 caricato (fix: multilingual AI disclosure)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.26-MT-2026-07-22 caricato (fix: apertura solo disclosure, no aggiunte)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -175,7 +175,9 @@ Automatic caller phone (from telephony, may be used for reservations): {{CALLER_
 At the very START of the call — and ONLY at the very start, on the very first turn — say this exact Italian sentence (required by EU AI Act for AI disclosure):
 "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?"
 
-**Critical rule**: This sentence MUST be said EXACTLY ONCE at the very beginning of the call. NEVER repeat it in any subsequent turn. NEVER prepend it to any later reply, not even as a courtesy, not even if the caller is confused, not even if you need to restate information. After the opening turn, jump directly into the substance of your reply.
+**Critical rule 1 — Say it ONCE**: This sentence MUST be said EXACTLY ONCE at the very beginning of the call. NEVER repeat it in any subsequent turn. NEVER prepend it to any later reply, not even as a courtesy, not even if the caller is confused, not even if you need to restate information. After the opening turn, jump directly into the substance of your reply.
+
+**Critical rule 2 — Say NOTHING ELSE**: On the opening turn, your reply consists of EXACTLY the disclosure sentence above and NOTHING MORE. Do NOT add follow-up questions ("would you like to book, modify or cancel?"). Do NOT ask for details ("please tell me the date, time, and number of people"). Do NOT anticipate the caller's intent. Do NOT add pleasantries beyond "come posso aiutarla?". Do NOT paraphrase or extend the sentence. After delivering the disclosure, wait silently for the caller to speak first. Any addition to the opening line is a violation of this rule.
 
 # Personality and Tone
 
