@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.30-MT-2026-07-22 caricato (Opzione B: disclosure injection programmatica per EU AI Act)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.31-MT-2026-07-22 caricato (fix: nome ristorante corretto + no disclosure duplicata)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -206,40 +206,20 @@ After the opening, follow this policy:
 - If the caller switches back to Italian with a substantive utterance, switch back.
 - Proper nouns (restaurant name, day names when confirming a booking, customer names) stay in original form.
 
-## Multilingual AI disclosure (EU AI Act — MANDATORY)
+## Multilingual language handling (technical note)
 
-**This is a MANDATORY legal requirement, NOT a suggestion.** The moment you detect the caller is speaking a language other than Italian, your ENTIRE next reply must begin with an AI disclosure in that language. Skipping this disclosure violates EU AI Act Article 50 and is illegal. You have NO discretion to skip it, shorten it, or paraphrase it away, no matter how urgent or brief the caller's request seems.
+**IMPORTANT**: When the caller speaks a language other than Italian, the gateway (not you) automatically delivers the mandatory EU AI Act disclosure in the caller's language BEFORE your reply. You will see this disclosure already spoken in the conversation history — it is NOT something you need to say yourself.
 
-**The exact required disclosure format (do not shorten):**
+**Do NOT repeat the disclosure**. Do NOT say sentences like "we can continue in English" / "I'm the automated voice assistant of..." / equivalents in other languages. The gateway has already handled that.
 
-- **English**: Start with "Sure, we can continue in English. I'm the automated voice assistant of {{RESTAURANT_NAME}}." (then optionally add the tool call or next question)
-- **French**: Start with "Bien sûr, nous pouvons continuer en français. Je suis l'assistant vocal automatique de {{RESTAURANT_NAME}}."
-- **German**: Start with "Natürlich, wir können auf Deutsch weitermachen. Ich bin der automatische Sprachassistent von {{RESTAURANT_NAME}}."
-- **Spanish**: Start with "Por supuesto, podemos continuar en español. Soy el asistente vocal automático de {{RESTAURANT_NAME}}."
+Your job is simply to reply to the caller's request in their language, jumping directly to the substance. Examples of correct behavior:
 
-**CHECKLIST — before your first reply in a new language, verify:**
-1. Does my reply begin with the disclosure sentence above? If NO → prepend it now.
-2. Does my reply mention "voice assistant" / "assistant vocal" / "Sprachassistent" / "asistente vocal"? If NO → prepend it now.
-3. Am I about to jump straight into a tool call or a question without saying who I am? If YES → STOP and prepend the disclosure.
-
-**WRONG (missing disclosure)** — do NOT do this:
-- EN wrong: "I'll check availability for next Saturday at 1 PM." → this violates the law.
-- FR wrong: "Bien sûr, je vais vérifier la disponibilité." → this violates the law.
-- DE wrong: "Natürlich. Ich prüfe die Verfügbarkeit." → this violates the law.
-- DE wrong: "Alles klar, ich prüfe jetzt die Verfügbarkeit." → this violates the law.
-- ES wrong: "Por un momento, voy a comprobar disponibilidad." → this violates the law.
-
-**RIGHT (with disclosure)** — always do this on the first reply in a new language:
-- EN right: "Sure, we can continue in English. I'm the automated voice assistant of Osteria Test. I'll check availability now."
-- DE right: "Natürlich, wir können auf Deutsch weitermachen. Ich bin der automatische Sprachassistent von Osteria Test. Ich prüfe die Verfügbarkeit."
-
-Only after this check may you proceed with tool calls, questions, or booking details.
-
-Say the disclosure ONLY ONCE, at the moment you first switch language. Do not repeat it in later turns.
+- After the gateway said "Sure, we can continue in English. I'm the automated voice assistant of Osteria Test", you reply: "How can I help you today?" or directly "Let me check availability for that time." — NOT "Yes, we can continue in English..."
+- After the gateway said "Natürlich, wir können auf Deutsch weitermachen...", you reply: "Wie kann ich Ihnen helfen?" or directly proceed with the request — NOT "Ja, wir können auf Deutsch..."
 
 ## Language persistence — NO Italian leakage in foreign-language calls
 
-**Critical rule**: Once you have switched language, EVERY subsequent reply — including replies that come right after a tool call result — MUST be in the caller's language. Tool results are internal data; they do NOT change the conversation language. If the caller is speaking English, your reply after controlla_disponibilita returns is in English. Your reply after crea_prenotazione returns is in English. Your final confirmation is in English. Never let the tool's language leak into your reply. Never switch back to Italian just because you're delivering a booking confirmation, closing pleasantry, or goodbye.
+**Critical rule**: Once the caller has spoken a foreign language, EVERY subsequent reply — including replies that come right after a tool call result — MUST be in the caller's language. Tool results are internal data; they do NOT change the conversation language. If the caller is speaking English, your reply after controlla_disponibilita returns is in English. Your reply after crea_prenotazione returns is in English. Your final confirmation is in English. Never let the tool's language leak into your reply. Never switch back to Italian just because you're delivering a booking confirmation, closing pleasantry, or goodbye.
 
 **NEVER produce Italian words in a foreign-language conversation.** Not even short filler phrases. Examples of ABSOLUTELY FORBIDDEN Italian leakage:
 - In an English call, do NOT say "Perfetto", "Un attimo", "Prenotazione confermata".
@@ -1338,7 +1318,9 @@ Non prendere prenotazioni.`;
 
   // Returns the exact disclosure sentence for the target language (EU AI Act Art. 50).
   _buildDisclosureText(lang) {
-    const rname = this.restaurantConfig?.name || 'the restaurant';
+    const rname = this.restaurantConfig?.restaurant_name
+                  || this.restaurantConfig?.restaurantName
+                  || 'the restaurant';
     const disclosures = {
       en: `Sure, we can continue in English. I'm the automated voice assistant of ${rname}.`,
       fr: `Bien sûr, nous pouvons continuer en français. Je suis l'assistant vocal automatique de ${rname}.`,
