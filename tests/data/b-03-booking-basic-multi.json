@@ -8,11 +8,28 @@
       "Yes, please confirm"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Smith"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Smith",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -24,11 +41,28 @@
       "Yes confirm"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Johnson"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Johnson",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -40,11 +74,28 @@
       "Yes please"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Brown"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Brown",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -56,11 +107,28 @@
       "Yes, confirm please"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 5
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 5
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Wilson"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Wilson",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -72,11 +140,28 @@
       "Yes confirm"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 6 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 6
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 6
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Miller"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Miller",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -88,11 +173,28 @@
       "Yes please confirm"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Davis"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Davis",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -104,11 +206,28 @@
       "Yes"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Anderson"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Anderson",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -120,11 +239,28 @@
       "Confirm please"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Taylor"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Taylor",
+      "voice assistant"
+    ],
     "replyLanguage": "en"
   },
   {
@@ -136,11 +272,28 @@
       "Oui je confirme"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Dupont"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Dupont",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -152,11 +305,28 @@
       "Oui, confirmez"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Martin"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Martin",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -168,11 +338,28 @@
       "Oui c'est bon"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Bernard"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Bernard",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -184,11 +371,28 @@
       "Oui je confirme"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 5
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 5
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Petit"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Petit",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -200,11 +404,28 @@
       "Oui confirmez"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 6 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 6
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 6
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Moreau"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Moreau",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -216,11 +437,28 @@
       "Oui confirmé"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Rousseau"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Rousseau",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -232,11 +470,28 @@
       "Oui"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Lefevre"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Lefevre",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -248,11 +503,28 @@
       "Confirmez s'il vous plaît"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Girard"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Girard",
+      "assistant vocal"
+    ],
     "replyLanguage": "fr"
   },
   {
@@ -264,11 +536,28 @@
       "Ja bitte bestätigen"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Müller"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Müller",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -280,11 +569,28 @@
       "Ja, ich bestätige"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Schmidt"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Schmidt",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -296,11 +602,28 @@
       "Ja bitte"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Weber"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Weber",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -312,11 +635,28 @@
       "Ja bestätigen"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 5
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 5
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Wagner"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Wagner",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -328,11 +668,28 @@
       "Ja bestätige"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Fischer"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Fischer",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -344,11 +701,28 @@
       "Ja"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Meyer"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Meyer",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -360,11 +734,28 @@
       "Bitte bestätigen"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Bauer"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Bauer",
+      "Sprachassistent"
+    ],
     "replyLanguage": "de"
   },
   {
@@ -376,11 +767,28 @@
       "Sí confirmo"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["García"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "García",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   },
   {
@@ -392,11 +800,28 @@
       "Sí, confirmo"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["López"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "López",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   },
   {
@@ -408,11 +833,28 @@
       "Sí"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Fernández"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Fernández",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   },
   {
@@ -424,11 +866,28 @@
       "Sí confirme"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 5 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 5
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 5
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Martínez"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Martínez",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   },
   {
@@ -440,11 +899,28 @@
       "Sí, por favor"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Rodríguez"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Rodríguez",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   },
   {
@@ -456,11 +932,28 @@
       "Sí"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Sánchez"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Sánchez",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   },
   {
@@ -472,11 +965,28 @@
       "Confirmo"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Pérez"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Pérez",
+      "asistente vocal"
+    ],
     "replyLanguage": "es"
   }
 ]
