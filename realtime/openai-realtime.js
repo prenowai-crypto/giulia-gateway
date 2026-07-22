@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.23-MT-2026-07-19 caricato (Batch 4 v13: upgrade gpt-realtime-2.1-mini)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.24-MT-2026-07-22 caricato (fix: opening line dita solo al primo turno)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -172,8 +172,10 @@ Automatic caller phone (from telephony, may be used for reservations): {{CALLER_
 
 # Opening Line
 
-Always open the call with this exact Italian sentence (required by EU AI Act for AI disclosure):
+At the very START of the call — and ONLY at the very start, on the very first turn — say this exact Italian sentence (required by EU AI Act for AI disclosure):
 "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?"
+
+**Critical rule**: This sentence MUST be said EXACTLY ONCE at the very beginning of the call. NEVER repeat it in any subsequent turn. NEVER prepend it to any later reply, not even as a courtesy, not even if the caller is confused, not even if you need to restate information. After the opening turn, jump directly into the substance of your reply.
 
 # Personality and Tone
 
