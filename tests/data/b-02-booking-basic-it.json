@@ -2,10 +2,9 @@
   {
     "id": "B02-001",
     "category": "booking-basic",
-    "description": "Pranzo sabato 13:00 per 2 persone — Rossi",
+    "description": "Pranzo sabato prossimo 13:00 per 2 persone — TestB02-Rossi",
     "userTurns": [
-      "Buongiorno, vorrei prenotare un tavolo per sabato prossimo alle 13 per 2 persone",
-      "A nome Rossi",
+      "Buongiorno, vorrei prenotare un tavolo per sabato prossimo alle 13 per 2 persone, a nome TestB02-Rossi",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -13,16 +12,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Rossi"],
+    "replyMustContain": ["TestB02-Rossi"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-002",
     "category": "booking-basic",
-    "description": "Pranzo sabato 12:30 per 4 persone — Bianchi",
+    "description": "Pranzo domenica prossima 12:30 per 4 persone — TestB02-Bianchi",
     "userTurns": [
-      "Vorrei prenotare per sabato a pranzo, alle 12:30, siamo in 4",
-      "Bianchi",
+      "Vorrei prenotare per domenica prossima a pranzo, alle 12:30, siamo in 4, a nome TestB02-Bianchi",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -30,16 +28,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Bianchi"],
+    "replyMustContain": ["TestB02-Bianchi"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-003",
     "category": "booking-basic",
-    "description": "Pranzo domenica 12:00 per 3 persone — Verdi",
+    "description": "Pranzo martedì prossimo 12:00 per 3 persone — TestB02-Verdi",
     "userTurns": [
-      "Buongiorno, un tavolo per domenica prossima a mezzogiorno per 3 persone",
-      "Verdi, grazie",
+      "Buongiorno, un tavolo per martedì prossimo a mezzogiorno per 3 persone, il nome è TestB02-Verdi",
       "Sì va bene"
     ],
     "expectedToolCalls": [
@@ -47,16 +44,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Verdi"],
+    "replyMustContain": ["TestB02-Verdi"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-004",
     "category": "booking-basic",
-    "description": "Pranzo domenica 13:30 per 6 persone (gruppo medio) — Colombo",
+    "description": "Pranzo mercoledì prossimo 13:30 per 6 persone (gruppo medio) — TestB02-Colombo",
     "userTurns": [
-      "Salve, vorrei un tavolo per domenica alle 13:30 per 6 persone",
-      "A nome Colombo",
+      "Salve, vorrei un tavolo per mercoledì prossimo alle 13:30 per 6 persone, a nome TestB02-Colombo",
       "Confermo, grazie"
     ],
     "expectedToolCalls": [
@@ -64,16 +60,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Colombo"],
+    "replyMustContain": ["TestB02-Colombo"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-005",
     "category": "booking-basic",
-    "description": "Pranzo martedì 13:00 per 2 persone — Ferrari",
+    "description": "Pranzo sabato prossimo 12:00 per 2 persone — TestB02-Ferrari",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per martedì prossimo a pranzo per 2 persone, alle 13",
-      "Ferrari",
+      "Buongiorno, vorrei prenotare per sabato prossimo a pranzo per 2 persone, alle 12, il nome è TestB02-Ferrari",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -81,16 +76,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Ferrari"],
+    "replyMustContain": ["TestB02-Ferrari"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-006",
     "category": "booking-basic",
-    "description": "Pranzo sabato 14:00 per 5 persone — Ricci",
+    "description": "Pranzo domenica prossima 14:00 per 5 persone — TestB02-Ricci",
     "userTurns": [
-      "Vorrei prenotare sabato alle 14 per 5 persone",
-      "Il nome è Ricci",
+      "Vorrei prenotare domenica prossima alle 14 per 5 persone, a nome TestB02-Ricci",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -98,16 +92,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Ricci"],
+    "replyMustContain": ["TestB02-Ricci"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-007",
     "category": "booking-basic",
-    "description": "Pranzo domenica 12:15 (orario preciso non standard) per 4 persone — Marino",
+    "description": "Pranzo martedì prossimo 12:15 (orario preciso non standard) per 4 persone — TestB02-Marino",
     "userTurns": [
-      "Vorrei un tavolo per domenica alle 12 e un quarto, per 4 persone",
-      "Marino",
+      "Vorrei un tavolo per martedì prossimo alle 12 e un quarto, per 4 persone, a nome TestB02-Marino",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -115,16 +108,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Marino"],
+    "replyMustContain": ["TestB02-Marino"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-008",
     "category": "booking-basic",
-    "description": "Pranzo mercoledì 13:00 per 2 persone — Greco",
+    "description": "Pranzo mercoledì prossimo 12:30 per 2 persone — TestB02-Greco",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per mercoledì prossimo, pranzo, alle 13, per 2 persone",
-      "Nome Greco",
+      "Buongiorno, vorrei prenotare per mercoledì prossimo, pranzo, alle 12:30, per 2 persone, a nome TestB02-Greco",
       "Va bene"
     ],
     "expectedToolCalls": [
@@ -132,16 +124,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Greco"],
+    "replyMustContain": ["TestB02-Greco"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-009",
     "category": "booking-basic",
-    "description": "Pranzo sabato 12:30 per 8 persone (gruppo un po' più grande, sotto large_group_threshold) — Costa",
+    "description": "Pranzo sabato prossimo 14:00 per 8 persone (sotto large_group_threshold) — TestB02-Costa",
     "userTurns": [
-      "Salve, vorrei un tavolo per sabato alle 12:30, siamo 8 persone",
-      "Il cognome è Costa",
+      "Salve, vorrei un tavolo per sabato prossimo alle 14, siamo 8 persone, il cognome è TestB02-Costa",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -149,16 +140,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 8 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Costa"],
+    "replyMustContain": ["TestB02-Costa"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-010",
     "category": "booking-basic",
-    "description": "Pranzo martedì 14:15 (bordo range pranzo, poco prima chiusura 14:30) per 3 persone — Rinaldi",
+    "description": "Pranzo domenica prossima 13:00 per 3 persone — TestB02-Rinaldi",
     "userTurns": [
-      "Vorrei prenotare martedì alle 14:15 per 3 persone",
-      "Rinaldi",
+      "Vorrei prenotare domenica prossima alle 13 per 3 persone, a nome TestB02-Rinaldi",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -166,16 +156,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Rinaldi"],
+    "replyMustContain": ["TestB02-Rinaldi"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-011",
     "category": "booking-basic",
-    "description": "Cena sabato 21:00 per 2 persone — Russo",
+    "description": "Cena martedì prossimo 21:00 per 2 persone — TestB02-Russo",
     "userTurns": [
-      "Buonasera, vorrei prenotare sabato prossimo alle 21 per 2 persone",
-      "Russo",
+      "Buonasera, vorrei prenotare martedì prossimo alle 21 per 2 persone, a nome TestB02-Russo",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -183,16 +172,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Russo"],
+    "replyMustContain": ["TestB02-Russo"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-012",
     "category": "booking-basic",
-    "description": "Cena sabato 21:30 per 4 persone — Esposito",
+    "description": "Cena mercoledì prossimo 21:30 per 4 persone — TestB02-Esposito",
     "userTurns": [
-      "Vorrei un tavolo sabato alle 21:30, siamo 4",
-      "Il nome è Esposito",
+      "Vorrei un tavolo mercoledì prossimo alle 21:30, siamo 4, il nome è TestB02-Esposito",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -200,16 +188,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Esposito"],
+    "replyMustContain": ["TestB02-Esposito"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-013",
     "category": "booking-basic",
-    "description": "Cena sabato 22:00 per 3 persone — Barbieri",
+    "description": "Cena giovedì prossimo 22:00 per 3 persone — TestB02-Barbieri",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato alle 22 per 3",
-      "Barbieri",
+      "Buonasera, vorrei prenotare per giovedì prossimo alle 22 per 3 persone, a nome TestB02-Barbieri",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -217,16 +204,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Barbieri"],
+    "replyMustContain": ["TestB02-Barbieri"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-014",
     "category": "booking-basic",
-    "description": "Cena sabato 22:15 per 5 persone — Fontana",
+    "description": "Cena venerdì prossimo 22:15 per 5 persone — TestB02-Fontana",
     "userTurns": [
-      "Vorrei prenotare sabato alle 22:15 per 5 persone",
-      "Nome Fontana",
+      "Vorrei prenotare venerdì prossimo alle 22:15 per 5 persone, il nome è TestB02-Fontana",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -234,16 +220,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Fontana"],
+    "replyMustContain": ["TestB02-Fontana"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-015",
     "category": "booking-basic",
-    "description": "Cena domenica 21:00 per 6 persone — Sanna",
+    "description": "Cena sabato prossimo 21:00 per 6 persone — TestB02-Sanna",
     "userTurns": [
-      "Buonasera, vorrei prenotare domenica sera alle 21 per 6 persone",
-      "Sanna",
+      "Buonasera, vorrei prenotare sabato prossimo sera alle 21 per 6 persone, a nome TestB02-Sanna",
       "Sì va bene"
     ],
     "expectedToolCalls": [
@@ -251,16 +236,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Sanna"],
+    "replyMustContain": ["TestB02-Sanna"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-016",
     "category": "booking-basic",
-    "description": "Cena domenica 22:30 (bordo chiusura cena) per 2 persone — Palumbo",
+    "description": "Cena domenica prossima 22:30 (bordo chiusura cena) per 2 persone — TestB02-Palumbo",
     "userTurns": [
-      "Vorrei un tavolo domenica alle 22:30 per 2 persone",
-      "Palumbo",
+      "Vorrei un tavolo domenica prossima alle 22:30 per 2 persone, a nome TestB02-Palumbo",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -268,16 +252,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Palumbo"],
+    "replyMustContain": ["TestB02-Palumbo"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-017",
     "category": "booking-basic",
-    "description": "Cena martedì 21:00 (feriale) per 2 persone — Gentile",
+    "description": "Cena martedì prossimo 22:00 per 2 persone — TestB02-Gentile",
     "userTurns": [
-      "Vorrei prenotare martedì sera alle 21 per 2",
-      "Gentile",
+      "Vorrei prenotare martedì prossimo sera alle 22 per 2 persone, a nome TestB02-Gentile",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -285,16 +268,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Gentile"],
+    "replyMustContain": ["TestB02-Gentile"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-018",
     "category": "booking-basic",
-    "description": "Cena mercoledì 21:30 per 4 persone — Piras",
+    "description": "Cena mercoledì prossimo 22:15 per 4 persone — TestB02-Piras",
     "userTurns": [
-      "Salve, vorrei un tavolo per mercoledì sera alle 21:30 per 4 persone",
-      "Piras",
+      "Salve, vorrei un tavolo per mercoledì prossimo sera alle 22:15 per 4 persone, il nome è TestB02-Piras",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -302,16 +284,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Piras"],
+    "replyMustContain": ["TestB02-Piras"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-019",
     "category": "booking-basic",
-    "description": "Cena giovedì 21:00 (giovedì è solo cena, verifica no pranzo confusione) per 3 persone — Rizzo",
+    "description": "Cena giovedì prossimo 21:30 (giovedì è solo cena) per 3 persone — TestB02-Rizzo",
     "userTurns": [
-      "Buonasera, vorrei prenotare giovedì sera alle 21 per 3 persone",
-      "Rizzo",
+      "Buonasera, vorrei prenotare giovedì prossimo sera alle 21:30 per 3 persone, a nome TestB02-Rizzo",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -319,16 +300,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Rizzo"],
+    "replyMustContain": ["TestB02-Rizzo"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-020",
     "category": "booking-basic",
-    "description": "Cena venerdì 21:30 (venerdì è solo cena) per 5 persone — Villa",
+    "description": "Cena venerdì prossimo 21:00 (venerdì è solo cena) per 5 persone — TestB02-Villa",
     "userTurns": [
-      "Vorrei un tavolo venerdì sera alle 21:30 per 5 persone",
-      "Villa",
+      "Vorrei un tavolo venerdì prossimo sera alle 21 per 5 persone, a nome TestB02-Villa",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -336,33 +316,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 5 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Villa"],
+    "replyMustContain": ["TestB02-Villa"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-021",
     "category": "booking-basic",
-    "description": "Variante linguistica: 'per domani sera' (deve derivare data corretta)",
-    "userTurns": [
-      "Vorrei prenotare per domani sera alle 21 per 2 persone",
-      "Nome Marchetti",
-      "Sì confermo"
-    ],
-    "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
-    ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Marchetti"],
-    "replyLanguage": "it"
-  },
-  {
-    "id": "B02-022",
-    "category": "booking-basic",
     "description": "Variante linguistica: numero persone scritto in lettere ('quattro')",
     "userTurns": [
-      "Buonasera, un tavolo per quattro sabato sera alle 21:30",
-      "Nome Ferri",
+      "Buonasera, un tavolo per quattro martedì prossimo sera alle 21:30, a nome TestB02-Marchetti",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -370,34 +332,15 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Ferri"],
+    "replyMustContain": ["TestB02-Marchetti"],
     "replyLanguage": "it"
   },
   {
-    "id": "B02-023",
-    "category": "booking-basic",
-    "description": "Variante linguistica: orario colloquiale 'otto e mezza' (→ 20:30, deve chiedere chiarimento perché fuori window cena 21:00-22:30)",
-    "userTurns": [
-      "Vorrei prenotare sabato alle otto e mezza di sera per 2 persone",
-      "Facciamo alle 21 allora",
-      "Nome Longo",
-      "Sì confermo"
-    ],
-    "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
-    ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Longo"],
-    "replyLanguage": "it"
-  },
-  {
-    "id": "B02-024",
+    "id": "B02-022",
     "category": "booking-basic",
     "description": "Variante linguistica: orario colloquiale 'nove e un quarto' (→ 21:15)",
     "userTurns": [
-      "Vorrei un tavolo sabato alle nove e un quarto di sera per 3 persone",
-      "Il nome è Gatti",
+      "Vorrei un tavolo mercoledì prossimo alle nove e un quarto di sera per 3 persone, a nome TestB02-Ferri",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -405,34 +348,67 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Gatti"],
+    "replyMustContain": ["TestB02-Ferri"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B02-023",
+    "category": "booking-basic",
+    "description": "Variante linguistica: orario 'nove e mezza' (→ 21:30)",
+    "userTurns": [
+      "Vorrei prenotare giovedì prossimo alle nove e mezza di sera per 2 persone, a nome TestB02-Longo",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["TestB02-Longo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B02-024",
+    "category": "booking-basic",
+    "description": "Variante linguistica: orario 'l'una' (→ 13:00 pranzo)",
+    "userTurns": [
+      "Vorrei un tavolo sabato prossimo all'una del pomeriggio per 3 persone, a nome TestB02-Gatti",
+      "Sì"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["TestB02-Gatti"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-025",
     "category": "booking-basic",
-    "description": "Variante linguistica: 'un tavolo per stasera' — modello deve accettare o proporre alternative se ora già passata; usiamo 'stasera tardi'",
+    "description": "Variante linguistica: numero 'sei' scritto in lettere",
     "userTurns": [
-      "Vorrei prenotare stasera tardi, verso le 22, per 2 persone",
-      "Serra",
+      "Buonasera, vorrei prenotare venerdì prossimo alle 22 per sei persone, a nome TestB02-Serra",
       "Confermo"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } }
+      { "name": "controlla_disponibilita", "argsContain": { "persone": 6 } },
+      { "name": "crea_prenotazione", "argsContain": { "persone": 6 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["TestB02-Serra"],
     "replyLanguage": "it"
   },
   {
     "id": "B02-026",
     "category": "booking-basic",
-    "description": "Flusso conversazionale: cliente dà info in ordine sparso (persone → data → ora → nome)",
+    "description": "Flusso conversazionale: cliente dà info in ordine sparso",
     "userTurns": [
       "Salve, vorrei prenotare",
       "Siamo in 3",
-      "Sabato prossimo",
+      "Domenica prossima",
       "Alle 21:30",
-      "A nome De Luca",
+      "A nome TestB02-De-Luca",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -440,7 +416,7 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 3 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["De Luca"],
+    "replyMustContain": ["TestB02-De-Luca"],
     "replyLanguage": "it"
   },
   {
@@ -448,7 +424,7 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente conferma dopo recap dei dati",
     "userTurns": [
-      "Vorrei prenotare sabato alle 21 per 4 persone, a nome Mancini",
+      "Vorrei prenotare martedì prossimo alle 21 per 4 persone, a nome TestB02-Mancini",
       "Sì, va bene tutto"
     ],
     "expectedToolCalls": [
@@ -456,7 +432,7 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Mancini"],
+    "replyMustContain": ["TestB02-Mancini"],
     "replyLanguage": "it"
   },
   {
@@ -464,8 +440,7 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente aggiunge nota (compleanno)",
     "userTurns": [
-      "Vorrei prenotare sabato alle 21:30 per 4 persone",
-      "Nome Conti",
+      "Vorrei prenotare mercoledì prossimo alle 22 per 4 persone, il nome è TestB02-Conti",
       "Volevo segnalare che è un compleanno",
       "Sì confermo"
     ],
@@ -474,7 +449,7 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Conti"],
+    "replyMustContain": ["TestB02-Conti"],
     "replyLanguage": "it"
   },
   {
@@ -482,9 +457,9 @@
     "category": "booking-basic",
     "description": "Flusso conversazionale: cliente corregge il numero di persone (da 3 a 4)",
     "userTurns": [
-      "Salve, vorrei prenotare sabato alle 21 per 3 persone",
+      "Salve, vorrei prenotare giovedì prossimo alle 22 per 3 persone",
       "Anzi, aspetta, siamo in 4",
-      "Nome Rinaldi",
+      "A nome TestB02-Rinaldi2",
       "Confermo"
     ],
     "expectedToolCalls": [
@@ -492,7 +467,7 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 4 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Rinaldi"],
+    "replyMustContain": ["TestB02-Rinaldi2"],
     "replyLanguage": "it"
   },
   {
@@ -501,8 +476,7 @@
     "description": "Flusso conversazionale: cliente saluta prima di iniziare",
     "userTurns": [
       "Buongiorno! Come state? Volevo prenotare un tavolo",
-      "Sabato prossimo alle 21 per 2 persone",
-      "Il nome è Testa",
+      "Venerdì prossimo alle 22:30 per 2 persone, a nome TestB02-Testa",
       "Sì grazie confermo"
     ],
     "expectedToolCalls": [
@@ -510,7 +484,7 @@
       { "name": "crea_prenotazione", "argsContain": { "persone": 2 } }
     ],
     "forbiddenToolCalls": ["cancella_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Testa"],
+    "replyMustContain": ["TestB02-Testa"],
     "replyLanguage": "it"
   }
 ]
