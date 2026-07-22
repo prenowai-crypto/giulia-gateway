@@ -1,13 +1,10 @@
 # Summary — Runner B
-Run: 2026-07-22T14:39:12.616Z | Model: gpt-realtime-2.1-mini
+Run: 2026-07-22T15:04:56.127Z | Model: gpt-realtime-2.1-mini
 
-**Total**: 33 | **Passed**: 32 (97%) | **Failed**: 1
+**Total**: 30 | **Passed**: 26 (87%) | **Failed**: 4
 
 ## By category
 
 | Category | Total | Passed | Failed | Pass rate |
 |---|---|---|---|---|
-| `booking-basic` | 30 | 29 | 1 | 97% |
-| `booking-flow` | 1 | 1 | 0 | 100% |
-| `multilingua` | 1 | 1 | 0 | 100% |
-| `security` | 1 | 1 | 0 | 100% |
+| `multilingua` | 30 | 26 | 4 | 87% |
