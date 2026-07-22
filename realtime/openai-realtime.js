@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.29-MT-2026-07-22 caricato (fix: no italian leak in foreign calls + esempi negativi disclosure)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.30-MT-2026-07-22 caricato (Opzione B: disclosure injection programmatica per EU AI Act)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -517,6 +517,10 @@ export class OpenAIRealtimeClient {
     this._restaurantInfo   = null;
     this._pendingCalls     = new Map();
 
+    // v7.4.30 — EU AI Act disclosure injection (Opzione B)
+    this._firstUserTurnHandled = false;
+    this._pendingLanguageDisclosure = false;
+
     this._toolsEnabled = !!(
       this.restaurantConfig &&
       this.restaurantConfig.active !== false &&
@@ -563,7 +567,7 @@ export class OpenAIRealtimeClient {
           turn_detection: {
             type: 'semantic_vad',
             eagerness: 'auto',
-            create_response: true,
+            create_response: false,
             interrupt_response: true,
           },
           noise_reduction: { type: 'far_field' },
@@ -663,6 +667,31 @@ Non prendere prenotazioni.`;
             } else {
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
+
+            // v7.4.30 — EU AI Act disclosure injection (Opzione B)
+            // Detect language on first substantive user turn and force disclosure
+            if (!this._firstUserTurnHandled && !this._isGarbage(t)) {
+              this._firstUserTurnHandled = true;
+              const lang = this._detectLanguage(t);
+              console.log(`🌍 [${this.connId}] detected caller language: ${lang}`);
+
+              if (lang !== 'it') {
+                // Force disclosure via response.create with explicit instructions
+                this._pendingLanguageDisclosure = true;
+                const disclosureText = this._buildDisclosureText(lang);
+                console.log(`⚖️  [${this.connId}] injecting mandatory ${lang.toUpperCase()} disclosure (EU AI Act Art. 50)`);
+                this._send({
+                  type: 'response.create',
+                  response: {
+                    instructions: `You MUST say EXACTLY this sentence, verbatim, in ${lang.toUpperCase()}, then stop and add nothing more: "${disclosureText}"`,
+                  },
+                });
+                break;
+              }
+            }
+
+            // Trigger normal response (VAD auto-response is disabled)
+            this._send({ type: 'response.create' });
           }
         }
         break;
@@ -694,6 +723,14 @@ Non prendere prenotazioni.`;
         if (msg.response?.usage) {
           const u = msg.response.usage;
           console.log(`📊 [${this.connId}] tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
+        }
+        // v7.4.30: if this response.done is for the mandatory disclosure,
+        // now trigger the actual reply to the caller's request.
+        if (this._pendingLanguageDisclosure) {
+          this._pendingLanguageDisclosure = false;
+          console.log(`▶️  [${this.connId}] disclosure delivered → triggering actual reply`);
+          this._send({ type: 'response.create' });
+          break;
         }
         // v7.4.10: se c'è un transfer pendente, il modello ha appena finito
         // di pronunciare la frase di saluto → possiamo far partire il transfer.
@@ -1278,6 +1315,37 @@ Non prendere prenotazioni.`;
     }
     const words = s.replace(/[.,!?]/g, '').split(/\s+/).filter(w => w.length > 1);
     return words.length === 0;
+  }
+
+  // v7.4.30 — EU AI Act disclosure injection (Opzione B)
+  // Detects the caller's language from the first substantive transcript.
+  // Order matters: check more specific languages first (they have distinctive words),
+  // fall back to Italian by default (which is the restaurant's default language).
+  _detectLanguage(text) {
+    if (!text) return 'it';
+    const t = text.toLowerCase();
+    // French markers
+    if (/\b(bonjour|bonsoir|je voudrais|réserver|réservation|s'il vous plaît|au nom de|voudrais|merci)\b/.test(t)) return 'fr';
+    // German markers
+    if (/\b(guten tag|guten abend|ich möchte|reservieren|reservierung|nächsten|auf den namen|bitte|danke)\b/.test(t)) return 'de';
+    // Spanish markers
+    if (/\b(buenos días|buenas noches|buenas tardes|quisiera|reservar|reserva|a nombre de|por favor|gracias)\b/.test(t)) return 'es';
+    // English markers
+    if (/\b(hello|good morning|good evening|good afternoon|i would like|i'd like|book a table|under the name|thanks|reservation)\b/.test(t)) return 'en';
+    if (/^hi[\s,.!?]/.test(t) || /\bhi\b/.test(t)) return 'en';
+    return 'it';
+  }
+
+  // Returns the exact disclosure sentence for the target language (EU AI Act Art. 50).
+  _buildDisclosureText(lang) {
+    const rname = this.restaurantConfig?.name || 'the restaurant';
+    const disclosures = {
+      en: `Sure, we can continue in English. I'm the automated voice assistant of ${rname}.`,
+      fr: `Bien sûr, nous pouvons continuer en français. Je suis l'assistant vocal automatique de ${rname}.`,
+      de: `Natürlich, wir können auf Deutsch weitermachen. Ich bin der automatische Sprachassistent von ${rname}.`,
+      es: `Por supuesto, podemos continuar en español. Soy el asistente vocal automático de ${rname}.`,
+    };
+    return disclosures[lang] || disclosures.en;
   }
 
   async _fetchRestaurantInfo() {
