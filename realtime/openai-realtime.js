@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.35-MT-2026-07-22 caricato (fix: disclosure + reply unificati in una response, no più stuck waiting)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.36-MT-2026-07-22 caricato (Soluzione B: session.update per disclosure system-level, poi restore + response.create)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -625,16 +625,21 @@ Non prendere prenotazioni.`;
               console.log(`🌍 [${this.connId}] detected caller language: ${lang}`);
 
               if (lang !== 'it') {
-                // v7.4.35 — UNIFIED response: disclosure + normal reply in one shot.
-                // Avoids "stuck waiting" bug with two separate response.create calls.
+                // v7.4.36 — Soluzione B: session.update con instructions temporanee
+                // (system-level = strict rules), poi response.create blank, poi ripristino.
+                // Le instructions in response.create sono trattate come "guidance" dal modello
+                // (bug confermato da OpenAI Support). Le session instructions sono strict rules.
                 const disclosureText = this._buildDisclosureText(lang);
-                console.log(`⚖️  [${this.connId}] injecting mandatory ${lang.toUpperCase()} disclosure (EU AI Act Art. 50)`);
+                console.log(`⚖️  [${this.connId}] injecting mandatory ${lang.toUpperCase()} disclosure via session.update (EU AI Act Art. 50)`);
+                this._pendingLanguageDisclosure = true;
                 this._send({
-                  type: 'response.create',
-                  response: {
-                    instructions: `Your reply MUST begin verbatim with this exact sentence: "${disclosureText}" — do NOT paraphrase, do NOT shorten it, do NOT omit it. After you finish this sentence, continue naturally by responding to the caller's request following your normal system prompt: if you need to check availability or create a booking, call the appropriate tool. Reply in ${lang.toUpperCase()}.`,
+                  type: 'session.update',
+                  session: {
+                    type: 'realtime',
+                    instructions: `Your ENTIRE next reply MUST be EXACTLY these words, verbatim, with no additions, no paraphrasing, no changes: "${disclosureText}". Do NOT call any tools. Do NOT say anything else. Do NOT translate. Just say this exact sentence and stop.`,
                   },
                 });
+                this._send({ type: 'response.create' });
                 break;
               }
             }
@@ -672,6 +677,21 @@ Non prendere prenotazioni.`;
         if (msg.response?.usage) {
           const u = msg.response.usage;
           console.log(`📊 [${this.connId}] tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
+        }
+        // v7.4.36 — Soluzione B: se il response.done era per la disclosure forzata,
+        // ripristino il system prompt originale (via session.update) e triggero la vera risposta.
+        if (this._pendingLanguageDisclosure) {
+          this._pendingLanguageDisclosure = false;
+          console.log(`▶️  [${this.connId}] disclosure delivered → restoring original session instructions`);
+          this._send({
+            type: 'session.update',
+            session: {
+              type: 'realtime',
+              instructions: this._buildSystemPrompt(),
+            },
+          });
+          this._send({ type: 'response.create' });
+          break;
         }
         // v7.4.10: se c'è un transfer pendente, il modello ha appena finito
         // di pronunciare la frase di saluto → possiamo far partire il transfer.
