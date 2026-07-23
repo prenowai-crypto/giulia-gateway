@@ -622,7 +622,7 @@
     ],
     "replyMustContain": [
       "Nowak",
-      "voice assistant"
+      "asystent głosowy"
     ]
   },
   {
@@ -654,7 +654,7 @@
     ],
     "replyMustContain": [
       "Kowalska",
-      "voice assistant"
+      "asystent głosowy"
     ]
   },
   {
@@ -686,7 +686,7 @@
     ],
     "replyMustContain": [
       "Zieliński",
-      "voice assistant"
+      "asystent głosowy"
     ]
   },
   {
@@ -717,8 +717,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Petrov",
-      "voice assistant"
+      "голосовой"
     ]
   },
   {
@@ -749,8 +748,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Ivanova",
-      "voice assistant"
+      "голосовой"
     ]
   },
   {
@@ -781,8 +779,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Volkov",
-      "voice assistant"
+      "голосовой"
     ]
   },
   {
@@ -813,8 +810,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Tanaka",
-      "voice assistant"
+      "アシスタント"
     ]
   },
   {
@@ -845,8 +841,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Sato",
-      "voice assistant"
+      "アシスタント"
     ]
   },
   {
@@ -877,8 +872,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Wei",
-      "voice assistant"
+      "语音助手"
     ]
   },
   {
@@ -909,8 +903,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Ming",
-      "voice assistant"
+      "语音助手"
     ]
   },
   {
@@ -941,8 +934,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Hassan",
-      "voice assistant"
+      "المساعد الصوتي"
     ]
   },
   {
@@ -973,8 +965,7 @@
       "richiedi_evento"
     ],
     "replyMustContain": [
-      "Al-Farsi",
-      "voice assistant"
+      "المساعد الصوتي"
     ]
   }
 ]
