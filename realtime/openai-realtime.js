@@ -23,7 +23,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.38-MT-2026-07-22 caricato (rollback + unified response: no ping-pong session, no "stop and add nothing more" bug)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.39-MT-2026-07-22 caricato (disclosure via prompt: apertura ripetuta nella lingua del cliente, no LLM detection, no injection)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -192,15 +192,52 @@ Every reply is 1-2 short sentences, 5-20 words. Never longer unless the caller a
 
 # Language
 
-The opening line is always Italian (delivered as the first turn). After that, reply in the same language as the caller's most recent message.
+## The opening line (turn 1) — ALWAYS Italian
 
-- If the caller speaks Italian, reply in Italian.
-- If the caller speaks another language (English, French, German, Spanish, etc.), reply in that language and keep speaking that language for the rest of the call.
+At the very start of the call, your first reply is ALWAYS this exact Italian sentence:
+"Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?"
+
+Say it exactly, once, and nothing else in turn 1.
+
+## When the caller replies in a foreign language (turn 2 and onward)
+
+If the caller's first response is NOT in Italian (English, French, German, Spanish, Portuguese, Dutch, or any other language), you MUST do these two things IN THIS ORDER, in a SINGLE reply:
+
+1. **First**, repeat the same opening sentence, translated into the caller's language. This is exactly the same content as your Italian opening — just in the caller's language. It serves as the mandatory AI disclosure (EU AI Act Art. 50) and is NON-NEGOTIABLE.
+
+2. **Then**, in the SAME reply, respond to the caller's request (call tools as needed, continue the booking flow normally).
+
+### Exact translated openings to use verbatim:
+
+- **English**: "Hello, I am the automated voice assistant of {{RESTAURANT_NAME}}, how can I help you?"
+- **French**: "Bonjour, je suis l'assistant vocal automatique de {{RESTAURANT_NAME}}, comment puis-je vous aider ?"
+- **German**: "Hallo, ich bin der automatische Sprachassistent von {{RESTAURANT_NAME}}, wie kann ich Ihnen helfen?"
+- **Spanish**: "Hola, soy el asistente vocal automático de {{RESTAURANT_NAME}}, ¿en qué puedo ayudarle?"
+- **Portuguese**: "Olá, sou o assistente vocal automático de {{RESTAURANT_NAME}}, como posso ajudá-lo?"
+- **Dutch**: "Hallo, ik ben de geautomatiseerde stemassistent van {{RESTAURANT_NAME}}, hoe kan ik u helpen?"
+- **Other languages**: Translate the same opening sentence into the caller's language yourself.
+
+### Concrete example (English caller):
+
+Turn 1 (you): "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?"
+Turn 2 (caller): "Good morning, I'd like to book a table for Saturday at 1 PM for 2 people, name John Smith."
+Turn 3 (you): "Hello, I am the automated voice assistant of Osteria Test, how can I help you? Let me check availability for Saturday at 1 PM for 2 people." [then call controlla_disponibilita]
+
+### Concrete example (Spanish caller):
+
+Turn 1 (you): "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?"
+Turn 2 (caller): "Buenos días, quisiera reservar una mesa para el sábado a las 13 para 2 personas, a nombre de Carlos García."
+Turn 3 (you): "Hola, soy el asistente vocal automático de Osteria Test, ¿en qué puedo ayudarle? Voy a comprobar la disponibilidad para el sábado a las 13 para 2 personas." [then call controlla_disponibilita]
+
+## Language persistence
+
+Once you have switched language (turn 3 onward), keep speaking that language for the rest of the call. Every reply — including after tool results, confirmations, closings — is in the caller's language.
+
 - Never mix languages in the same sentence.
-- Proper nouns (restaurant name, customer names, day names when confirming a booking) stay in original form.
-- Every reply — including replies after tool calls, confirmations, and closings — is in the caller's current language. Tool results are internal data; they do NOT change the conversation language.
+- Proper nouns (restaurant name, customer names, day names in booking confirmations) stay in original form.
+- Tool results are internal data and never change the conversation language.
 
-**Note**: When the caller speaks a foreign language, an AI disclosure sentence is automatically delivered by the system before your reply. You will see it in the conversation history. Do not repeat it, do not paraphrase it, do not acknowledge it. Just proceed directly with substantive help for the caller's request.
+If the caller switches back to Italian with a substantive utterance, switch back with them.
 
 # Reasoning
 
@@ -466,10 +503,6 @@ export class OpenAIRealtimeClient {
     this._restaurantInfo   = null;
     this._pendingCalls     = new Map();
 
-    // v7.4.30 — EU AI Act disclosure injection (Opzione B)
-    this._firstUserTurnHandled = false;
-    this._pendingLanguageDisclosure = false;
-
     this._toolsEnabled = !!(
       this.restaurantConfig &&
       this.restaurantConfig.active !== false &&
@@ -516,7 +549,7 @@ export class OpenAIRealtimeClient {
           turn_detection: {
             type: 'semantic_vad',
             eagerness: 'auto',
-            create_response: false,
+            create_response: true,
             interrupt_response: true,
           },
           noise_reduction: { type: 'far_field' },
@@ -616,33 +649,8 @@ Non prendere prenotazioni.`;
             } else {
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
-
-            // v7.4.30 → v7.4.33 — EU AI Act disclosure injection (Opzione B)
-            // On first substantive user turn, detect language via LLM and force disclosure if needed.
-            if (!this._firstUserTurnHandled && !this._isGarbage(t)) {
-              this._firstUserTurnHandled = true;
-              const lang = await this._detectLanguageWithLLM(t);
-              console.log(`🌍 [${this.connId}] detected caller language: ${lang}`);
-
-              if (lang !== 'it') {
-                // v7.4.38 — Unified response: disclosure + risposta in una singola response.create.
-                // Instructions SEMPLICI: chiediamo di iniziare con disclosure e proseguire normalmente.
-                // NO "stop and add nothing more" (causava stuck waiting).
-                // NO "Do NOT call tools" (contaminava il modello nei turni successivi).
-                const disclosureText = this._buildDisclosureText(lang);
-                console.log(`⚖️  [${this.connId}] injecting mandatory ${lang.toUpperCase()} disclosure (EU AI Act Art. 50)`);
-                this._send({
-                  type: 'response.create',
-                  response: {
-                    instructions: `Your reply must begin with this exact sentence, verbatim: "${disclosureText}" — then continue naturally in ${lang.toUpperCase()} to help the caller, calling tools as needed.`,
-                  },
-                });
-                break;
-              }
-            }
-
-            // Trigger normal response (VAD auto-response is disabled)
-            this._send({ type: 'response.create' });
+            // v7.4.39 — Disclosure gestita dal prompt (opening ripetuta nella lingua del cliente).
+            // Il VAD auto-genera la response, nessuna injection code-side necessaria.
           }
         }
         break;
@@ -1258,76 +1266,6 @@ Non prendere prenotazioni.`;
     }
     const words = s.replace(/[.,!?]/g, '').split(/\s+/).filter(w => w.length > 1);
     return words.length === 0;
-  }
-
-  // v7.4.33 — LLM-based language detection (universal, replaces brittle regex)
-  // Uses gpt-4o-mini to identify the caller's language from the first transcript.
-  // Falls back to _detectLanguageRegex if the LLM call fails.
-  async _detectLanguageWithLLM(text) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a language detector. Reply with ONLY the ISO 639-1 code (2 lowercase letters) of the language of the user text. Examples: it, en, fr, de, es, pt, nl, ru, zh, ja, ar, ko. No explanation, no punctuation, no quotes. Just 2 letters.',
-            },
-            { role: 'user', content: text },
-          ],
-          max_tokens: 5,
-          temperature: 0,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const raw = (data.choices?.[0]?.message?.content || '').trim().toLowerCase();
-      const lang = raw.match(/^[a-z]{2}/)?.[0];
-      if (lang) return lang;
-      console.warn(`⚠️  [${this.connId}] LLM returned unexpected lang: "${raw}", using regex fallback`);
-      return this._detectLanguageRegex(text);
-    } catch (e) {
-      console.warn(`⚠️  [${this.connId}] LLM detection failed (${e.message}), using regex fallback`);
-      return this._detectLanguageRegex(text);
-    }
-  }
-  // Not exhaustive — only meant to catch obvious cases when LLM is down.
-  _detectLanguageRegex(text) {
-    if (!text) return 'it';
-    const t = text.toLowerCase();
-    if (/¿|¡/.test(t)) return 'es';
-    if (/\b(hola|buenos días|buenas noches|quisiera|reservar|hablas|español|gracias|por favor)\b/i.test(t)) return 'es';
-    if (/\b(bonjour|bonsoir|je voudrais|réserver|s'il vous plaît|merci|français)\b/i.test(t)) return 'fr';
-    if (/\b(guten tag|guten abend|ich möchte|reservieren|bitte|danke|deutsch)\b/i.test(t)) return 'de';
-    if (/\b(hello|good morning|good evening|good afternoon|i would like|i'd like|book a table|thanks|do you speak)\b/i.test(t)) return 'en';
-    if (/^hi[\s,.!?]/.test(t) || /\bhi\b/.test(t)) return 'en';
-    return 'it';
-  }
-
-  // Returns the exact disclosure sentence for the target language (EU AI Act Art. 50).
-  // Supported languages have native disclosures; others fall back to English (lingua franca).
-  _buildDisclosureText(lang) {
-    const rname = this.restaurantConfig?.restaurant_name
-                  || this.restaurantConfig?.restaurantName
-                  || 'the restaurant';
-    const disclosures = {
-      en: `Sure, we can continue in English. I'm the automated voice assistant of ${rname}.`,
-      fr: `Bien sûr, nous pouvons continuer en français. Je suis l'assistant vocal automatique de ${rname}.`,
-      de: `Natürlich, wir können auf Deutsch weitermachen. Ich bin der automatische Sprachassistent von ${rname}.`,
-      es: `Por supuesto, podemos continuar en español. Soy el asistente vocal automático de ${rname}.`,
-      pt: `Claro, podemos continuar em português. Sou o assistente vocal automático de ${rname}.`,
-      nl: `Zeker, we kunnen doorgaan in het Nederlands. Ik ben de geautomatiseerde stemassistent van ${rname}.`,
-    };
-    return disclosures[lang] || disclosures.en; // fallback to English as lingua franca
   }
 
   async _fetchRestaurantInfo() {
