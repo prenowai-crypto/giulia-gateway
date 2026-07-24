@@ -1,290 +1,73 @@
-# Batch B-01 (tests 1-50)
-Run: 2026-07-24T12:09:04.045Z | Model: gpt-realtime-2.1-mini | Total: 50 | Passed: 44 (88%) | Failed: 6
+# Batch B-01 (tests 1-30)
+Run: 2026-07-24T22:16:02.707Z | Model: gpt-realtime-2.1-mini | Total: 30 | Passed: 15 (50%) | Failed: 15
 
-## ✅ Passed (44)
+## ✅ Passed (15)
 
-- **B-001** `booking-flow`: Standard Italian booking flow — 4 people Saturday 20:30, complete with confirmation (19493ms, 2 tool calls)
-- **B-002** `multilingua`: English caller switch: must complete lunch booking in English (22852ms, 2 tool calls)
-- **B-003** `security`: Anti-injection: refuse to list other customers' bookings (2133ms, 0 tool calls)
-- **B02-001** `booking-basic`: Pranzo sabato prossimo 13:00 per 2 persone — Marco Rossi (15618ms, 2 tool calls)
-- **B02-002** `booking-basic`: Pranzo domenica prossima 12:30 per 4 persone — Luigi Bianchi (17240ms, 2 tool calls)
-- **B02-003** `booking-basic`: Pranzo martedì prossimo 12:00 per 3 persone — Giovanni Verdi (17675ms, 2 tool calls)
-- **B02-004** `booking-basic`: Pranzo mercoledì prossimo 13:30 per 6 persone (gruppo medio) — Anna Colombo (16443ms, 2 tool calls)
-- **B02-005** `booking-basic`: Pranzo sabato prossimo 12:00 per 2 persone — Paolo Ferrari (16648ms, 2 tool calls)
-- **B02-007** `booking-basic`: Pranzo martedì prossimo 12:15 (orario preciso non standard) per 4 persone — Franco Marino (18087ms, 2 tool calls)
-- **B02-008** `booking-basic`: Pranzo mercoledì prossimo 12:30 per 2 persone — Elena Greco (17626ms, 2 tool calls)
-- **B02-009** `booking-basic`: Pranzo sabato prossimo 14:00 per 8 persone (sotto large_group_threshold) — Alessandro Costa (18218ms, 2 tool calls)
-- **B02-010** `booking-basic`: Pranzo domenica prossima 13:00 per 3 persone — Chiara Rinaldi (17398ms, 2 tool calls)
-- **B02-011** `booking-basic`: Cena martedì prossimo 21:00 per 2 persone — Antonio Russo (19400ms, 2 tool calls)
-- **B02-012** `booking-basic`: Cena mercoledì prossimo 21:30 per 4 persone — Lucia Esposito (19613ms, 2 tool calls)
-- **B02-013** `booking-basic`: Cena giovedì settimana prossima 22:00 per 3 persone — Roberto Barbieri (16695ms, 2 tool calls)
-- **B02-014** `booking-basic`: Cena venerdì prossimo 22:15 per 5 persone — Silvia Fontana (17568ms, 2 tool calls)
-- **B02-015** `booking-basic`: Cena sabato prossimo 21:00 per 6 persone — Marco Sanna (17833ms, 2 tool calls)
-- **B02-016** `booking-basic`: Cena domenica prossima 22:30 (bordo chiusura cena) per 2 persone — Barbara Palumbo (22357ms, 2 tool calls)
-- **B02-017** `booking-basic`: Cena martedì prossimo 22:00 per 2 persone — Andrea Gentile (18275ms, 2 tool calls)
-- **B02-018** `booking-basic`: Cena mercoledì prossimo 22:15 per 4 persone — Fabio Piras (21480ms, 2 tool calls)
-- **B02-019** `booking-basic`: Cena giovedì settimana prossima 21:30 (giovedì è solo cena) per 3 persone — Federica Rizzo (19578ms, 2 tool calls)
-- **B02-020** `booking-basic`: Cena venerdì prossimo 21:00 (venerdì è solo cena) per 5 persone — Stefano Villa (18567ms, 2 tool calls)
-- **B02-021** `booking-basic`: Variante linguistica: numero persone scritto in lettere ('quattro') — Davide Marchetti (15665ms, 2 tool calls)
-- **B02-022** `booking-basic`: Variante linguistica: orario colloquiale 'nove e un quarto' (→ 21:15) — Valentina Ferri (19804ms, 2 tool calls)
-- **B02-023** `booking-basic`: Variante linguistica: orario 'nove e mezza' (→ 21:30) — Massimo Longo (19278ms, 2 tool calls)
-- **B02-024** `booking-basic`: Variante linguistica: orario 'l'una' (→ 13:00 pranzo) — Elisa Gatti (19021ms, 2 tool calls)
-- **B02-025** `booking-basic`: Variante linguistica: numero 'sei' scritto in lettere — Simone Serra (19653ms, 2 tool calls)
-- **B02-027** `booking-basic`: Flusso conversazionale: cliente conferma dopo recap dei dati — Cristina Mancini (20677ms, 2 tool calls)
-- **B02-028** `booking-basic`: Flusso conversazionale: cliente specifica nota (compleanno) nel primo turno — Gianluca Conti (18681ms, 2 tool calls)
-- **B02-029** `booking-basic`: Flusso conversazionale: cliente corregge il numero di persone (da 3 a 4) — Manuela Longhi (17915ms, 2 tool calls)
-- **B02-030** `booking-basic`: Flusso conversazionale: cliente saluta prima di iniziare — Luca Testa (20842ms, 2 tool calls)
-- **B03-001** `multilingua`: EN — John Smith (20798ms, 2 tool calls)
-- **B03-002** `multilingua`: EN — Emma Johnson (18784ms, 2 tool calls)
-- **B03-003** `multilingua`: EN — Michael Brown (16989ms, 2 tool calls)
-- **B03-004** `multilingua`: FR — Jean Dupont (17983ms, 2 tool calls)
-- **B03-005** `multilingua`: FR — Marie Martin (21886ms, 2 tool calls)
-- **B03-006** `multilingua`: FR — Pierre Bernard (19567ms, 2 tool calls)
-- **B03-007** `multilingua`: DE — Hans Müller (23035ms, 3 tool calls)
-- **B03-008** `multilingua`: DE — Anna Schmidt (23529ms, 2 tool calls)
-- **B03-012** `multilingua`: ES — José Fernández (17553ms, 2 tool calls)
-- **B03-013** `multilingua`: PT — João Silva (20471ms, 2 tool calls)
-- **B03-014** `multilingua`: PT — Maria Santos (19912ms, 2 tool calls)
-- **B03-016** `multilingua`: NL — Jan de Vries (20984ms, 2 tool calls)
-- **B03-017** `multilingua`: NL — Emma Bakker (25332ms, 2 tool calls)
+- **B04-002** `availability-edge`: Lunedì chiuso — cliente insiste, modello mantiene rifiuto (5752ms, 1 tool calls)
+- **B04-003** `availability-edge`: Lunedì chiuso — cliente accetta spostare a martedì (23221ms, 3 tool calls)
+- **B04-004** `availability-edge`: Lunedì chiuso — cliente accetta spostare a domenica (18621ms, 3 tool calls)
+- **B04-011** `availability-edge`: Dopo 22:30 — cliente accetta anticipare a 22:00 (19530ms, 2 tool calls)
+- **B04-016** `availability-edge`: 10 persone — al limite GROUP_THRESHOLD, richiede conferma ristoratore (15819ms, 2 tool calls)
+- **B04-017** `availability-edge`: 15 persone — large group, richiede conferma esplicita (14233ms, 2 tool calls)
+- **B04-019** `availability-edge`: 8 persone — limite superiore MAX_PEOPLE, deve passare come normale (16416ms, 2 tool calls)
+- **B04-020** `availability-edge`: 1 sola persona — deve funzionare normalmente (16533ms, 2 tool calls)
+- **B04-023** `availability-edge`: 'presto' — ambiguo, modello deve chiedere chiarimento (1854ms, 0 tool calls)
+- **B04-024** `availability-edge`: 'tarda serata' — deve proporre ultimo slot (22:30) (17631ms, 2 tool calls)
+- **B04-025** `availability-edge`: 'quando aprite' — cliente chiede orario apertura, poi prenota (17928ms, 2 tool calls)
+- **B04-026** `availability-edge`: Ferragosto (15 agosto) — festivo, deve accettare (16986ms, 2 tool calls)
+- **B04-027** `availability-edge`: Data lontana (dicembre) — deve accettare senza problemi (17166ms, 2 tool calls)
+- **B04-028** `availability-edge`: Orario borderline — esattamente 22:30 (last booking) (14824ms, 2 tool calls)
+- **B04-030** `availability-edge`: OVERBOOKING sabato 21:00 pieno, cliente accetta domenica [SEED: 30 pax sabato prossimo 21:00] (30107ms, 4 tool calls)
 
-## ❌ Failed (6)
+## ❌ Failed (15)
 
-### B02-006 — `booking-basic`
-**Description**: Pranzo domenica prossima 14:00 per 5 persone — Sara Ricci
+### B04-001 — `availability-edge`
+**Description**: Lunedì chiuso — cliente rifiutato
 
-**Reason**: forbidden tool call 'cancella_prenotazione' was made
+**Reason**: forbidden tool call 'controlla_disponibilita' was made | last reply not in 'it': il ristorante è chiuso il lunedì. possiamo trovare un’altra soluzione, ad esempio martedì o un altro giorno tra pranzi o cene.
 
 **Full transcript**:
 
-**[User turn 1]**: Buongiorno, vorrei prenotare domenica prossima alle 14 per 5 persone, a nome Sara Ricci
+**[User turn 1]**: Buonasera, vorrei prenotare per lunedì prossimo alle 21:30 per 2 persone, a nome Marco Bianchi
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Sì
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e ora.
 
-**[AI reply 2]**: Un attimo, controllo la disponibilità per questo giorno e orario.
+**[AI reply 3]**: Il ristorante è chiuso il lunedì. Possiamo trovare un’altra soluzione, ad esempio martedì o un altro giorno tra pranzi o cene.
 
-**[AI reply 3]**: Prenotazione confermata per Sara Ricci, domenica alle 14:00, 5 persone. A presto!
-
-**[AI reply 4]**: Un attimo, verifico la prenotazione prima di procedere con la cancellazione.
-
-**[AI reply 5]**: Mi scusi, ma manca la data per cancellare la prenotazione. Quale domenica intende?
-
-**Tool calls made** (4):
+**Tool calls made** (1):
 ```json
 [
   {
     "name": "controlla_disponibilita",
     "args": {
-      "data": "2026-07-26",
-      "ora": "14:00",
-      "persone": 5
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Sara Ricci",
-      "data": "2026-07-26",
-      "ora": "14:00",
-      "persone": 5,
-      "note": ""
-    }
-  },
-  {
-    "name": "trova_prenotazione",
-    "args": {
-      "nome": "Sara Ricci"
-    }
-  },
-  {
-    "name": "cancella_prenotazione",
-    "args": {
-      "nome": "Sara Ricci"
+      "data": "2026-07-27",
+      "ora": "21:30",
+      "persone": 2
     }
   }
 ]
 ```
 
-**Duration**: 20465ms
+**Duration**: 6462ms
 
 ---
 
-### B02-026 — `booking-basic`
-**Description**: Flusso conversazionale: cliente dà info in ordine sparso — Nicola Fabbri
+### B04-005 — `availability-edge`
+**Description**: Alle 15:30 — dopo chiusura pranzo (14:30)
 
-**Reason**: forbidden tool call 'modifica_prenotazione' was made
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Siamo in 3
-
-**[AI reply 2]**: Perfetto! A che nome faccio la prenotazione?
-
-**[User turn 3]**: Domenica prossima
-
-**[AI reply 3]**: Perfetto. Per procedere, che nome dobbiamo usare per la prenotazione?
-
-**[User turn 4]**: Alle 21:30
-
-**[AI reply 4]**: Domenica prossima è la data, grazie. A che ora desidera prenotare?
-
-**[User turn 5]**: A nome Nicola Fabbri
-
-**[AI reply 5]**: Un attimo, controllo la disponibilità per quell’orario.
-
-**[User turn 6]**: Confermo
-
-**[AI reply 6]**: Perfetto, allora procedo con la prenotazione.
-
-**[AI reply 7]**: Prenotazione confermata: Domenica prossima alle 21:30, 3 persone. A presto!
-
-**[AI reply 8]**: Perfetto, aggiornando il nome sulla prenotazione già esistente.
-
-**[AI reply 9]**: Ecco, ora aggiorno il nome sulla prenotazione.
-
-**[AI reply 10]**: Perfetto: ora la prenotazione è a nome Nicola Fabbri, domenica 26 luglio alle 21:30, 3 persone.
-
-**[AI reply 11]**: Perfetto, confermo. La prenotazione è a nome Nicola Fabbri per 3 persone alle 21:30.
-
-**Tool calls made** (5):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-07-26",
-      "ora": "21:30",
-      "persone": 3
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Domenica prossima",
-      "data": "2026-07-26",
-      "ora": "21:30",
-      "persone": 3,
-      "note": ""
-    }
-  },
-  {
-    "name": "trova_prenotazione",
-    "args": {
-      "nome": "Domenica prossima"
-    }
-  },
-  {
-    "name": "modifica_prenotazione",
-    "args": {
-      "nome": "Nicola Fabbri"
-    }
-  },
-  {
-    "name": "modifica_prenotazione",
-    "args": {
-      "nome": "Nicola Fabbri",
-      "data": "2026-07-26",
-      "ora": "21:30",
-      "persone": 3,
-      "note": ""
-    }
-  }
-]
-```
-
-**Duration**: 35631ms
-
----
-
-### B03-009 — `multilingua`
-**Description**: DE — Thomas Weber
-
-**Reason**: forbidden tool call 'cancella_prenotazione' was made
+**Reason**: forbidden tool call 'crea_prenotazione' was made | reply must contain 'cena' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per questa data e orario. Prenotazione confermata per Paolo Verdi, venerdì 31 lug
 
 **Full transcript**:
 
-**[User turn 1]**: Guten Tag, einen Tisch für nächsten Sonntag um 12:30 Uhr für 3 Personen, auf den Namen Thomas Weber
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle 15:30, 2 persone, a nome Paolo Verdi
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Ja
+**[AI reply 2]**: Un attimo, controllo la disponibilità per questa data e orario.
 
-**[AI reply 2]**: Hallo, ich bin der automatisierte Sprachassistent von Osteria Test. Wie kann ich helfen? Lassen Sie mich die Verfügbarkeit prüfen.
-
-**[AI reply 3]**: Alles klar, ich buche das jetzt. Einen Moment bitte.
-
-**[AI reply 4]**: Reservierung bestätigt: Thomas Weber, Sonntag um 12:30 Uhr, 3 Personen. Bis bald!
-
-**[AI reply 5]**: Perfekt, danke — Ihre Reservierung steht. Ich wünsche Ihnen einen schönen Besuch bei uns!
-
-**Tool calls made** (4):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-07-26",
-      "ora": "12:30",
-      "persone": 3
-    }
-  },
-  {
-    "name": "cancella_prenotazione",
-    "args": {
-      "nome": "Thomas Weber"
-    }
-  },
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-07-26",
-      "ora": "12:30",
-      "persone": 3
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Thomas Weber",
-      "data": "2026-07-26",
-      "ora": "12:30",
-      "persone": 3,
-      "note": ""
-    }
-  }
-]
-```
-
-**Duration**: 29749ms
-
----
-
-### B03-010 — `multilingua`
-**Description**: ES — Carlos García
-
-**Reason**: reply must contain 'asistente vocal' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Hola, soy el asistente de voz automático de Osteria Test. ¿En qué puedo ayudarle? Voy a comprobar la disponibilidad aho
-
-**Full transcript**:
-
-**[User turn 1]**: Buenos días, quisiera reservar una mesa para el próximo sábado a las 13 para 2 personas, a nombre de Carlos García
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Sí confirmo
-
-**[AI reply 2]**: Hola, soy el asistente de voz automático de Osteria Test. ¿En qué puedo ayudarle? Voy a comprobar la disponibilidad ahora.
-
-**[AI reply 3]**: Perfecto. Un momento, voy a registrar la reserva.
-
-**[AI reply 4]**: Reserva confirmada: Carlos García, sábado a las 13:00, 2 personas. ¡Le esperamos!
-
-**[AI reply 5]**: Perfecto, muchas gracias. Tu reserva quedó registrada y confirmada.
+**[AI reply 3]**: Prenotazione confermata per Paolo Verdi, venerdì 31 luglio 2026 alle 15:30, 2 persone. A presto!
 
 **Tool calls made** (2):
 ```json
@@ -292,48 +75,42 @@ Run: 2026-07-24T12:09:04.045Z | Model: gpt-realtime-2.1-mini | Total: 50 | Passe
   {
     "name": "controlla_disponibilita",
     "args": {
-      "data": "2026-07-25",
-      "ora": "13:00",
+      "data": "2026-07-31",
+      "ora": "15:30",
       "persone": 2
     }
   },
   {
     "name": "crea_prenotazione",
     "args": {
-      "nome": "Carlos García",
-      "data": "2026-07-25",
-      "ora": "13:00",
+      "nome": "Paolo Verdi",
+      "data": "2026-07-31",
+      "ora": "15:30",
       "persone": 2,
-      "note": "Reserva solicitada por el cliente."
+      "note": "Prenotazione confermata."
     }
   }
 ]
 ```
 
-**Duration**: 21274ms
+**Duration**: 15648ms
 
 ---
 
-### B03-011 — `multilingua`
-**Description**: ES — María López
+### B04-006 — `availability-edge`
+**Description**: Alle 16:00 — gap tra pranzo e cena, chiuso
 
-**Reason**: reply must contain 'asistente vocal' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Hola, soy el asistente de voz automático de Osteria Test. ¿Cómo puedo ayudarle? Déjeme comprobar la disponibilidad. Per
+**Reason**: forbidden tool call 'crea_prenotazione' was made | reply must contain '21' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e orario. Booked for Chiara Neri, venerdì 31 luglio alle 16:00, 3
 
 **Full transcript**:
 
-**[User turn 1]**: Buenas noches, para el próximo miércoles a las 21 para 4 personas, a nombre de María López
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle 16, 3 persone, a nome Chiara Neri
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Sí, confirmo
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quel giorno e orario.
 
-**[AI reply 2]**: Hola, soy el asistente de voz automático de Osteria Test. ¿Cómo puedo ayudarle? Déjeme comprobar la disponibilidad.
-
-**[AI reply 3]**: Perfecto, voy a registrar su reserva ahora.
-
-**[AI reply 4]**: Reservada: María López, miércoles 29 de julio a las 21:00, 4 personas. ¡Hasta pronto!
-
-**[AI reply 5]**: Perfecto, la reserva queda confirmada para María López, miércoles 29 de julio a las 21:00, 4 personas. ¡Nos vemos entonces!
+**[AI reply 3]**: Booked for Chiara Neri, venerdì 31 luglio alle 16:00, 3 persone. A presto!
 
 **Tool calls made** (2):
 ```json
@@ -341,7 +118,472 @@ Run: 2026-07-24T12:09:04.045Z | Model: gpt-realtime-2.1-mini | Total: 50 | Passe
   {
     "name": "controlla_disponibilita",
     "args": {
-      "data": "2026-07-29",
+      "data": "2026-07-31",
+      "ora": "16:00",
+      "persone": 3
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Chiara Neri",
+      "data": "2026-07-31",
+      "ora": "16:00",
+      "persone": 3,
+      "note": ""
+    }
+  }
+]
+```
+
+**Duration**: 16182ms
+
+---
+
+### B04-007 — `availability-edge`
+**Description**: Alle 11:00 — prima apertura pranzo (12:00)
+
+**Reason**: forbidden tool call 'crea_prenotazione' was made | reply must contain '12' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quell’orario. Perfetto, ora registro la prenotazione. Giovanni Costa, prenota
+
+**Full transcript**:
+
+**[User turn 1]**: Buongiorno, vorrei prenotare per sabato prossimo alle 11, 2 persone, a nome Giovanni Costa
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quell’orario.
+
+**[AI reply 3]**: Perfetto, ora registro la prenotazione.
+
+**[AI reply 4]**: Giovanni Costa, prenotazione confermata per sabato prossimo alle 11, 2 persone. A presto!
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "11:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Giovanni Costa",
+      "data": "2026-07-25",
+      "ora": "11:00",
+      "persone": 2,
+      "note": "Prenotazione per sabato prossimo alle 11, 2 persone."
+    }
+  }
+]
+```
+
+**Duration**: 13772ms
+
+---
+
+### B04-008 — `availability-edge`
+**Description**: Alle 20:00 — prima apertura cena (21:00 config reale)
+
+**Reason**: reply must contain '21' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e orario. Perfetto, ho trovato un orario disponibile. Conferma: E
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per sabato prossimo alle 20, 4 persone, a nome Elena Ricci
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e orario.
+
+**[AI reply 3]**: Perfetto, ho trovato un orario disponibile. Conferma: Elena Ricci, sabato 25 luglio 2026, alle 20:00, 4 persone?
+
+**Tool calls made** (1):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "20:00",
+      "persone": 4
+    }
+  }
+]
+```
+
+**Duration**: 6411ms
+
+---
+
+### B04-009 — `availability-edge`
+**Description**: Alle 20:30 — 30 minuti prima cena, cliente accetta 21:00
+
+**Reason**: expected tool call 'crea_prenotazione' with args {"persone":2,"nome":"Andrea Moretti","ora":"21:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-25","ora":"20:30","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Andrea Moretti","data":"2026-07-25","ora":"20:30","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Andrea Moretti"}},{"name":"modifica_prenotazione","args":{"ora":"21:00"}}]
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per sabato prossimo alle 20:30, 2 persone, a nome Andrea Moretti
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Va bene allora alle 21
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quel sabato e per il tuo orario richiesto.
+
+**[AI reply 3]**: Perfetto, un attimo mentre registro la prenotazione.
+
+**[AI reply 4]**: Prenotazione confermata: Andrea Moretti, sabato 25 luglio alle 20:30, per 2 persone. A presto!
+
+**[AI reply 5]**: Un attimo, trovo la prenotazione e poi modifico l’orario.
+
+**[AI reply 6]**: Mi dispiace, l’aggiornamento non è riuscito. Sembra che serva confermare di nuovo data e ora.
+
+Puoi ripetere: sabato 25 luglio alle 21:00, confermando che 2 persone restano?
+
+**Tool calls made** (4):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "20:30",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Andrea Moretti",
+      "data": "2026-07-25",
+      "ora": "20:30",
+      "persone": 2,
+      "note": ""
+    }
+  },
+  {
+    "name": "trova_prenotazione",
+    "args": {
+      "nome": "Andrea Moretti"
+    }
+  },
+  {
+    "name": "modifica_prenotazione",
+    "args": {
+      "ora": "21:00"
+    }
+  }
+]
+```
+
+**Duration**: 20271ms
+
+---
+
+### B04-010 — `availability-edge`
+**Description**: Alle 23:00 — dopo last booking (22:30)
+
+**Reason**: forbidden tool call 'crea_prenotazione' was made | reply must contain '22' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, un attimo mentre controllo la disponibilità per quella data e ora. Prenotazione confermata: Francesco Lombard
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per sabato prossimo alle 23, 2 persone, a nome Francesco Lombardi
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[AI reply 2]**: Perfetto, un attimo mentre controllo la disponibilità per quella data e ora.
+
+**[AI reply 3]**: Prenotazione confermata: Francesco Lombardi, sabato 25 luglio alle 23:00, per 2 persone. A presto!
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "23:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Francesco Lombardi",
+      "data": "2026-07-25",
+      "ora": "23:00",
+      "persone": 2,
+      "note": ""
+    }
+  }
+]
+```
+
+**Duration**: 16062ms
+
+---
+
+### B04-012 — `availability-edge`
+**Description**: Data passata — 'ieri sera'
+
+**Reason**: forbidden tool call 'crea_prenotazione' was made | forbidden tool call 'controlla_disponibilita' was made | reply must contain 'passat' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, adesso procedo con la prenotazione. Prenotazione confermata per Laura Bianchi, venerdì 23 luglio alle 21:00, 
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per ieri sera alle 21, 2 persone, a nome Laura Bianchi
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[AI reply 2]**: Perfetto, adesso procedo con la prenotazione.
+
+**[AI reply 3]**: Prenotazione confermata per Laura Bianchi, venerdì 23 luglio alle 21:00, per 2 persone. A presto!
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-23",
+      "ora": "21:00",
+      "persone": 2
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Laura Bianchi",
+      "data": "2026-07-23",
+      "ora": "21:00",
+      "persone": 2,
+      "note": ""
+    }
+  }
+]
+```
+
+**Duration**: 15357ms
+
+---
+
+### B04-013 — `availability-edge`
+**Description**: Data passata specifica poi correzione a futura
+
+**Reason**: expected tool call 'crea_prenotazione' with args {"persone":3,"nome":"Alessandro Ferri"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-10","ora":"21:00","persone":3}}] | reply must contain 'agosto' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, grazie. Il 10 luglio è già passato: quale data alternativa preferisce? Un momento, controllo la disponibilità | last reply not in 'it': mi dispiace, quel giorno è lunedì e il ristorante è chiuso. vuole provare una data alternativa, sempre a pranzo o cena?
+
+**Full transcript**:
+
+**[User turn 1]**: Vorrei prenotare per il 10 luglio alle 21, 3 persone, a nome Alessandro Ferri
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Ah scusi intendevo 10 agosto
+
+**[AI reply 2]**: Perfetto, grazie. Il 10 luglio è già passato: quale data alternativa preferisce?
+
+**[AI reply 3]**: Un momento, controllo la disponibilità per quella data e orario.
+
+**[AI reply 4]**: Mi dispiace, quel giorno è lunedì e il ristorante è chiuso. Vuole provare una data alternativa, sempre a pranzo o cena?
+
+**Tool calls made** (1):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-08-10",
+      "ora": "21:00",
+      "persone": 3
+    }
+  }
+]
+```
+
+**Duration**: 6359ms
+
+---
+
+### B04-014 — `availability-edge`
+**Description**: Prenotazione stasera (last minute) — deve accettare se in orario
+
+**Reason**: expected tool call 'crea_prenotazione' with args {"persone":2,"nome":"Beatrice Testa"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-24","ora":"22:00","persone":2}}]
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per stasera alle 22, 2 persone, a nome Beatrice Testa
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e ora.
+
+**[AI reply 3]**: Perfetto. Mi conferma: Beatrice Testa, stasera 24 luglio alle 22:00, 2 persone, corretto?
+
+**Tool calls made** (1):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-24",
+      "ora": "22:00",
+      "persone": 2
+    }
+  }
+]
+```
+
+**Duration**: 5310ms
+
+---
+
+### B04-015 — `availability-edge`
+**Description**: 9 persone — sopra MAX_PEOPLE_PER_BOOKING (8), deve segnalare
+
+**Reason**: forbidden tool call 'crea_prenotazione' was made | reply must contain '8' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Ok, controllo la disponibilità per quel sabato alle 21 in 9 persone. Prenotazione confermata per Federico Rossi, sabato
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per sabato prossimo alle 21, 9 persone, a nome Federico Rossi
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[AI reply 2]**: Ok, controllo la disponibilità per quel sabato alle 21 in 9 persone.
+
+**[AI reply 3]**: Prenotazione confermata per Federico Rossi, sabato prossimo alle 21, per 9 persone. A presto!
+
+**Tool calls made** (2):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
+      "ora": "21:00",
+      "persone": 9
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Federico Rossi",
+      "data": "2026-07-25",
+      "ora": "21:00",
+      "persone": 9,
+      "note": "Prenotazione per sabato prossimo alle 21, 9 persone."
+    }
+  }
+]
+```
+
+**Duration**: 17293ms
+
+---
+
+### B04-018 — `availability-edge`
+**Description**: 50 persone — soglia evento, dovrebbe richiedere contatto diretto/email
+
+**Reason**: reply must contain 'evento' — got: Hello, I am the automated voice assistant of Osteria Test, how can I help you? Please provide your name, plus the date, time, and number of people for the booking. Salve, sono l'assistente vocale auto
+
+**Full transcript**:
+
+**[User turn 1]**: Buongiorno, avremmo un evento aziendale per sabato prossimo alle 21, siamo in 50, a nome Riccardo Palumbo
+
+**[AI reply 1]**: Hello, I am the automated voice assistant of Osteria Test, how can I help you? Please provide your name, plus the date, time, and number of people for the booking.
+
+**[AI reply 2]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**Tool calls made** (0):
+```json
+[]
+```
+
+**Duration**: 5503ms
+
+---
+
+### B04-021 — `availability-edge`
+**Description**: 'ora di pranzo' — deve dedurre 12:00 o 13:30
+
+**Reason**: expected tool call 'crea_prenotazione' with args {"persone":2,"nome":"Simone De Luca"} not found. Actual: [] | reply must contain 'De Luca' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, grazie! Mi serve però un orario preciso per il pranzo, ad esempio 12:00, 13:00 o 14:30? Grazie! “Sì” non bast
+
+**Full transcript**:
+
+**[User turn 1]**: Buongiorno, vorrei prenotare per sabato prossimo all'ora di pranzo, 2 persone, a nome Simone De Luca
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Sì va bene
+
+**[AI reply 2]**: Perfetto, grazie! Mi serve però un orario preciso per il pranzo, ad esempio 12:00, 13:00 o 14:30?
+
+**[AI reply 3]**: Grazie! “Sì” non basta ancora. A che ora vuole venire per il pranzo?
+
+**Tool calls made** (0):
+```json
+[]
+```
+
+**Duration**: 3543ms
+
+---
+
+### B04-022 — `availability-edge`
+**Description**: 'per cena' — deve dedurre 21:00
+
+**Reason**: expected tool call 'crea_prenotazione' with args {"persone":2,"nome":"Marta Fabbri"} not found. Actual: [] | reply must contain '21' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, Marta Fabbri. Mi manca però l’orario: a che ora vorrebbe venire per la cena? Ok, grazie! A che ora vorrebbe v
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per sabato prossimo per cena, 2 persone, a nome Marta Fabbri
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Sì
+
+**[AI reply 2]**: Perfetto, Marta Fabbri. Mi manca però l’orario: a che ora vorrebbe venire per la cena?
+
+**[AI reply 3]**: Ok, grazie! A che ora vorrebbe venire, esattamente?
+
+**Tool calls made** (0):
+```json
+[]
+```
+
+**Duration**: 2607ms
+
+---
+
+### B04-029 — `availability-edge`
+**Description**: OVERBOOKING sabato 21:00 pieno, cliente accetta 22:30 [SEED: 30 pax sabato prossimo 21:00]
+
+**Reason**: expected tool call 'crea_prenotazione' with args {"persone":4,"nome":"Matteo Fumagalli","ora":"22:30"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-25","ora":"21:00","persone":4}},{"name":"crea_prenotazione","args":{"nome":"Matteo Fumagalli","data":"2026-07-25","ora":"21:00","persone":4,"note":"Prenotazione per 4 persone sabato prossimo alle 21:00."}},{"name":"trova_prenotazione","args":{"nome":"Matteo Fumagalli","data":"2026-07-25"}},{"name":"modifica_prenotazione","args":{"nome":"Matteo Fumagalli","ora":"22:30"}}]
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per sabato prossimo alle 21, 4 persone, a nome Matteo Fumagalli
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Va bene alle 22:30 allora
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per il Sabato prossimo alle 21.
+
+**[AI reply 3]**: Prenotazione confermata per Matteo Fumagalli, sabato 25 luglio alle 21:00, 4 persone. A presto!
+
+**[AI reply 4]**: Mi spiace, non sono riuscito a modificare la prenotazione: data o ora non sono stati forniti correttamente.  
+
+Per confermare, la prenotazione è stata registrata per 21:00; vuoi mantenere la data di sabato e cambiare solo l’orario?
+
+**Tool calls made** (4):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-07-25",
       "ora": "21:00",
       "persone": 4
     }
@@ -349,66 +591,31 @@ Run: 2026-07-24T12:09:04.045Z | Model: gpt-realtime-2.1-mini | Total: 50 | Passe
   {
     "name": "crea_prenotazione",
     "args": {
-      "nome": "María López",
-      "data": "2026-07-29",
+      "nome": "Matteo Fumagalli",
+      "data": "2026-07-25",
       "ora": "21:00",
       "persone": 4,
-      "note": ""
-    }
-  }
-]
-```
-
-**Duration**: 20817ms
-
----
-
-### B03-015 — `multilingua`
-**Description**: PT — Ana Pereira
-
-**Reason**: reply must contain 'Pereira' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Olá, sou o assistente de voz automático do Osteria Test. Vou verificar a disponibilidade agora. Perfeito, vou registrar
-
-**Full transcript**:
-
-**[User turn 1]**: Bom dia, uma mesa para o próximo domingo às 12h30 para 3 pessoas, em nome de Ana Pereira
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Sim
-
-**[AI reply 2]**: Olá, sou o assistente de voz automático do Osteria Test. Vou verificar a disponibilidade agora.
-
-**[AI reply 3]**: Perfeito, vou registrar a reserva agora.
-
-**[AI reply 4]**: A reserva não pôde ser confirmada agora. Por favor, tente novamente ou diga se prefere outro horário.
-
-**[AI reply 5]**: Que bom, obrigado. Vamos tentar novamente com o mesmo pedido — ou você pode escolher outro horário ou dia.
-
-**Tool calls made** (2):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-07-26",
-      "ora": "12:30",
-      "persone": 3
+      "note": "Prenotazione per 4 persone sabato prossimo alle 21:00."
     }
   },
   {
-    "name": "crea_prenotazione",
+    "name": "trova_prenotazione",
     "args": {
-      "nome": "Ana Pereira",
-      "data": "2026-07-26",
-      "ora": "12:30",
-      "persone": 3,
-      "note": "Reservar mesa"
+      "nome": "Matteo Fumagalli",
+      "data": "2026-07-25"
+    }
+  },
+  {
+    "name": "modifica_prenotazione",
+    "args": {
+      "nome": "Matteo Fumagalli",
+      "ora": "22:30"
     }
   }
 ]
 ```
 
-**Duration**: 21386ms
+**Duration**: 19547ms
 
 ---
 
