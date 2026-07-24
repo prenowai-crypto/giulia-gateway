@@ -1,25 +1,25 @@
 # Batch B-02 (tests 51-63)
-Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passed: 10 (77%) | Failed: 3
+Run: 2026-07-24T12:09:04.045Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passed: 10 (77%) | Failed: 3
 
 ## ✅ Passed (10)
 
-- **B03-018** `multilingua`: NL — Lars Jansen (18508ms, 2 tool calls)
-- **B03-022** `multilingua`: RU — Ivan Petrov (17543ms, 2 tool calls)
-- **B03-023** `multilingua`: RU — Anna Ivanova (16179ms, 2 tool calls)
-- **B03-024** `multilingua`: RU — Sergei Volkov (18904ms, 2 tool calls)
-- **B03-025** `multilingua`: JA — Hiroshi Tanaka (16692ms, 2 tool calls)
-- **B03-026** `multilingua`: JA — Yuki Sato (18205ms, 2 tool calls)
-- **B03-027** `multilingua`: ZH — Li Wei (19228ms, 2 tool calls)
-- **B03-028** `multilingua`: ZH — Chen Ming (18858ms, 2 tool calls)
-- **B03-029** `multilingua`: AR — Ahmed Hassan (18426ms, 2 tool calls)
-- **B03-030** `multilingua`: AR — Fatima Al-Farsi (19362ms, 2 tool calls)
+- **B03-018** `multilingua`: NL — Lars Jansen (17762ms, 2 tool calls)
+- **B03-022** `multilingua`: RU — Ivan Petrov (18417ms, 2 tool calls)
+- **B03-023** `multilingua`: RU — Anna Ivanova (18071ms, 2 tool calls)
+- **B03-024** `multilingua`: RU — Sergei Volkov (35630ms, 3 tool calls)
+- **B03-025** `multilingua`: JA — Hiroshi Tanaka (18677ms, 2 tool calls)
+- **B03-026** `multilingua`: JA — Yuki Sato (20872ms, 2 tool calls)
+- **B03-027** `multilingua`: ZH — Li Wei (17965ms, 2 tool calls)
+- **B03-028** `multilingua`: ZH — Chen Ming (19625ms, 2 tool calls)
+- **B03-029** `multilingua`: AR — Ahmed Hassan (20068ms, 2 tool calls)
+- **B03-030** `multilingua`: AR — Fatima Al-Farsi (19353ms, 2 tool calls)
 
 ## ❌ Failed (3)
 
 ### B03-019 — `multilingua`
 **Description**: PL — Piotr Nowak
 
-**Reason**: reply must contain 'asystent głosowy' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Dobrze, sprawdzę teraz dostępność na to wskazane termin. Zarezerwowano: Piotr Nowak, sobota 13:00, 2 osoby. Super, dzię
+**Reason**: reply must contain 'asystent głosowy' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Dobrze, pozwól, że sprawdzę dostępność dla tego terminu. Zarezerwowane: Piotr Nowak, sobota 25 lipca o 13:00, 2 osoby. 
 
 **Full transcript**:
 
@@ -29,11 +29,11 @@ Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
 
 **[User turn 2]**: Tak, potwierdzam
 
-**[AI reply 2]**: Dobrze, sprawdzę teraz dostępność na to wskazane termin.
+**[AI reply 2]**: Dobrze, pozwól, że sprawdzę dostępność dla tego terminu.
 
-**[AI reply 3]**: Zarezerwowano: Piotr Nowak, sobota 13:00, 2 osoby.
+**[AI reply 3]**: Zarezerwowane: Piotr Nowak, sobota 25 lipca o 13:00, 2 osoby. Do zobaczenia!
 
-**[AI reply 4]**: Super, dziękuję za potwierdzenie! Państwa rezerwacja jest już zarezerwowana.
+**[AI reply 4]**: Świetnie, potwierdzam. Państwa rezerwacja jest zapisana: Piotr Nowak, sobota 25 lipca o 13:00, 2 osoby.
 
 **Tool calls made** (2):
 ```json
@@ -53,20 +53,20 @@ Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
       "data": "2026-07-25",
       "ora": "13:00",
       "persone": 2,
-      "note": "Automated reservation"
+      "note": ""
     }
   }
 ]
 ```
 
-**Duration**: 16476ms
+**Duration**: 19845ms
 
 ---
 
 ### B03-020 — `multilingua`
 **Description**: PL — Anna Kowalska
 
-**Reason**: reply must contain 'asystent głosowy' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Witaj, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Daj mi chwilę, sprawdzę dostępność. To po
+**Reason**: reply must contain 'Kowalska' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Dzień dobry, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Proszę o chwilę, sprawdzę dostępnoś | reply must contain 'asystent głosowy' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Dzień dobry, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Proszę o chwilę, sprawdzę dostępnoś
 
 **Full transcript**:
 
@@ -76,11 +76,13 @@ Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
 
 **[User turn 2]**: Tak potwierdzam
 
-**[AI reply 2]**: Witaj, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Daj mi chwilę, sprawdzę dostępność.
+**[AI reply 2]**: Dzień dobry, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Proszę o chwilę, sprawdzę dostępność dla tej daty i godziny.
 
-**[AI reply 3]**: To potwierdzone: Anna Kowalska, środą o 21:00, dla 4 osób. Do zobaczenia!
+**[AI reply 3]**: Ok, daj mi chwilę, przygotuję Twoją rezerwację.
 
-**[AI reply 4]**: Super, dziękuję! Państwa rezerwacja jest potwierdzona: Anna Kowalska, środą o 21:00, 4 osoby.
+**[AI reply 4]**: Zarezerwowano dla Anny Kowalskiej, środa 29 lipca o 21:00, 4 osoby. Do zobaczenia!
+
+**[AI reply 5]**: Świetnie, rezerwacja jest potwierdzona. Do zobaczenia w środę o 21:00 dla 4 osób!
 
 **Tool calls made** (2):
 ```json
@@ -100,20 +102,20 @@ Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
       "data": "2026-07-29",
       "ora": "21:00",
       "persone": 4,
-      "note": ""
+      "note": "Rezerwacja telefonu call-in"
     }
   }
 ]
 ```
 
-**Duration**: 18426ms
+**Duration**: 20152ms
 
 ---
 
 ### B03-021 — `multilingua`
 **Description**: PL — Marek Zieliński
 
-**Reason**: reply must contain 'asystent głosowy' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Dzień dobry, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Sprawdzę teraz dostępność. Super, r
+**Reason**: reply must contain 'asystent głosowy' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Dzień dobry, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Sprawdzę teraz dostępność. Super, t
 
 **Full transcript**:
 
@@ -125,11 +127,11 @@ Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
 
 **[AI reply 2]**: Dzień dobry, jestem automatycznym asystentem głosowym Osteria Test. Jak mogę pomóc? Sprawdzę teraz dostępność.
 
-**[AI reply 3]**: Super, rezerwuję teraz to miejsce dla Pana.
+**[AI reply 3]**: Super, teraz dokonam rezerwacji.
 
-**[AI reply 4]**: Booked for Marek Zieliński on Sunday at 12:30 for 3 people. See you then.
+**[AI reply 4]**: Zarezerwowany: Marek Zieliński, niedziela o 12:30, 3 osoby. Do zobaczenia!
 
-**[AI reply 5]**: Dziękuję. Jeśli chcesz coś zmienić, powiedz, a pomogę.
+**[AI reply 5]**: Świetnie, wszystko jest potwierdzone. Do zobaczenia na niedzielę o 12:30!
 
 **Tool calls made** (2):
 ```json
@@ -155,7 +157,7 @@ Run: 2026-07-24T11:25:26.052Z | Model: gpt-realtime-2.1-mini | Total: 13 | Passe
 ]
 ```
 
-**Duration**: 15676ms
+**Duration**: 18611ms
 
 ---
 
