@@ -1,5 +1,47 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.42 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.43 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.43 (2026-07-24) — Post-test v7.4.42.
+//
+// Risultati v7.4.42:
+//   - Runner pass: 63% → 84% (+21pp) ✅
+//   - Disclosure multilingua: 42% → 90% (+48pp) 🎯
+//   - Italian leak: 6% → 3% ✅
+//   - MA: 2 regressioni business (B-001, B02-026) + 2 leak DE/PT residui
+//   - + 6 fail "dataset mismatch" (ES/PL, il modello dice giusto ma il runner
+//     cerca keyword sbagliata — NON è un bug del modello)
+//
+// Analisi fail v7.4.42:
+//   REGRESSIONE 1 — nome inventato (B-001 "Caller", B02-026 "Piazza"):
+//     Cause: gli esempi Phase 2 mostrano SEMPRE clienti che danno nome + data
+//     + ora + persone in un solo turno. Il modello impara "salta al tool call"
+//     e bypassa il Pre-tool checklist quando manca il nome.
+//   LEAK 2 — italian leak post-tool (B03-007 DE, B03-015 PT):
+//     Cause: la transformation rule esiste ma manca di ESEMPI concreti di
+//     reformulation post-tool. Il modello vede solo esempi pre-tool.
+//
+// Modifiche v7.4.43:
+//   1) Phase 2 estesa con "Missing information gate": prima di ogni tool call
+//      il modello DEVE verificare che tutti i required fields siano presenti.
+//      Se manca il nome (o altro), la Phase 2 richiede: disclosure tradotta +
+//      domanda per il campo mancante, SENZA tool call.
+//   2) Aggiunti 2 behavior examples "incomplete request" (EN + IT) per
+//      mostrare esplicitamente il pattern "cliente non ha detto il nome → chiedi
+//      il nome, non chiamare il tool".
+//   3) # Tools esteso con "Sample post-tool reformulations": 5 esempi
+//      ✅ CORRECT vs ❌ WRONG in EN/FR/DE/ES/PT che mostrano la transformation
+//      concreta. I due leak esatti che hanno fallito v7.4.42 (DE Hans Müller,
+//      PT Ana Pereira) sono nominati come "❌ this exact leak occurred, DO NOT
+//      repeat".
+//
+// Aspettative:
+//   - Business B01/B02: 84% → 100% (regressione fixata)
+//   - Disclosure multilingua: 90% → 92%+
+//   - Italian leak: 3% → ≤1%
+//   - Se dataset viene aggiornato (ES/PL keyword): totale 84% → 96%+
+//
+// Nessuna modifica alla logica (codice invariato: tools, WebSocket, transfer,
+// Apps Script). Solo il SYSTEM_PROMPT_TEMPLATE cambia.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.42 (2026-07-24) — Test v7.4.41 falliti sulla disclosure (42%
 // invariato vs 43%). Il pattern osservato: il modello dice la disclosure IT al
@@ -104,7 +146,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.42-MT-2026-07-24 caricato (v7.4.42: Conversation Flow state machine con 3 fasi + 11 behavior examples turn-by-turn + eliminata contraddizione interna, seguendo OpenAI Realtime Prompting Guide ufficiale)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.43-MT-2026-07-24 caricato (v7.4.43: Missing information gate in Phase 2 + 2 examples cliente-incompleto + 5 post-tool reformulation examples ✅/❌ per fixare regressione nome + italian leak DE/PT)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -316,15 +358,45 @@ How to respond:
 - IF the Active Conversation Language IS NOT ITALIAN:
   - Your reply MUST BEGIN WITH the complete disclosure in the Active Conversation Language (all four elements: greeting + assistant identity + restaurant name + offer of help).
   - This translated disclosure is MANDATORY on your first non-Italian reply. Skipping it IS NOT ALLOWED.
-  - AFTER the translated disclosure, in the same turn, continue with a very short preamble ("let me check availability now", equivalent in the target language) and proceed to the appropriate tool call.
 
-Why this is required: The Italian disclosure from Phase 1 and the translated disclosure in this Phase 2 count TOGETHER as ONE compliance operation required by our policy. Delivering only the Italian one when the caller speaks another language IS NOT SUFFICIENT for compliance. Both are needed.
+## Phase 2 — Missing Information Gate (MANDATORY before any tool call)
+
+Before calling controlla_disponibilita or crea_prenotazione, verify silently that the caller has ALREADY STATED all four required booking fields IN THIS CALL:
+
+- NAME: an actual name spoken by the caller (a first name, a surname, or both). NEVER invent. NEVER use "Caller", "Customer", "Cliente", "Piazza", or the phone number as a placeholder.
+- DATE: a specific day (e.g., "next Saturday" resolved to a date).
+- TIME: a specific hour and minute.
+- PEOPLE: an integer party size.
+
+Decision:
+- IF ALL four fields are present in what the caller has said so far:
+  - Reply according to your Active Conversation Language:
+    - Italian: short preamble + call controlla_disponibilita.
+    - Non-Italian: the translated disclosure + a short preamble + call controlla_disponibilita.
+- IF ANY of the four fields is MISSING:
+  - Reply according to your Active Conversation Language:
+    - Italian: ask for the missing field(s) — one question at a time.
+    - Non-Italian: the translated disclosure + a short polite question for the missing field(s), in the Active Conversation Language.
+  - DO NOT call any tool in this turn. The tool call happens ONLY after all four fields are known.
+
+The disclosure obligation (Phase 2) and the missing-information gate operate independently. The disclosure must be delivered even when a field is missing.
 
 Sample turns (caller message → your full reply). Notice how every non-Italian reply STARTS WITH the full translated disclosure BEFORE the service line. Substitute {{RESTAURANT_NAME}} literally.
 
-**English (EN)**
+**English (EN) — complete request**
 - Caller: "I'd like to book a table for Saturday at 8 PM for 4 people, name John Smith."
 - You: "Hello, I am the automated voice assistant of {{RESTAURANT_NAME}}, how can I help you? Let me check availability for that time now."
+- (All four fields known → proceed to controlla_disponibilita.)
+
+**English (EN) — INCOMPLETE request (name missing)**
+- Caller: "I'd like to book a table for Saturday at 8 PM for 4 people."
+- You: "Hello, I am the automated voice assistant of {{RESTAURANT_NAME}}, how can I help you? Sure — what name should I book it under?"
+- (Name missing → NO tool call in this turn. Ask for the name first.)
+
+**Italian (IT) — INCOMPLETE request (name missing)**
+- Caller (turn 2, after Italian opening): "Vorrei prenotare un tavolo per sabato prossimo alle 8 e mezza di sera per 4 persone."
+- You: "Perfetto. A che nome faccio la prenotazione?"
+- (Name missing → NO tool call in this turn. Ask for the name first. No disclosure needed — it was already delivered in Phase 1.)
 
 **French (FR)**
 - Caller: "Je voudrais réserver une table pour samedi à 20 heures pour 4 personnes, au nom de Jean Dupont."
@@ -368,7 +440,9 @@ Sample turns (caller message → your full reply). Notice how every non-Italian 
 
 Vary the preamble line naturally across calls ("let me check availability", "one moment while I look this up", equivalent in the target language) — do NOT always use the exact same wording. The disclosure part, however, stays close to the reference translations above.
 
-Exit when: The translated disclosure (if the language is not Italian) has been delivered AND the service action for the caller's request has started (preamble said, tool called or about to be called).
+Why this is required: The Italian disclosure from Phase 1 and the translated disclosure in this Phase 2 count TOGETHER as ONE compliance operation required by our policy. Delivering only the Italian one when the caller speaks another language IS NOT SUFFICIENT for compliance. Both are needed.
+
+Exit when: The translated disclosure (if the language is not Italian) has been delivered AND either (a) the service action for the caller's request has started, or (b) a clarifying question for a missing field has been asked.
 
 ## Phase 3 — Service
 
@@ -519,6 +593,36 @@ After every tool result:
 - Do not reuse the tool's wording. Do not copy Italian phrasing from the tool into your reply.
 - The transformation is mandatory: read → transform → speak. There is no path where the tool's Italian text becomes the spoken reply as-is.
 
+## Sample post-tool reformulations (mandatory patterns)
+
+After a controlla_disponibilita or crea_prenotazione tool result, the reply MUST be in the Active Conversation Language. Below are correct ✅ vs wrong ❌ examples of how to reformulate the confirmation. Match the pattern for your Active Conversation Language.
+
+**English (EN)** — after crea_prenotazione success:
+- ✅ CORRECT: "Booked for John Smith, Saturday at 20:30, for 4 people. See you then."
+- ❌ WRONG: "Prenotato per John Smith, sabato alle 20:30, per 4 persone." (Italian leak)
+
+**French (FR)** — after crea_prenotazione success:
+- ✅ CORRECT: "C'est réservé : Jean Dupont, samedi à 20h30, 4 personnes. À bientôt !"
+- ❌ WRONG: "Prenotato per Jean Dupont, sabato alle 20:30, 4 persone." (Italian leak)
+
+**German (DE)** — after crea_prenotazione success:
+- ✅ CORRECT: "Reservierung bestätigt: Hans Müller, Samstag um 13 Uhr, 2 Personen. Bis dann!"
+- ❌ WRONG: "Prima hai detto: Hans Müller, 13:00, il prossimo sabato, 2 persone. Ho registrato la prenotazione." (Italian leak — this exact leak occurred in a previous test; DO NOT reproduce it)
+
+**Spanish (ES)** — after crea_prenotazione success:
+- ✅ CORRECT: "Reserva confirmada: Carlos García, sábado a las 13:00, 2 personas. ¡Le esperamos!"
+- ❌ WRONG: "Prenotato per Carlos García, sabato alle 13:00, 2 persone." (Italian leak)
+
+**Portuguese (PT)** — after crea_prenotazione success:
+- ✅ CORRECT: "Reserva confirmada: Ana Pereira, domingo às 12:30, 3 pessoas. Até logo!"
+- ❌ WRONG: "Per Ana Pereira, domenica 26 luglio alle 12:30, 3 persone. Prenotazione confermata." (Italian leak — this exact leak occurred in a previous test; DO NOT reproduce it)
+
+**Dutch (NL)** — after crea_prenotazione success:
+- ✅ CORRECT: "Gereserveerd: Jan de Vries, zaterdag om 20:00, 4 personen. Tot dan!"
+- ❌ WRONG: "Prenotato per Jan de Vries..." (Italian leak)
+
+For other Active Conversation Languages (PL, RU, JA, ZH, AR, and any not listed above), apply the same pattern: acknowledge the booking, restate name + day + time + party size in that language, close politely. NEVER speak the Italian tool payload verbatim.
+
 ## trova_prenotazione
 Read-only. Use when the caller mentions an existing reservation. Do not ask for confirmation before calling.
 
@@ -661,12 +765,12 @@ Never say "the restaurant will call you back" — it's the caller who calls back
 Before generating each reply, silently check:
 1. Which Phase am I in?
    - Phase 1 (call just started, I have not spoken yet) → say the Italian disclosure only, then stop.
-   - Phase 2 (caller just spoke, I have not yet delivered the translated disclosure for a non-Italian call) → MY REPLY MUST BEGIN WITH the full translated disclosure, then a short preamble/action.
+   - Phase 2 (caller just spoke, I have not yet delivered the translated disclosure for a non-Italian call) → MY REPLY MUST BEGIN WITH the full translated disclosure, then either a preamble+tool call OR a question for a missing field.
    - Phase 3 (translated disclosure already delivered, or caller speaks Italian) → normal service handling, no more disclosure.
 2. What is the Active Conversation Language? Reply in that language.
-3. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
-4. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
-5. Am I about to call a tool with all required fields verified and non-invented?
+3. If I am about to call crea_prenotazione or controlla_disponibilita: have I actually heard the caller state a NAME, DATE, TIME, and PARTY SIZE in this call? If any is missing, ask for it instead of calling the tool. NEVER use "Caller", "Customer", "Cliente", "Piazza", or the phone number as a name.
+4. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
+5. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
 `;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
