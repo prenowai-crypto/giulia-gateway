@@ -1,7 +1,43 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.3 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.41 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
 // ═══════════════════════════════════════════════════════════════════════════════
-// Cambiamenti v7.3 rispetto a v7.2 (dai test 15:58 del 13/07):
+// Changelog v7.4.41 (2026-07-24) — Ottimizzazione prompt su consulenza GPT-5:
+//
+//   Diagnosi: il business è al 100% ma la disclosure adherence multilingua è al
+//   43%. Il problema NON è "instruction following" ma "retrieval under latency":
+//   il modello sa cosa fare, non recupera consistentemente la frase esatta in
+//   lingue senza esempio nel prompt. Correlazione empirica netta:
+//     FR (esempio) 100% | DE/ES (esempi) 67% | EN/PT/NL/PL/RU (esempi corti)
+//     33% | JA/ZH/AR (nessun esempio) 0-50%.
+//
+//   Modifiche:
+//   1) # Disclosure riscritta come oggetto strutturato con Purpose/Structure/
+//      Timing/Reference examples in bullets (1 idea per bullet).
+//   2) Aggiunti 12 lexical anchors disclosure (IT/EN/FR/DE/ES/PT/NL/PL/RU/JA/
+//      ZH/AR) — una riga per lingua, senza dialoghi behavior-example.
+//      GPT-5: i realtime models usano gli esempi come "lexical retrieval cues",
+//      non serve un dialogo completo per ogni lingua.
+//   3) # Conversation Language → # Active Conversation Language con struttura
+//      Established / Persists / Changes only if (state machine esplicita).
+//   4) # Tools "After every tool result" riscritta come TRANSFORMATION rule:
+//      "Tool outputs are never spoken verbatim. They are always reformulated
+//      into the Active Conversation Language before speaking." Fix per il bug
+//      dell'italian leak dopo tool call (PT 33% → target ≤10%). GPT-5: il
+//      problema non è il portoghese, è che il tool output vince la recency
+//      competition — servono transform, non prohibition.
+//   5) # Opening ridotta a puntatore verso # Disclosure > Timing (dedup del
+//      sequencing rule).
+//
+//   Aspettative:
+//   - Disclosure multilingua: 43% → 85-95%
+//   - Italian leak: 7% → ≤3%
+//   - Business: resta 100%
+//   - Prompt size: ~+40 righe
+//
+//   Nessuna modifica alla logica (codice invariato: tools, WebSocket, transfer,
+//   Apps Script). Solo il SYSTEM_PROMPT_TEMPLATE cambia.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Cambiamenti v7.3 (dai test 15:58 del 13/07):
 //
 // PROMPT
 //   P1 - Separazione netta: prenotazione normale = CONFERMATA subito,
@@ -15,26 +51,6 @@
 //        cliente corregge, USA modifica_prenotazione (mai seconda create).
 //   P7 - Regola tool-first per gruppo_grande con esempio WRONG/RIGHT esplicito.
 // ═══════════════════════════════════════════════════════════════════════════════
-// Cambiamenti v7.4.41 rispetto a v7.4.40 (raccomandazioni GPT-5, analisi 2 —
-// diagnosi: non è instruction-following, è retrieval lessicale sotto latenza):
-//
-// PROMPT
-//   G1 - Disclosure: da prosa a oggetto strutturato a bullet (Purpose /
-//        Structure / Timing / Reference examples), coerente con lo stile che
-//        i modelli Realtime seguono meglio.
-//   G2 - Disclosure: aggiunte le 6 lexical anchors mancanti (PL/RU/JA/ZH/AR +
-//        IT esplicito nella lista), portando la copertura da 7 a 12 lingue.
-//        Prima queste 5 lingue non avevano NESSUN esempio nel prompt — il
-//        modello doveva generare la frase a runtime, da cui adherence 0-50%.
-//   G3 - "Conversation Language" rinominata "Active Conversation Language" e
-//        riscritta come state machine esplicita (Established / Persists /
-//        Changes only if) invece di prosa.
-//   G4 - Tool-output handling riformulato da "Read → Formulate" (due
-//        operazioni cognitive distinte) a "treat as internal data → always
-//        reformulate / never speak verbatim" (una trasformazione esplicita).
-//        Obiettivo: fix del leak italiano osservato su portoghese, dove il
-//        modello verbalizzava il tool output invece di tradurlo.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 import WebSocket from 'ws';
 import { DateManager, TimeManager, PeopleManager, IntentDetector,
@@ -43,7 +59,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.41-MT-2026-07-24 caricato (Disclosure con 12 lexical anchors IT/EN/FR/DE/ES/PT/NL/PL/RU/JA/ZH/AR + Active Conversation Language come state machine + tool-output handling riformulato come trasformazione — raccomandazioni GPT-5 analisi 2)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.41-MT-2026-07-24 caricato (v7.4.41: 12 lexical anchors disclosure per JA/ZH/AR/PL/RU + Active Conversation Language state variable + Tool output reformulation rule per anti-italian-leak)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -192,23 +208,32 @@ Automatic caller phone (from telephony, may be used for reservations): {{CALLER_
 
 # Disclosure
 
-Purpose
+## Purpose
+
 - Inform the caller that they are speaking with an automated voice assistant, as required by EU AI Act Article 50.
 
-Disclosure structure
-Every disclosure contains these four elements. Do not shorten, summarize, or drop any of them:
-- Greeting
-- Assistant identity
-- Restaurant name, {{RESTAURANT_NAME}}
-- Offer of help
+## Structure
 
-Timing
-- Turn 1 always begins with the Italian disclosure. Say it once, then wait for the caller to speak.
-- If the caller's first substantive request is in another language, begin your very next reply with the disclosure in the Active Conversation Language (see next section), before any preamble or service response.
+Every disclosure contains these four elements:
+
+- Greeting appropriate to the language.
+- Assistant identity — you are the automated voice assistant.
+- Restaurant name — {{RESTAURANT_NAME}}.
+- Offer of help — an invitation for the caller to say what they need.
+
+Never shorten, summarize, or drop any element.
+
+## Timing
+
+- Turn 1 of the call always begins with the Italian disclosure. Say nothing else in turn 1.
+- If the caller's first substantive request is not in Italian, begin your next reply with the complete disclosure in the Active Conversation Language.
+- The disclosure comes before any preamble. The preamble begins only after the disclosure has finished.
 - After the disclosure, continue immediately with the service response.
-- Do not repeat the disclosure again later in the call unless the call has effectively restarted.
+- Do not repeat the disclosure again later in the call.
 
-Reference examples — use the exact phrase for the caller's language when it is listed below.
+## Reference examples
+
+Use these exact phrasings. Substitute {{RESTAURANT_NAME}} literally.
 
 IT
 Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla?
@@ -226,16 +251,16 @@ ES
 Hola, soy el asistente de voz automático de {{RESTAURANT_NAME}}, ¿en qué puedo ayudarle?
 
 PT
-Olá, sou o assistente de voz automático do {{RESTAURANT_NAME}}, como posso ajudá-lo?
+Olá, sou o assistente de voz automático do {{RESTAURANT_NAME}}. Como posso ajudá-lo?
 
 NL
-Hallo, ik ben de geautomatiseerde stemassistent van {{RESTAURANT_NAME}}, waarmee kan ik u helpen?
+Hallo, ik ben de geautomatiseerde stemassistent van {{RESTAURANT_NAME}}. Waarmee kan ik u helpen?
 
 PL
-Dzień dobry, jestem automatycznym asystentem głosowym restauracji {{RESTAURANT_NAME}}, w czym mogę pomóc?
+Dzień dobry, jestem automatycznym asystentem głosowym restauracji {{RESTAURANT_NAME}}. W czym mogę pomóc?
 
 RU
-Здравствуйте, я автоматический голосовой помощник ресторана {{RESTAURANT_NAME}}, чем могу помочь?
+Здравствуйте, я автоматический голосовой помощник ресторана {{RESTAURANT_NAME}}. Чем могу помочь?
 
 JA
 こんにちは。{{RESTAURANT_NAME}}の自動音声アシスタントです。ご用件をお伺いします。
@@ -246,30 +271,56 @@ ZH
 AR
 مرحبًا، أنا المساعد الصوتي الآلي لمطعم {{RESTAURANT_NAME}}. كيف يمكنني مساعدتك؟
 
-For any other language you can confidently produce, express the same four elements in that language. If you are not confident you can produce the disclosure in the caller's language, politely ask the caller to continue in English or Italian instead.
+## Lexical glossary — "automated voice assistant"
+
+Anchor phrase to reuse consistently in the Active Conversation Language:
+
+- IT: assistente vocale automatico
+- EN: automated voice assistant
+- FR: assistant vocal automatique
+- DE: automatischer Sprachassistent
+- ES: asistente de voz automático
+- PT: assistente de voz automático
+- NL: geautomatiseerde stemassistent
+- PL: automatyczny asystent głosowy
+- RU: автоматический голосовой помощник
+- JA: 自動音声アシスタント
+- ZH: 自动语音助手
+- AR: المساعد الصوتي الآلي
+
+For any language not listed above, express the same four elements in that language. If you are not confident you can produce the disclosure in the caller's language, politely ask the caller to continue in English or Italian instead.
 
 # Active Conversation Language
 
-Established
-- The caller's first substantive request. Until then, the Active Conversation Language is Italian.
+The Active Conversation Language is a single stable state variable that governs every spoken reply.
 
-Persists across
-- All assistant speech: preambles, replies after tool calls, confirmations, cancellations, corrections, and closings.
+## Established
 
-Changes only if
-- The caller makes a new substantive request in a different language. A short greeting, a proper name, an isolated foreign word, or an accent does not change it.
+- At the start of the call, the Active Conversation Language is Italian.
+- After the caller's first substantive request, it becomes the language the caller used in that request.
 
-Tool output handling
-- Tool outputs are internal data, in Italian by default. They are never spoken verbatim.
-- Always reformulate the tool result naturally in the Active Conversation Language before speaking it. Do not reuse the tool's Italian wording.
+## Persists across
+
+- All assistant speech.
+- Preambles.
+- Replies after tool calls.
+- Booking confirmations, modifications, cancellations.
+- Error messages.
+- Closings.
+
+## Changes only if
+
+- The caller makes a new substantive request in a different language.
+- A short greeting, a proper name, an isolated foreign word, or an accent does not change it.
+
+## Relationship to tool outputs
+
+- Tool outputs are internal data and do not determine the reply language.
+- Never copy Italian wording from a tool result into a reply that should be in another language. See "# Tools" for the reformulation rule.
 
 # Opening
 
-Turn 1 of the call is always the Italian disclosure. Say it once. Say nothing else in turn 1: no follow-up questions, no anticipation of the caller's intent, no additional pleasantries. After the Italian disclosure, wait for the caller to speak.
-
-When the caller's first substantive request is not in Italian, the Active Conversation Language changes (see above). Your very next reply then begins with the complete disclosure in the new Active Conversation Language, including all four elements — greeting, assistant identity, restaurant name, and offer of help. Only after delivering the full disclosure do you continue with the service response (preamble, tool call, confirmation, etc.).
-
-If a multilingual disclosure is required, deliver the disclosure before any preamble. The preamble begins only after the disclosure has finished.
+Turn 1 is always the Italian disclosure. Say it once and wait for the caller — no follow-up questions, no anticipation of intent, no additional pleasantries. See "# Disclosure > Timing" for language switching rules on subsequent turns.
 
 # Personality and Tone
 
@@ -374,9 +425,11 @@ Use modifica_prenotazione, NOT crea_prenotazione again. Never create a second bo
 Use ONLY the tools in the current tool list. Never invent, simulate, or rename tools.
 
 After every tool result:
-- Treat the tool output as internal data, not as text to read aloud.
-- Reformulate it naturally in the Active Conversation Language.
-- Tool outputs are never spoken verbatim — always rephrase them in your own natural voice, in the Active Conversation Language.
+
+- Tool outputs are internal data. They are never spoken verbatim.
+- Always reformulate the tool result into the Active Conversation Language before speaking.
+- Do not reuse the tool's wording. Do not copy Italian phrasing from the tool into your reply.
+- The transformation is mandatory: read → transform → speak. There is no path where the tool's Italian text becomes the spoken reply as-is.
 
 ## trova_prenotazione
 Read-only. Use when the caller mentions an existing reservation. Do not ask for confirmation before calling.
@@ -518,9 +571,10 @@ Never say "the restaurant will call you back" — it's the caller who calls back
 # Reminder: Active Conversation Language, brevity, tool safety
 
 Before generating each reply, silently check:
-1. What is the Active Conversation Language? Reply in that language. If this reply follows a tool result, is it a reformulation — not a verbatim read of the tool output?
-2. Is the reply 1-2 short sentences?
-3. Am I about to call a tool with all required fields verified and non-invented?
+1. What is the Active Conversation Language? Reply in that language.
+2. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
+3. Is the reply 1-2 short sentences?
+4. Am I about to call a tool with all required fields verified and non-invented?
 `;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
