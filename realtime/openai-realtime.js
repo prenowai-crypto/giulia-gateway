@@ -1,5 +1,30 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.49 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.50 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.50 (2026-07-27) — Fix contextual date resolution.
+//
+// Edge case emerso in B04-003:
+//   Cliente: "lunedì prossimo alle 21"    → risolto a Lun 3 Ago (chiuso)
+//   Modello: "Lunedì siamo chiusi"
+//   Cliente: "Va bene per martedì stessa ora"
+//   Modello (SBAGLIATO): risolve "martedì" → Mar 28 Lug (prossimo martedì da oggi)
+//   Modello (CORRETTO): risolve "martedì" → Mar 4 Ago (martedì dopo il lunedì
+//                       rifiutato)
+//
+// Root cause: la regola di date resolution nella v7.4.45+ risolve sempre
+// contro "oggi". Ma quando il cliente propone un'alternativa dopo un rifiuto,
+// il frame temporale corretto è la data precedentemente proposta, non oggi.
+//
+// Modifiche v7.4.50:
+//   - Nuova subsection in # Date and Time Resolution: "Contextual date
+//     resolution after refusal". Regola: se il cliente ha appena proposto
+//     una data rifiutata (day closed, slot full) e ora propone un giorno
+//     della settimana alternativo, risolvilo all'occorrenza più vicina
+//     alla data precedente, non da oggi.
+//   - Esempi B04-003 e generalizzazione ("allora sabato", "spostiamo a
+//     giovedì").
+//
+// Nessun'altra modifica.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.49 (2026-07-27) — Party Size = pending owner via crea_prenotazione.
 //
@@ -344,7 +369,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.49-MT-2026-07-27 caricato (v7.4.49: gruppi grandi → informa cliente e procedi con crea_prenotazione; backend gestisce pending owner automaticamente)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.50-MT-2026-07-27 caricato (v7.4.50: contextual date resolution — dopo un rifiuto, "martedì" si risolve rispetto alla data proposta, non da oggi)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -494,6 +519,16 @@ Automatic caller phone (from telephony, may be used for reservations): {{CALLER_
 # Date and Time Resolution
 
 You resolve dates and times DETERMINISTICALLY from what the caller says. Do NOT ask the caller to confirm normal, unambiguous expressions. Ask only when something is genuinely ambiguous (see the "genuinely ambiguous" list at the end of this section).
+
+## Contextual date resolution after a refusal
+
+If the caller has just proposed a date that YOU refused (day closed, slot full, out of hours) and now proposes an alternative day-of-the-week ("va bene martedì", "allora sabato", "spostiamo a giovedì", "possiamo per venerdì"), do NOT resolve the new day-of-the-week from today. Resolve it as the FIRST occurrence of that day AFTER the previously proposed date. The previously proposed date is the temporal frame of reference, not today.
+
+- Example: today is Monday 27 July. Caller proposes "lunedì prossimo" → resolved to Mon 3 Aug. You refuse (closed). Caller says "va bene per martedì stessa ora" → resolve "martedì" to Tue 4 Aug (the Tuesday right after the refused Monday), NOT to Tue 28 July (the closest Tuesday from today).
+- Example: caller proposes "sabato prossimo" for a group booking at a fully-booked slot. Caller says "allora domenica stessa ora" → resolve "domenica" to the Sunday right after the refused Saturday, not any earlier Sunday.
+- Example: caller proposes "venerdì 15 agosto" for dinner, slot full. Caller says "spostiamo a sabato" → resolve "sabato" to Sat 16 Aug, not to the next Saturday from today.
+
+Only apply this rule when the alternative is proposed IMMEDIATELY after a refusal. If the caller changes topic and then later mentions a day-of-the-week, revert to the standard "next occurrence from today" rule.
 
 ## Date resolution rules
 
