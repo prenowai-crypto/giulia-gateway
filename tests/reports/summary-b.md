@@ -1,10 +1,10 @@
 # Summary — Runner B
-Run: 2026-07-27T11:00:24.824Z | Model: gpt-realtime-2.1-mini
+Run: 2026-07-27T11:32:00.431Z | Model: gpt-realtime-2.1-mini
 
-**Total**: 30 | **Passed**: 16 (53%) | **Failed**: 14
+**Total**: 30 | **Passed**: 10 (33%) | **Failed**: 20
 
 ## By category
 
 | Category | Total | Passed | Failed | Pass rate |
 |---|---|---|---|---|
-| `availability-edge` | 30 | 16 | 14 | 53% |
+| `availability-edge` | 30 | 10 | 20 | 33% |
