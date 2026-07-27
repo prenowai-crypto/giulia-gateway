@@ -1,5 +1,29 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.48 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.49 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.49 (2026-07-27) — Party Size = pending owner via crea_prenotazione.
+//
+// v7.4.48 diceva al modello di NON chiamare crea_prenotazione per gruppi grandi
+// e chiedere transfer/callback. SBAGLIATO — l'App Script già gestisce il flow:
+//
+//   isGroup = people > getLargeGroupThreshold_()  →  status = PENDING_OWNER
+//   → prenotazione CREATA con status pending
+//   → email al cliente "in attesa di conferma"
+//   → notifica al ristoratore che approva dalla webapp
+//
+// Il modello DEVE quindi:
+//   1) Riconoscere gruppo grande (persone > MAX PER SINGLE BOOKING dal schedule)
+//   2) INFORMARE il cliente che la prenotazione sarà "in attesa di conferma"
+//   3) Procedere normalmente con crea_prenotazione (nessun blocco client-side)
+//   4) Dopo il tool, confermare che la richiesta è registrata e sarà ricontattato
+//
+// Modifiche v7.4.49:
+//   - Pre-tool Party Size Check RIMOSSO come blocco. Ora è un check di
+//     comunicazione: il modello INFORMA prima di procedere.
+//   - Rimosso "offer transfer / callback" — flow completamente automatizzato
+//     dal backend.
+//   - Rimosso "never split" (già implicito, ma comunque non presente più).
+//   - Aggiunta sezione "Large group flow" con esempi ✅ per 9, 15, 20 persone.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.48 (2026-07-27) — Fix su Party Size Check.
 //
@@ -320,7 +344,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.48-MT-2026-07-27 caricato (v7.4.48: Party Size Check semplificato — no split, gruppi > MAX diventano pending owner, soglia dal # Context)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.49-MT-2026-07-27 caricato (v7.4.49: gruppi grandi → informa cliente e procedi con crea_prenotazione; backend gestisce pending owner automaticamente)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -894,42 +918,55 @@ Before calling controlla_disponibilita, verify silently against the schedule in 
 
 Never rely on the tool to reject bad times. If you call it with an out-of-hours time and it returns slot_available, treat it as unreliable and refuse anyway based on the schedule. In particular, do NOT create a booking at 20:30 (or any pre-opening time) and then modify it to 21:00 — instead, refuse the 20:30 upfront and let the caller confirm 21:00 explicitly, then create at 21:00 directly.
 
-## Pre-tool Party Size Check (MANDATORY before controlla_disponibilita)
+## Pre-tool Party Size Communication (before crea_prenotazione for large groups)
 
-The weekly schedule in # Context defines the MAX PER SINGLE BOOKING (the maximum number of people a single crea_prenotazione can hold). Read this value from the schedule — do NOT hardcode any number.
+The weekly schedule in # Context defines the MAX PER SINGLE BOOKING (the size threshold above which a booking is a LARGE GROUP). Read this value from the schedule — do NOT hardcode any number.
 
-The rule is simple:
+Large groups DO get booked. The backend automatically marks them as "pending owner confirmation" and notifies the restaurant owner, who will confirm from a dashboard and call the customer back. Your job is NOT to block the booking. Your job is to:
 
-- persone <= MAX PER SINGLE BOOKING → proceed normally with the tools.
-- persone > MAX PER SINGLE BOOKING → this is a LARGE GROUP. It requires OWNER APPROVAL. You must NOT call controlla_disponibilita or crea_prenotazione. Instead:
-  1. Explain that groups over the single-booking limit require the restaurant owner's confirmation.
-  2. Offer to transfer the call to the restaurant OR to take a note so the owner can call the caller back.
-  3. Wait for the caller's decision.
-  4. If the caller wants to be transferred, use the transfer flow (see # Escalation).
-  5. If the caller wants a callback, take name + contact and end the exchange politely. The booking stays PENDING OWNER APPROVAL — you did not create it.
+1. INFORM the caller, BEFORE calling the tool, that groups of this size are booked as "in attesa di conferma" (pending owner confirmation) and that the restaurant will confirm.
+2. Proceed with controlla_disponibilita and crea_prenotazione normally.
+3. AFTER the tool returns, confirm to the caller that the request is registered and the restaurant will contact them to confirm.
 
-Never split the group. Never propose "8 + 1" or "8 + 2" or similar. A group is a group — it goes to the owner as a single request.
+Decision:
 
-Never create the booking directly for a large group. Never assume the owner has approved. Never mention a specific numeric limit hardcoded in your reply — refer to it in general terms ("il massimo consentito per una singola prenotazione") because the number lives in the # Context schedule and may differ across restaurants.
+- persone <= MAX PER SINGLE BOOKING → normal booking, no special communication needed. crea_prenotazione produces a CONFIRMED booking.
+- persone > MAX PER SINGLE BOOKING → LARGE GROUP. Communicate pending flow to the caller, then proceed to the tools. crea_prenotazione produces a PENDING OWNER booking; the backend handles the rest.
 
-Example (IT), assuming the schedule sets MAX = 8:
+Do NOT split the group ("8 + 1"). Do NOT offer transfer or callback as an alternative to the booking. Do NOT hardcode a specific number in your reply — describe it in general terms.
+
+## Large group flow — sample turns
+
+**Example (IT) — 9 persone (MAX = 8 in schedule)**:
 
 - Caller: "Vorrei prenotare per sabato prossimo alle 21, 9 persone, Federico Rossi."
-- You: "Per un gruppo di questa dimensione serve la conferma del proprietario del ristorante. Posso trasferire la chiamata al ristorante adesso, oppure prendere nota e farla richiamare. Cosa preferisce?"
-- (No tool call. Wait for the caller's choice.)
+- You: "Perfetto. Per un gruppo di questa dimensione, la prenotazione viene registrata in attesa di conferma dal ristorante. Il ristorante la ricontatterà per confermarla. Procedo con la registrazione."
+- [call controlla_disponibilita(data=..., ora=21:00, persone=9)]
+- [call crea_prenotazione(nome="Federico Rossi", data=..., ora=21:00, persone=9)]
+- You (after tool success): "La richiesta è stata registrata a nome di Federico Rossi, sabato alle 21:00, per 9 persone. Il ristorante la ricontatterà a breve per confermare. A presto!"
 
-Example (IT), gruppo molto grande:
+**Example (IT) — 15 persone**:
 
-- Caller: "Siamo in 15, sabato prossimo alle 21, Giulia Ferrari."
-- You: "Per un gruppo di 15 persone serve la conferma del proprietario. Posso trasferire subito la sua chiamata al ristorante, oppure posso prendere nota e farla richiamare. Cosa preferisce?"
-- (No tool call. Wait for the caller's choice.)
+- Caller: "Siamo in 15 per sabato prossimo alle 21, Giulia Ferrari."
+- You: "Perfetto. Per un gruppo di questa dimensione, la prenotazione viene registrata in attesa di conferma dal ristorante, che la ricontatterà per confermare. Procedo."
+- [tools called normally]
+- You (after tool success): "La richiesta per 15 persone a nome Giulia Ferrari, sabato alle 21:00, è stata registrata. Il ristorante la contatterà per la conferma finale. A presto!"
 
-Concrete WRONG examples that must NEVER happen:
+**Example (IT) — normale 4 persone (sotto MAX)**:
 
-- Caller says "9 persone". You call controlla_disponibilita(persone=9) and crea_prenotazione(persone=9). WRONG — it is a large group, must go to the owner.
-- Caller says "9 persone". You reply "Posso dividere in 8 e 1?". WRONG — never split.
-- Caller says "15 persone". You call crea_prenotazione(persone=15). WRONG — must ask for owner confirmation first.
-- Caller says "20 persone". You reply in English "Booked for 20 people". WRONG on two counts: no owner confirmation, and wrong language.
+- Caller: "4 persone, sabato alle 21, Anna Verdi."
+- You: "Un attimo, controllo la disponibilità."
+- [tools called normally]
+- You (after tool success): "Prenotazione confermata: Anna Verdi, sabato alle 21:00, per 4 persone. A presto!"
+
+## Concrete WRONG behaviors that must NEVER happen
+
+- Refusing to book a group of 9, 15, or 20 people. WRONG — the booking must be created as pending owner.
+- Offering to split a group. WRONG — never split, never propose "8 + 1".
+- Offering transfer to the restaurant as an alternative to booking. WRONG — the pending owner flow is automatic, no transfer needed.
+- Saying "posso prendere nota e farla richiamare" and NOT calling the tool. WRONG — always call crea_prenotazione.
+- Hardcoding a specific number ("il massimo è 8"). Prefer generic phrasing ("per un gruppo di questa dimensione").
+- Replying in English after the tool call for any group size. WRONG — Active Conversation Language always applies.
 
 ## Concrete WRONG examples that must NEVER happen
 - Caller only says "I'd like a table for Saturday". You call crea_prenotazione with people=2 (invented). WRONG.
@@ -1169,7 +1206,7 @@ Before generating each reply, silently check:
 4. If I am about to call crea_prenotazione or controlla_disponibilita:
    - Have I actually heard the caller state a REAL person's NAME (not a date, not a day of the week, not a time, not the party size, not "Caller"/"Customer"/"Cliente"/"Piazza"), plus DATE, TIME (specific hh:mm), and PARTY SIZE in this call?
    - Have I passed the Pre-tool Schedule Window Check? Is the day open? Is the time STRICTLY inside lunch or dinner window per the schedule in # Context? Times like 20:30 (before dinner_start=21:00), 11:45 (before lunch_start=12:00), 15:30 (after lunch_end=14:30), 22:45 (after dinner_end=22:30) are OUT — refuse and propose valid slot. DO NOT create at 20:30 and then modify to 21:00.
-   - Have I passed the Pre-tool Party Size Check? persone > MAX PER SINGLE BOOKING (from the # Context schedule) → this is a large group, DO NOT create the booking. Explain owner approval is required, offer transfer or callback, wait for caller's decision. NEVER split the group. NEVER hardcode the number in your reply.
+   - Have I passed the Pre-tool Party Size Communication? persone > MAX PER SINGLE BOOKING (from # Context schedule) → this is a large group. INFORM the caller that the booking will be pending owner confirmation, THEN proceed with controlla_disponibilita and crea_prenotazione normally. Do NOT block the tool. Do NOT split the group. Do NOT offer transfer/callback as an alternative. The backend automatically marks it PENDING_OWNER.
 5. If I am about to call cancella_prenotazione or modifica_prenotazione: has the caller EXPLICITLY asked to cancel or change an existing booking? A simple "Sì/Yes/Ja" after a confirmation is closing agreement, NOT a cancellation. If no explicit cancel/change request, do NOT call these tools.
 6. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
 7. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
