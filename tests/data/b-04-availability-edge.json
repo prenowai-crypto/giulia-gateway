@@ -7,8 +7,13 @@
       "Buonasera, vorrei prenotare per lunedì prossimo alle 21:30 per 2 persone, a nome Marco Bianchi"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione", "controlla_disponibilita"],
-    "replyMustContain": ["chius"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "controlla_disponibilita"
+    ],
+    "replyMustContain": [
+      "chius"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -20,8 +25,12 @@
       "Ma per me è importante lunedì, non potete fare un'eccezione?"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["chius"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "chius"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -33,11 +42,24 @@
       "Va bene, allora per martedì prossimo stessa ora"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 3 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Luca Ferrari" } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 3
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3,
+          "nome": "Luca Ferrari"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Ferrari"],
+    "replyMustContain": [
+      "Ferrari"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -49,10 +71,18 @@
       "Domenica prossima stessa ora allora"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Sofia Marino" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Sofia Marino"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Marino"],
+    "replyMustContain": [
+      "Marino"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -63,8 +93,12 @@
       "Buonasera, vorrei prenotare per venerdì prossimo alle 15:30, 2 persone, a nome Paolo Verdi"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["cena"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "cena"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -75,8 +109,12 @@
       "Buonasera, vorrei prenotare per venerdì prossimo alle 16, 3 persone, a nome Chiara Neri"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["21"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "21"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -84,11 +122,15 @@
     "category": "availability-edge",
     "description": "Alle 11:00 — prima apertura pranzo (12:00)",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per sabato prossimo alle 11, 2 persone, a nome Giovanni Costa"
+      "Buongiorno, vorrei prenotare per venerdì prossimo alle 11, 2 persone, a nome Giovanni Costa"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["12"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "12"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -96,11 +138,15 @@
     "category": "availability-edge",
     "description": "Alle 20:00 — prima apertura cena (21:00 config reale)",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 20, 4 persone, a nome Elena Ricci"
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 20, 4 persone, a nome Elena Ricci"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["21"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "21"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -108,14 +154,23 @@
     "category": "availability-edge",
     "description": "Alle 20:30 — 30 minuti prima cena, cliente accetta 21:00",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 20:30, 2 persone, a nome Andrea Moretti",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 20:30, 2 persone, a nome Andrea Moretti",
       "Va bene allora alle 21"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Andrea Moretti", "ora": "21:00" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Andrea Moretti",
+          "ora": "21:00"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Moretti"],
+    "replyMustContain": [
+      "Moretti"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -123,11 +178,15 @@
     "category": "availability-edge",
     "description": "Alle 23:00 — dopo last booking (22:30)",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 23, 2 persone, a nome Francesco Lombardi"
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 23, 2 persone, a nome Francesco Lombardi"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["22"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "22"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -135,14 +194,22 @@
     "category": "availability-edge",
     "description": "Dopo 22:30 — cliente accetta anticipare a 22:00",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 23:30, 2 persone, a nome Roberto Greco",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 23:30, 2 persone, a nome Roberto Greco",
       "Va bene allora alle 22"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Roberto Greco" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Roberto Greco"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Greco"],
+    "replyMustContain": [
+      "Greco"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -153,8 +220,13 @@
       "Buonasera, vorrei prenotare per ieri sera alle 21, 2 persone, a nome Laura Bianchi"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione", "controlla_disponibilita"],
-    "replyMustContain": ["passat"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "controlla_disponibilita"
+    ],
+    "replyMustContain": [
+      "passat"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -167,10 +239,18 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Alessandro Ferri" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3,
+          "nome": "Alessandro Ferri"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["agosto"],
+    "replyMustContain": [
+      "agosto"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -182,11 +262,24 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 2 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Beatrice Testa" } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 2
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Beatrice Testa"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Testa"],
+    "replyMustContain": [
+      "Testa"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -194,14 +287,22 @@
     "category": "availability-edge",
     "description": "9 persone — sopra MAX (8), deve creare prenotazione pending owner e informare cliente",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 21, 9 persone, a nome Federico Rossi",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 21, 9 persone, a nome Federico Rossi",
       "Sì procediamo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 9, "nome": "Federico Rossi" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 9,
+          "nome": "Federico Rossi"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["conferma"],
+    "replyMustContain": [
+      "conferma"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -209,14 +310,22 @@
     "category": "availability-edge",
     "description": "10 persone — large group, deve creare prenotazione pending owner",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 21, 10 persone, a nome Michele Barbieri",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 21, 10 persone, a nome Michele Barbieri",
       "Sì procediamo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 10, "nome": "Michele Barbieri" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 10,
+          "nome": "Michele Barbieri"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["conferma"],
+    "replyMustContain": [
+      "conferma"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -224,14 +333,22 @@
     "category": "availability-edge",
     "description": "15 persone — large group, deve creare prenotazione pending owner",
     "userTurns": [
-      "Buonasera, vorremmo prenotare per sabato prossimo alle 21, siamo in 15, a nome Giulia Ferrari",
+      "Buonasera, vorremmo prenotare per venerdì prossimo alle 21, siamo in 15, a nome Giulia Ferrari",
       "Sì confermiamo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 15, "nome": "Giulia Ferrari" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 15,
+          "nome": "Giulia Ferrari"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["conferma"],
+    "replyMustContain": [
+      "conferma"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -239,14 +356,22 @@
     "category": "availability-edge",
     "description": "50 persone — evento/large group, deve creare prenotazione pending owner",
     "userTurns": [
-      "Buongiorno, avremmo un evento aziendale per sabato prossimo alle 21, siamo in 50, a nome Riccardo Palumbo",
+      "Buongiorno, avremmo un evento aziendale per venerdì prossimo alle 21, siamo in 50, a nome Riccardo Palumbo",
       "Sì confermiamo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 50, "nome": "Riccardo Palumbo" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 50,
+          "nome": "Riccardo Palumbo"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["conferma"],
+    "replyMustContain": [
+      "conferma"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -254,15 +379,28 @@
     "category": "availability-edge",
     "description": "8 persone — limite superiore MAX_PEOPLE, deve passare come normale",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 21, 8 persone, a nome Stefano Galli",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 21, 8 persone, a nome Stefano Galli",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 8 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 8, "nome": "Stefano Galli" } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 8
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 8,
+          "nome": "Stefano Galli"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Galli"],
+    "replyMustContain": [
+      "Galli"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -270,15 +408,28 @@
     "category": "availability-edge",
     "description": "1 sola persona — deve funzionare normalmente",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 21 per una persona, a nome Valentina Colombo",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 21 per una persona, a nome Valentina Colombo",
       "Sì"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 1 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 1, "nome": "Valentina Colombo" } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 1
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 1,
+          "nome": "Valentina Colombo"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Colombo"],
+    "replyMustContain": [
+      "Colombo"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -286,15 +437,23 @@
     "category": "availability-edge",
     "description": "'ora di pranzo' — modello chiede orario, cliente specifica 13:00",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per sabato prossimo all'ora di pranzo, 2 persone, a nome Simone De Luca",
+      "Buongiorno, vorrei prenotare per venerdì prossimo all'ora di pranzo, 2 persone, a nome Simone De Luca",
       "Va bene alle 13",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Simone De Luca" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Simone De Luca"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["De Luca"],
+    "replyMustContain": [
+      "De Luca"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -302,15 +461,23 @@
     "category": "availability-edge",
     "description": "'per cena' — modello chiede orario, cliente specifica 21:00",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo per cena, 2 persone, a nome Marta Fabbri",
+      "Buonasera, vorrei prenotare per venerdì prossimo per cena, 2 persone, a nome Marta Fabbri",
       "Alle 21",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Marta Fabbri" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Marta Fabbri"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Fabbri"],
+    "replyMustContain": [
+      "Fabbri"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -318,11 +485,15 @@
     "category": "availability-edge",
     "description": "'presto' — ambiguo, modello deve chiedere chiarimento",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per sabato prossimo presto, 2 persone, a nome Fabio Pellegrini"
+      "Buongiorno, vorrei prenotare per venerdì prossimo presto, 2 persone, a nome Fabio Pellegrini"
     ],
     "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["ora"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": [
+      "ora"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -330,14 +501,23 @@
     "category": "availability-edge",
     "description": "'tarda serata' — deve proporre ultimo slot (22:30)",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo in tarda serata, 3 persone, a nome Ilaria Marchetti",
+      "Buonasera, vorrei prenotare per venerdì prossimo in tarda serata, 3 persone, a nome Ilaria Marchetti",
       "Va bene alle 22:30"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Ilaria Marchetti", "ora": "22:30" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 3,
+          "nome": "Ilaria Marchetti",
+          "ora": "22:30"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["22:30"],
+    "replyMustContain": [
+      "22:30"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -345,14 +525,23 @@
     "category": "availability-edge",
     "description": "'quando aprite' — cliente chiede orario apertura, poi prenota",
     "userTurns": [
-      "Buongiorno, a che ora aprite per pranzo? Vorrei prenotare per sabato prossimo per 2 persone a nome Camilla Vitale",
+      "Buongiorno, a che ora aprite per pranzo? Vorrei prenotare per venerdì prossimo per 2 persone a nome Camilla Vitale",
       "Alle 12 allora, confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Camilla Vitale", "ora": "12:00" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Camilla Vitale",
+          "ora": "12:00"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Vitale"],
+    "replyMustContain": [
+      "Vitale"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -364,10 +553,18 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Nicola Basile" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4,
+          "nome": "Nicola Basile"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Basile"],
+    "replyMustContain": [
+      "Basile"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -379,10 +576,18 @@
       "Sì grazie"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 6, "nome": "Emanuele Costa" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 6,
+          "nome": "Emanuele Costa"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["dicembre"],
+    "replyMustContain": [
+      "dicembre"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -390,14 +595,23 @@
     "category": "availability-edge",
     "description": "Orario borderline — esattamente 22:30 (last booking)",
     "userTurns": [
-      "Buonasera, vorrei prenotare per sabato prossimo alle 22:30, 2 persone, a nome Silvia Conte",
+      "Buonasera, vorrei prenotare per venerdì prossimo alle 22:30, 2 persone, a nome Silvia Conte",
       "Sì"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Silvia Conte", "ora": "22:30" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 2,
+          "nome": "Silvia Conte",
+          "ora": "22:30"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["22:30"],
+    "replyMustContain": [
+      "22:30"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -409,11 +623,25 @@
       "Va bene alle 22:30 allora"
     ],
     "expectedToolCalls": [
-      { "name": "controlla_disponibilita", "argsContain": { "persone": 4 } },
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Matteo Fumagalli", "ora": "22:30" } }
+      {
+        "name": "controlla_disponibilita",
+        "argsContain": {
+          "persone": 4
+        }
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4,
+          "nome": "Matteo Fumagalli",
+          "ora": "22:30"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Fumagalli"],
+    "replyMustContain": [
+      "Fumagalli"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -425,10 +653,18 @@
       "No grazie, allora domenica prossima stessa ora"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Davide Sala" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "persone": 4,
+          "nome": "Davide Sala"
+        }
+      }
     ],
     "forbiddenToolCalls": [],
-    "replyMustContain": ["Sala"],
+    "replyMustContain": [
+      "Sala"
+    ],
     "replyLanguage": "it"
   }
 ]
