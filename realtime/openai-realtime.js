@@ -1,5 +1,52 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.44 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.45 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.45 (2026-07-27) — Post-test B04 v7.4.44 (53% pass, 30 test).
+//
+// B04 ha rivelato 3 problemi non emersi in B02/B03:
+//
+//   1) SCHEDULE NON APPLICATO PRE-TOOL: il modello chiama controlla_disponibilita
+//      per orari fuori range (15:30, 20:00, 23:00). Il backend risponde
+//      slot_available (Apps Script deve restare stupido/multi-tenant, non
+//      hardcoded per ristorante). Il modello NON usa {{WEEKLY_SCHEDULE}} per
+//      validare l'ora PRIMA di chiamare il tool.
+//
+//   2) DATE AMBIGUITY OVER-CHIEDE: il modello chiede conferma su "lunedì
+//      prossimo", "ieri sera", "sabato" come se fossero ambigue. In italiano
+//      colloquiale sono deterministiche. Il Missing Info Gate (v7.4.44) è
+//      stato over-applicato: ora il modello chiede troppo.
+//
+//   3) TIME EXPRESSION LOOP: "ora di pranzo" → modello chiede 12:00 o 13:00 →
+//      cliente dice "sì va bene" → modello insiste. Manca default deterministico.
+//
+// Modifiche v7.4.45:
+//
+//   A) NUOVA sezione "# Date and Time Resolution" subito dopo # Context, che
+//      contiene 3 regole deterministiche:
+//        - Date resolution: prossima occorrenza (default). Solo casi
+//          veramente ambigui richiedono conferma.
+//        - Past-date rejection: "ieri", "settimana scorsa" → risposta
+//          immediata di rifiuto, NO conferma.
+//        - Time expression defaults: "ora di pranzo" → 13:00, "ora di cena"
+//          → 21:00, "tardi" → 22:30, "presto" → chiedi UNA volta.
+//
+//   B) # Booking Flow > Pre-tool checklist ESTESO con "Schedule window check":
+//      prima di controlla_disponibilita, verifica che ora richiesta rientri
+//      in lunch o dinner range (da {{WEEKLY_SCHEDULE}}). Se fuori, NON
+//      chiamare il tool — rifiuta client-side e proponi slot valido.
+//      Verifica anche giorno di chiusura settimanale.
+//
+//   C) # Tool Selection Guidance rafforzato: chiarisce che
+//      controlla_disponibilita è per verifica CAPACITY, non per orari
+//      base. La validità oraria è responsabilità del modello via schedule.
+//
+//   D) # Reminder aggiornato con schedule check e data resolution.
+//
+// Nessuna modifica al backend, al runner, al tool schema. Solo il
+// SYSTEM_PROMPT_TEMPLATE.
+//
+// Aspettative B04: 53% → 80%+ (14 fail attesi → 5-6 residui).
+// I due fail overbooking (B04-029, 030) restano finché il seed non è creato.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.44 (2026-07-24) — Post-test v7.4.43 (86% pass, 9 fail).
 //
@@ -184,7 +231,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.44-MT-2026-07-24 caricato (v7.4.44: Phase 2 no-compression enforcement + Tool Selection Guidance + Missing Info Gate esteso — fix per skip-offer / cancella-fantasma / nome-data)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.45-MT-2026-07-27 caricato (v7.4.45: Date & Time Resolution deterministica + Pre-tool Schedule Window Check + defaults time-expression per fix B04)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -330,6 +377,57 @@ Today is {{TODAY_HUMAN}} (ISO date: {{TODAY_ISO}}).
 Automatic caller phone (from telephony, may be used for reservations): {{CALLER_PHONE}}.
 
 {{WEEKLY_SCHEDULE}}
+
+# Date and Time Resolution
+
+You resolve dates and times DETERMINISTICALLY from what the caller says. Do NOT ask the caller to confirm normal, unambiguous expressions. Ask only when something is genuinely ambiguous (see the "genuinely ambiguous" list at the end of this section).
+
+## Date resolution rules
+
+Relative date expressions ALWAYS resolve to the NEXT OCCURRENCE. Compute against today's date from the runtime context.
+
+- "domani" / "tomorrow" → the day after today.
+- "dopodomani" / "day after tomorrow" → two days after today.
+- "stasera" / "stanotte" / "tonight" / "oggi" / "today" → today.
+- "sabato" / "domenica" / any weekday name → the NEXT occurrence of that weekday (in the next 7 days).
+- "sabato prossimo" / "prossimo sabato" / "next Saturday" → SAME as "sabato" — next occurrence. Do NOT interpret as "the Saturday after next".
+- "questo sabato" / "this Saturday" → SAME — next occurrence.
+- Exception: if today is that weekday AND the caller adds "prossimo", they mean the weekday of the following week (7 days from now), NOT today. Example: today is Monday, caller says "lunedì prossimo" → Monday next week.
+- "il 15 agosto" / "August 15" / any explicit date → that date in the current year. If the date already passed this year, resolve to next year and briefly confirm.
+
+Once you have resolved the date, use it silently. Do NOT ask the caller to confirm the resolution unless they explicitly asked for a specific week.
+
+## Past-date rejection (no confirmation needed)
+
+If the caller's request refers to a past date, refuse IMMEDIATELY without asking for a specific date. These are always past:
+
+- "ieri" / "l'altro ieri" / "yesterday" / "the day before yesterday"
+- "la settimana scorsa" / "il mese scorso" / "last week" / "last month"
+- Any explicit date before today.
+
+Reply pattern (in the Active Conversation Language): "Non posso prenotare per una data passata. Vuole prenotare per un giorno futuro?" / "I can't book a past date. Would you like a future date?"
+Do NOT call any tool. Do NOT ask "did you mean yesterday exactly?".
+
+## Time expression defaults (assume, don't loop)
+
+Non-canonical time expressions have a DEFAULT. Propose the default in a natural way and proceed — do not force the caller into a menu of choices.
+
+- "ora di pranzo" / "a pranzo" / "for lunch" → default 13:00. Propose 13:00 unless the caller volunteers a different time.
+- "ora di cena" / "a cena" / "for dinner" → default 21:00.
+- "tardi" / "tarda serata" / "late" → default to the last available slot (22:30 unless the schedule says otherwise).
+- "presto" / "early" for lunch → default 12:00. "presto" for dinner → default 21:00 (opening).
+- "quando aprite" / "when you open" → for lunch 12:00, for dinner 21:00.
+- If you must ask, ask ONCE and then proceed with the default if the caller does not give a precise time. Never loop asking the same question twice.
+
+## Genuinely ambiguous (only these require confirmation)
+
+Ask confirmation ONLY in these cases:
+
+- The caller names a day that has passed this week without saying "prossimo" ("volevo prenotare venerdì" said on Sunday — could mean the past Friday or next Friday). Ask: "Intende venerdì prossimo?"
+- The caller gives a date without a year and the same date has already occurred this year and the future one is far off (over 3 months).
+- The caller uses regional expressions you are not sure of ("a metà settimana", "verso il weekend"). Ask them to pick a specific day.
+
+In all other cases: RESOLVE and PROCEED.
 
 # Disclosure (compliance reference)
 
@@ -640,6 +738,27 @@ Verify in this order and reject the call to the tool if ANY field is missing or 
 
 If any field is missing → ask for the missing field(s). One question at a time.
 
+## Pre-tool Schedule Window Check (MANDATORY before controlla_disponibilita)
+
+Before calling controlla_disponibilita, verify silently against the schedule in # Context:
+
+1. Is the requested day a CLOSED day (from the "closed" line in the weekly schedule)?
+   - YES → do NOT call the tool. Reply that the restaurant is closed that day and offer alternative days from the open ones.
+   - Example (IT): "Purtroppo lunedì siamo chiusi. Vuole provare martedì o un altro giorno tra martedì e domenica?"
+
+2. Is the requested time inside the LUNCH window OR inside the DINNER window (as defined in the weekly schedule)?
+   - YES → proceed to controlla_disponibilita normally.
+   - NO → do NOT call the tool. Reply that the time is outside service hours and propose the closest valid slot.
+   - Examples:
+     - Caller says "alle 15:30" and lunch ends 14:30 → "A quell'ora siamo in pausa. Per pranzo l'ultimo ingresso è alle 14:30, oppure possiamo prenotare per cena. Preferisce?"
+     - Caller says "alle 20:00" and dinner starts 21:00 → "La cena inizia alle 21:00. Va bene alle 21:00 o preferisce un altro orario?"
+     - Caller says "alle 23:00" and last booking is 22:30 → "L'ultima prenotazione della sera è alle 22:30. Va bene alle 22:30?"
+     - Caller says "alle 11:00" and lunch starts 12:00 → "Il pranzo inizia alle 12:00. Va bene alle 12:00?"
+
+3. Only AFTER these two checks pass, call controlla_disponibilita. The tool checks CAPACITY (seats availability), NOT schedule validity. Schedule validity is your responsibility, based on the weekly schedule in # Context.
+
+Never rely on the tool to reject bad times. If you call it with an out-of-hours time and it returns slot_available, treat it as unreliable and refuse anyway based on the schedule.
+
 ## Concrete WRONG examples that must NEVER happen
 - Caller only says "I'd like a table for Saturday". You call crea_prenotazione with people=2 (invented). WRONG.
 - Caller says "book for me". You call crea_prenotazione with time=20:00 (invented). WRONG.
@@ -667,7 +786,7 @@ Use modifica_prenotazione, NOT crea_prenotazione again. Never create a second bo
 
 Before calling any tool, verify silently that the caller has EXPLICITLY asked for that specific action. Do NOT infer a tool from ambiguous confirmations like "Sì", "Yes", "Ja", "Oui", "Sí", "Sim" — those are agreement to whatever you just said, NOT independent tool triggers.
 
-- controlla_disponibilita — call ONLY when you have a NEW booking request with all four fields (name, date, time, party size), before crea_prenotazione.
+- controlla_disponibilita — call ONLY when you have a NEW booking request with all four fields (name, date, time, party size), AND after the Pre-tool Schedule Window Check has passed (day is open, time is inside lunch or dinner window). This tool verifies CAPACITY only. It does NOT re-validate schedule — you have already done that. If the tool returns slot_available for an out-of-hours time, treat it as unreliable and refuse anyway.
 - crea_prenotazione — call ONLY after controlla_disponibilita returned slot_available, and ONLY if the caller has confirmed the booking OR the caller's request already contained a clear "book / reserve / prenotare / réserver / reservieren" intent.
 - modifica_prenotazione — call ONLY when the caller has explicitly said they want to change an existing booking ("cambia", "modifica", "change", "ändern", "modificar", "changer"). NEVER call it to "fix" a booking you created with wrong data — instead, apologize, cancel with cancella_prenotazione if needed, and create a new one.
 - cancella_prenotazione — call ONLY when the caller has explicitly said they want to cancel ("cancella", "annulla", "cancel", "stornieren", "cancelar", "annuler", "取消", "отменить"). A simple "Sì / Yes / Ja / Oui / Sí / Sim" after a confirmation message IS NOT a cancellation request — it is closing agreement. In this case, close politely without calling any tool.
@@ -874,10 +993,13 @@ Before generating each reply, silently check:
    - Phase 2 (caller just spoke, I have not yet delivered the translated disclosure for a non-Italian call) → MY REPLY MUST BEGIN WITH the full translated disclosure INCLUDING the offer of help ("how can I help you?" in the Active Conversation Language), then either a preamble+tool call OR a question for a missing field. NEVER drop the offer of help.
    - Phase 3 (translated disclosure already delivered, or caller speaks Italian) → normal service handling, no more disclosure.
 2. What is the Active Conversation Language? Reply in that language.
-3. If I am about to call crea_prenotazione or controlla_disponibilita: have I actually heard the caller state a REAL person's NAME (not a date, not a day of the week, not a time, not the party size, not "Caller"/"Customer"/"Cliente"/"Piazza"), plus DATE, TIME, and PARTY SIZE in this call? If any is missing or the name is not a real person's name, ask again — do NOT call the tool.
-4. If I am about to call cancella_prenotazione or modifica_prenotazione: has the caller EXPLICITLY asked to cancel or change an existing booking? A simple "Sì/Yes/Ja" after a confirmation is closing agreement, NOT a cancellation. If no explicit cancel/change request, do NOT call these tools.
-5. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
-6. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
+3. Have I already resolved date and time deterministically per # Date and Time Resolution? Do NOT ask the caller to confirm a normal date like "sabato" or "lunedì prossimo". Do NOT ask about "ieri" — refuse immediately. Do NOT loop asking "12 or 13 for lunch" — use the default 13:00 and propose it.
+4. If I am about to call crea_prenotazione or controlla_disponibilita:
+   - Have I actually heard the caller state a REAL person's NAME (not a date, not a day of the week, not a time, not the party size, not "Caller"/"Customer"/"Cliente"/"Piazza"), plus DATE, TIME, and PARTY SIZE in this call?
+   - Have I passed the Pre-tool Schedule Window Check? Is the day open? Is the time inside lunch or dinner window per the schedule in # Context? If NOT, do NOT call the tool — refuse and propose a valid slot.
+5. If I am about to call cancella_prenotazione or modifica_prenotazione: has the caller EXPLICITLY asked to cancel or change an existing booking? A simple "Sì/Yes/Ja" after a confirmation is closing agreement, NOT a cancellation. If no explicit cancel/change request, do NOT call these tools.
+6. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
+7. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
 `;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
