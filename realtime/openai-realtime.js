@@ -790,7 +790,7 @@ Before calling controlla_disponibilita, verify silently against the schedule in 
    - Example (IT): "Purtroppo lunedì siamo chiusi. Vuole provare martedì o un altro giorno tra martedì e domenica?"
 
 2. Is the requested time STRICTLY inside the LUNCH window OR STRICTLY inside the DINNER window (as defined in the weekly schedule)?
-   - "Strictly inside" means: `time >= lunch_start AND time <= lunch_end`, OR `time >= dinner_start AND time <= dinner_end`.
+   - "Strictly inside" means: "time >= lunch_start AND time <= lunch_end", OR "time >= dinner_start AND time <= dinner_end".
    - There is NO tolerance zone around the opening or closing times. Even 30 minutes, 15 minutes, or 5 minutes before opening = out of range.
    - Do NOT round the time. Do NOT accept "close enough". 20:30 is NOT inside a 21:00–22:30 dinner window. 11:45 is NOT inside a 12:00–14:30 lunch window. 22:45 is NOT inside a dinner window that ends at 22:30.
    - Comparison examples for a schedule with lunch 12:00–14:30 and dinner 21:00–22:30:
