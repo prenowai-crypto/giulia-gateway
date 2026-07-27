@@ -1,5 +1,37 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.45 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.46 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.46 (2026-07-27) — Post-test B04 v7.4.45.
+//
+// v7.4.45 ha risolto 4/5 dei problemi schedule (15:30, 16:00, 20:00, 23:00
+// ora rifiutati client-side). Ma 2 fail veri residui:
+//
+//   1) B04-009 (20:30): schedule window check ha "zona morta" a 30 min dal
+//      dinner_start. Il modello crea alle 20:30 (fuori range) e poi modifica.
+//      La formulazione originale "inside the DINNER window" era ambigua per
+//      il modello: 20:30 è "vicino" a 21:00 quindi accettabile? NO — deve
+//      essere STRETTAMENTE dentro il range [dinner_start, dinner_end].
+//
+//   2) B04-023 ("presto" senza contesto meal): il modello ha assunto
+//      "pranzo → 12:00" perché il prompt v7.4.45 dava default per meal
+//      contesto specificato. Ma "presto" da solo è ambiguo (potrebbe essere
+//      pranzo O cena presto). Serve UNA domanda di chiarimento in questo caso.
+//
+// Modifiche v7.4.46:
+//
+//   A) # Booking Flow > Pre-tool Schedule Window Check ESTESO con
+//      "STRICT boundary" rule: il time deve essere >= lunch_start AND <= lunch_end
+//      OPPURE >= dinner_start AND <= dinner_end. Niente tolleranza prima
+//      dell'apertura. Esempio esplicito 20:30 aggiunto: se dinner_start=21:00,
+//      allora 20:30 è OUT (rifiuta, proponi 21:00).
+//
+//   B) # Date and Time Resolution > Time expression defaults CHIARITO: "presto"
+//      / "tardi" da soli SENZA contesto meal richiedono UNA domanda di
+//      chiarimento (pranzo o cena?). Solo con contesto meal chiaro applica
+//      il default numerico.
+//
+// Nessun'altra modifica. Il resto della v7.4.45 (date resolution, past-date
+// rejection, ecc.) è confermato dai test come funzionante.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.45 (2026-07-27) — Post-test B04 v7.4.44 (53% pass, 30 test).
 //
@@ -231,7 +263,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.45-MT-2026-07-27 caricato (v7.4.45: Date & Time Resolution deterministica + Pre-tool Schedule Window Check + defaults time-expression per fix B04)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.46-MT-2026-07-27 caricato (v7.4.46: STRICT schedule boundary — no tolerance zone + "presto/tardi" ambiguity clarification)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -410,14 +442,25 @@ Do NOT call any tool. Do NOT ask "did you mean yesterday exactly?".
 
 ## Time expression defaults (assume, don't loop)
 
-Non-canonical time expressions have a DEFAULT. Propose the default in a natural way and proceed — do not force the caller into a menu of choices.
+Non-canonical time expressions have a DEFAULT when the meal context (lunch or dinner) is clear. When the meal context is NOT clear, ask ONE clarifying question first, then apply the default.
 
-- "ora di pranzo" / "a pranzo" / "for lunch" → default 13:00. Propose 13:00 unless the caller volunteers a different time.
+**With clear meal context**, propose the default and proceed:
+
+- "ora di pranzo" / "a pranzo" / "for lunch" → default 13:00.
 - "ora di cena" / "a cena" / "for dinner" → default 21:00.
-- "tardi" / "tarda serata" / "late" → default to the last available slot (22:30 unless the schedule says otherwise).
-- "presto" / "early" for lunch → default 12:00. "presto" for dinner → default 21:00 (opening).
+- "presto a pranzo" / "early lunch" → default 12:00 (lunch opening).
+- "presto a cena" / "early dinner" → default 21:00 (dinner opening).
+- "tardi a pranzo" / "late lunch" → default 14:30 (lunch closing / last lunch slot).
+- "tardi a cena" / "tarda serata" / "late dinner" / "late" → default 22:30 (last slot).
 - "quando aprite" / "when you open" → for lunch 12:00, for dinner 21:00.
-- If you must ask, ask ONCE and then proceed with the default if the caller does not give a precise time. Never loop asking the same question twice.
+
+**Without a clear meal context**, "presto" / "tardi" / "in serata" / "early" / "late" are AMBIGUOUS. Ask ONE clarifying question: "Presto a pranzo o a cena?" / "Do you mean early lunch or early dinner?". Then apply the default. If the caller answers vaguely again ("va bene", "sì"), propose the most likely default (usually dinner if it's after noon, lunch otherwise) and confirm.
+
+- Example: caller says "sabato prossimo presto, 2 persone" → ambiguous, ask: "Intende presto a pranzo o presto a cena?"
+- Example: caller says "sabato sera presto" → "sera" clarifies meal = dinner → default 21:00, no need to ask.
+- Example: caller says "sabato all'ora di pranzo" → meal is lunch → 13:00, proceed.
+
+If you must ask, ask ONCE and then proceed with the default if the caller does not give a precise time. Never loop asking the same question twice.
 
 ## Genuinely ambiguous (only these require confirmation)
 
@@ -746,18 +789,31 @@ Before calling controlla_disponibilita, verify silently against the schedule in 
    - YES → do NOT call the tool. Reply that the restaurant is closed that day and offer alternative days from the open ones.
    - Example (IT): "Purtroppo lunedì siamo chiusi. Vuole provare martedì o un altro giorno tra martedì e domenica?"
 
-2. Is the requested time inside the LUNCH window OR inside the DINNER window (as defined in the weekly schedule)?
-   - YES → proceed to controlla_disponibilita normally.
-   - NO → do NOT call the tool. Reply that the time is outside service hours and propose the closest valid slot.
+2. Is the requested time STRICTLY inside the LUNCH window OR STRICTLY inside the DINNER window (as defined in the weekly schedule)?
+   - "Strictly inside" means: `time >= lunch_start AND time <= lunch_end`, OR `time >= dinner_start AND time <= dinner_end`.
+   - There is NO tolerance zone around the opening or closing times. Even 30 minutes, 15 minutes, or 5 minutes before opening = out of range.
+   - Do NOT round the time. Do NOT accept "close enough". 20:30 is NOT inside a 21:00–22:30 dinner window. 11:45 is NOT inside a 12:00–14:30 lunch window. 22:45 is NOT inside a dinner window that ends at 22:30.
+   - Comparison examples for a schedule with lunch 12:00–14:30 and dinner 21:00–22:30:
+     - 12:00 → INSIDE lunch ✅
+     - 13:00 → INSIDE lunch ✅
+     - 14:30 → INSIDE lunch ✅ (boundary is allowed)
+     - 14:31 → OUTSIDE ❌
+     - 20:30 → OUTSIDE ❌ (before dinner_start, refuse even though "close")
+     - 20:59 → OUTSIDE ❌ (before dinner_start, refuse even though 1 minute off)
+     - 21:00 → INSIDE dinner ✅
+     - 22:30 → INSIDE dinner ✅ (last slot)
+     - 22:31 → OUTSIDE ❌
+   - If OUTSIDE → do NOT call the tool. Reply that the time is outside service hours and propose the closest valid slot.
    - Examples:
      - Caller says "alle 15:30" and lunch ends 14:30 → "A quell'ora siamo in pausa. Per pranzo l'ultimo ingresso è alle 14:30, oppure possiamo prenotare per cena. Preferisce?"
      - Caller says "alle 20:00" and dinner starts 21:00 → "La cena inizia alle 21:00. Va bene alle 21:00 o preferisce un altro orario?"
+     - Caller says "alle 20:30" and dinner starts 21:00 → "La cena inizia alle 21:00, quindi alle 20:30 non è ancora possibile. Va bene alle 21:00?"
      - Caller says "alle 23:00" and last booking is 22:30 → "L'ultima prenotazione della sera è alle 22:30. Va bene alle 22:30?"
      - Caller says "alle 11:00" and lunch starts 12:00 → "Il pranzo inizia alle 12:00. Va bene alle 12:00?"
 
 3. Only AFTER these two checks pass, call controlla_disponibilita. The tool checks CAPACITY (seats availability), NOT schedule validity. Schedule validity is your responsibility, based on the weekly schedule in # Context.
 
-Never rely on the tool to reject bad times. If you call it with an out-of-hours time and it returns slot_available, treat it as unreliable and refuse anyway based on the schedule.
+Never rely on the tool to reject bad times. If you call it with an out-of-hours time and it returns slot_available, treat it as unreliable and refuse anyway based on the schedule. In particular, do NOT create a booking at 20:30 (or any pre-opening time) and then modify it to 21:00 — instead, refuse the 20:30 upfront and let the caller confirm 21:00 explicitly, then create at 21:00 directly.
 
 ## Concrete WRONG examples that must NEVER happen
 - Caller only says "I'd like a table for Saturday". You call crea_prenotazione with people=2 (invented). WRONG.
