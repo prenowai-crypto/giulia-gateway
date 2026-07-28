@@ -1,0 +1,468 @@
+[
+  {
+    "id": "B07-001",
+    "category": "modify",
+    "description": "Cliente crea e poi corregge subito l'ora (21 → 22)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marino",
+      "Aspetta, cambia in ventidue invece",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 2, "nome": "Marino", "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["22:00"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-002",
+    "category": "modify",
+    "description": "Cliente crea e poi corregge l'ora (21:00 → 21:30)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ricci",
+      "Ah scusa, era per le nove e mezza",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 2, "nome": "Ricci", "ora": "21:30" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["21:30"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-003",
+    "category": "modify",
+    "description": "Cliente corregge subito il numero di persone (2 → 3)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Bruno",
+      "Aspetta, siamo in tre",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 3, "nome": "Bruno" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["tre"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-004",
+    "category": "modify",
+    "description": "Cliente corregge subito il numero di persone (4 → 2)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Costa",
+      "Aspetta, siamo solo in due",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 2, "nome": "Costa" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["due"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-005",
+    "category": "modify",
+    "description": "Cliente corregge il cognome (Rossi → Russo)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Rossi",
+      "Aspetta, ho sbagliato, è Russo con la U",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Russo", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Russo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-006",
+    "category": "modify",
+    "description": "Cliente aggiunge il cognome (Giorgio → Giorgio Bianchi)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone, mi chiamo Giorgio",
+      "Il cognome è Bianchi, aggiungilo per favore",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Giorgio Bianchi", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Bianchi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-007",
+    "category": "modify",
+    "description": "Cliente cambia il giorno (venerdì → giovedì)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Palermo",
+      "Aspetta, era per giovedì, non venerdì",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Palermo", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["giovedì"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-008",
+    "category": "modify",
+    "description": "Cliente cambia giorno da venerdì a domenica",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Sanna",
+      "Aspetta, la spostiamo a domenica prossima stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Sanna", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["domenica"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-009",
+    "category": "modify",
+    "description": "Cliente cambia giorno a lunedì (chiuso) — modello deve rifiutare la modifica",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Longo",
+      "Aspetta, la spostiamo a lunedì prossimo stessa ora"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["chius"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-010",
+    "category": "modify",
+    "description": "Cliente cambia ora a orario fuori servizio — modello deve rifiutare la modifica",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Fabbri",
+      "Aspetta, cambia in ventidue e quarantacinque"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["22:30"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-011",
+    "category": "modify",
+    "description": "Cliente aggiunge una nota dopo la creazione (allergia)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Testa",
+      "Ah dimenticavo, uno di noi è celiaco, potete aggiungerlo?",
+      "Sì grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Testa", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["celia"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-012",
+    "category": "modify",
+    "description": "Cliente aggiunge una nota dopo la creazione (tavolo esterno)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Greco",
+      "Se possibile un tavolo esterno, dimenticavo",
+      "Sì grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Greco", "persone": 4 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["ester"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-013",
+    "category": "modify",
+    "description": "Doppia correzione — cliente cambia sia ora sia persone",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Amato",
+      "Aspetta cambio: cambia in ventidue e siamo in tre",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Amato", "persone": 3, "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["22:00"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-014",
+    "category": "modify",
+    "description": "Modifica persone che porta a gruppo grande (pending owner)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ferri",
+      "Aspetta, siamo in nove in realtà",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Ferri", "persone": 9 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["conferma"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-015",
+    "category": "modify",
+    "description": "Cliente cambia idea più volte — modello mantiene stato coerente",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Neri",
+      "Aspetta, siamo in tre",
+      "Anzi no, cambia in ventidue e siamo in quattro",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Neri", "persone": 4, "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["quattro"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-016",
+    "category": "modify",
+    "description": "Cliente chiede modifica senza specificare cosa — modello deve chiedere",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marchetti",
+      "Vorrei modificare la prenotazione"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["cosa"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-017",
+    "category": "modify",
+    "description": "Cliente crea, ripensa, poi mantiene tutto uguale (idempotenza)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Colombo",
+      "Aspetta, volevo cambiare ora... no lascia stare, va bene alle nove di sera",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["Colombo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-018",
+    "category": "modify",
+    "description": "Cliente vuole modificare ma dà solo il cognome — modello usa quello",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Barbieri",
+      "Cambia solo l'ora in ventidue",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Barbieri", "persone": 2, "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["22:00"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-019",
+    "category": "modify",
+    "description": "Cliente vuole spostare la prenotazione a un giorno con seed pieno (sabato)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Vitale",
+      "Aspetta, la spostiamo a sabato prossimo stessa ora"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["disponi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-020",
+    "category": "modify",
+    "description": "Cliente aggiunge nota compleanno dopo creazione",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Esposito",
+      "Ah, se possibile segnate che è per un compleanno",
+      "Sì grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Esposito", "persone": 4 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["compleanno"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-021",
+    "category": "modify",
+    "description": "Cliente aggiunge nota cane dopo creazione",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Romano",
+      "Ah, veniamo con il cane, va bene?",
+      "Sì grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Romano", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["cane"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-022",
+    "category": "modify",
+    "description": "Cliente chiede di modificare una prenotazione inesistente — modello deve dire non trovata",
+    "userTurns": [
+      "Buonasera, avevo una prenotazione a nome Franceschini per venerdì prossimo, vorrei cambiarla in giovedì stessa ora"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione" }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["trovat"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-023",
+    "category": "modify",
+    "description": "Cliente crea e poi anticipa a stessa ora giorno precedente",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Lombardi",
+      "Aspetta, l'anticipiamo a giovedì stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Lombardi", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["giovedì"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-024",
+    "category": "modify",
+    "description": "Cliente chiede 'annulla e rifai' — modello deve preferire modifica",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Costa",
+      "Cancella e rifai per giovedì stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Costa", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione"],
+    "replyMustContain": ["giovedì"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-025",
+    "category": "modify",
+    "description": "Cliente cambia persone da 8 a 9 (attraversa la soglia gruppi grandi)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, otto persone, a nome Ferrari",
+      "Aspetta, arriva anche mio fratello, siamo in nove",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Ferrari", "persone": 9 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["conferma"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-026",
+    "category": "modify",
+    "description": "Cliente cambia persone da 9 (large group) a 6 (torna a normale)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, nove persone, a nome Ferrero",
+      "Aspetta, saremo solo in sei alla fine",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Ferrero", "persone": 6 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["sei"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-027",
+    "category": "modify",
+    "description": "Cliente vuole modificare una nota già registrata (allergia → intolleranza)",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Sala. Sono celiaco",
+      "In realtà non sono celiaco, ho solo un'intolleranza al lattosio, potete cambiare la nota?",
+      "Sì grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Sala", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["lattosio"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-028",
+    "category": "modify",
+    "description": "Cliente vuole rimuovere una nota già registrata",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Grasso. Se possibile tavolo esterno",
+      "Non importa più del tavolo esterno, va bene qualsiasi",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Grasso", "persone": 4 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Grasso"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-029",
+    "category": "modify",
+    "description": "Cliente crea, poi corregge il nome usando 'no, mi chiamo'",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Verdi",
+      "No aspetta, non è Verdi, mi chiamo Bianchi",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Bianchi", "persone": 2 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Bianchi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B07-030",
+    "category": "modify",
+    "description": "Cliente chiede modifica dopo aver confermato — flow completo",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Salvatore",
+      "Sì confermo",
+      "Aspetta, in realtà ci serve un tavolo per tre persone",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Salvatore", "persone": 3 } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["tre"],
+    "replyLanguage": "it"
+  }
+]
