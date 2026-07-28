@@ -1,43 +1,48 @@
-# Test Conversations — Run 2026-07-28 18:56
+# Test Conversations — Run 2026-07-28 22:59
 
-**Model**: gpt-realtime-2.1-mini | **Total**: 30 | **Passed**: 20 (67%) | **Failed**: 10 | **Duration**: 876.5s
+**Model**: gpt-realtime-2.1-mini | **Total**: 30 | **Passed**: 15 (50%) | **Failed**: 15 | **Duration**: 790.7s
 
-## ❌ Failed tests (10)
+## ❌ Failed tests (15)
 
-- [B07-003](#b07-003) modify — reply must contain 'tre' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Ok, ver
-- [B07-004](#b07-004) modify — reply must contain 'due' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un atti
+- [B07-003](#b07-003) modify — reply must contain 'tre' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un atti
+- [B07-004](#b07-004) modify — reply must contain 'due' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfett
+- [B07-009](#b07-009) modify — last reply not in 'it': mi spiace, lunedì prossima siamo chiusi. vuole provare martedì o un altro giorno dalla nostra se
 - [B07-010](#b07-010) modify — forbidden tool call 'modifica_prenotazione' was made | reply must contain '22:30' — got: Salve, sono l'assistente vocale
+- [B07-012](#b07-012) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Greco","persone":4} not found. Actual: [{"name":"controlla
 - [B07-013](#b07-013) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Amato","persone":3,"ora":"22:00"} not found. Actual: [{"na
 - [B07-015](#b07-015) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Neri","persone":4,"ora":"22:00"} not found. Actual: [{"nam
+- [B07-016](#b07-016) modify — reply must contain 'cosa' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un att
+- [B07-018](#b07-018) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Barbieri","persone":2,"ora":"22:00"} not found. Actual: [{
 - [B07-019](#b07-019) modify — forbidden tool call 'modifica_prenotazione' was made
-- [B07-024](#b07-024) modify — forbidden tool call 'cancella_prenotazione' was made
+- [B07-021](#b07-021) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Romano","persone":2} not found. Actual: [{"name":"controll
+- [B07-024](#b07-024) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Costa","persone":2} not found. Actual: [{"name":"controlla
 - [B07-026](#b07-026) modify — reply must contain 'sei' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un atti
-- [B07-028](#b07-028) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Grasso","persone":4} not found. Actual: [{"name":"controll
+- [B07-029](#b07-029) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Bianchi","persone":2} not found. Actual: [{"name":"control
 - [B07-030](#b07-030) modify — expected tool call 'modifica_prenotazione' with args {"nome":"Salvatore","persone":3} not found. Actual: [{"name":"contr
 
 ## By category
 
-- `modify`: 20/30 pass
+- `modify`: 15/30 pass
 
 ---
 
-## B07-001 ✅ modify — Cliente crea e poi corregge subito l'ora (21 → 22) (30.3s)
+## B07-001 ✅ modify — Cliente crea e poi corregge subito l'ora (21 → 22) (26.5s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marino
 
-**[Giulia]**: Un attimo, controllo la disponibilità.
+**[Giulia]**: Perfetto, controllo la disponibilità per quell’orario e poi registro la prenotazione se è libera.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Marino", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: gemer48k66am575lhsfd...)
+→ 🔧 `crea_prenotazione(nome="Marino", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: inp5sfjunuhl1p41mj1i...)
 
 **[Giulia]**: Prenotazione confermata: Marino, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, cambia in ventidue invece
 
-**[Giulia]**: Un attimo, recupero la prenotazione e aggiorno l’orario.
+**[Giulia]**: Ok, un attimo: controllo la prenotazione e poi aggiorno solo l’orario.
 
 → 🔧 `trova_prenotazione(nome="Marino", data="2026-07-31")` → ✅ trovata (1)
 
@@ -57,7 +62,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "gemer48k66am575lhsfddcl650@google.com",
+    "eventId": "inp5sfjunuhl1p41mj1i9rb6r4@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -73,7 +78,7 @@
   },
   "reservations": [
     {
-      "eventId": "gemer48k66am575lhsfddcl650@google.com",
+      "eventId": "inp5sfjunuhl1p41mj1i9rb6r4@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -93,19 +98,19 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="gemer48k66am575lhsfddcl650@google.com", nome="Marino", data="2026-07-31", ora="22:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=gemer48k66am...
+→ 🔧 `modifica_prenotazione(eventId="inp5sfjunuhl1p41mj1i9rb6r4@google.com", nome="Marino", data="2026-07-31", ora="22:00", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=inp5sfjunuhl...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "gemer48k66am575lhsfddcl650@google.com",
+  "eventId": "inp5sfjunuhl1p41mj1i9rb6r4@google.com",
   "nome": "Marino",
   "data": "2026-07-31",
   "ora": "22:00",
   "persone": 2,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -114,40 +119,40 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "gemer48k66am575lhsfddcl650@google.com",
+  "eventId": "inp5sfjunuhl1p41mj1i9rb6r4@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Prenotazione aggiornata: Marino, venerdì alle 22:00, per 2 persone. A presto!
+**[Giulia]**: Ok, l’orario è aggiornato a 22:00. Prenotazione confermata: Marino, venerdì alle 22:00, per 2 persone.
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, la prenotazione è aggiornata. Ti aspettiamo venerdì alle 22:00.
+**[Giulia]**: Perfetto, grazie! A presto, Marino.
 
 ---
 
-## B07-002 ✅ modify — Cliente crea e poi corregge l'ora (21:00 → 21:30) (30.1s)
+## B07-002 ✅ modify — Cliente crea e poi corregge l'ora (21:00 → 21:30) (29.2s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ricci
 
-**[Giulia]**: Ok, controllo la disponibilità per quella data e orario. Un attimo.
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e orario.
 
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
+→ 🔧 `controlla_disponibilita(data="2026-08-07", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Ricci", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 2bakjiie8ps1bu9gs45i...)
+→ 🔧 `crea_prenotazione(nome="Ricci", data="2026-08-07", ora="21:00", persone=2, note="")` → ✅ creata (eventId: b3bp66c9olbjuvgto1f5...)
 
 **[Giulia]**: Prenotazione confermata: Ricci, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Ah scusa, era per le nove e mezza
 
-**[Giulia]**: Ok, mi occorre un attimo per verificare la prenotazione e aggiornare l’orario.
+**[Giulia]**: Ok, un attimo, controllo la prenotazione e poi aggiorniamo l’orario.
 
-→ 🔧 `trova_prenotazione(nome="Ricci", data="2026-07-31")` → ✅ trovata (1)
+→ 🔧 `trova_prenotazione(nome="Ricci", data="2026-08-07")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -155,7 +160,7 @@
 // PAYLOAD
 {
   "nome": "Ricci",
-  "data": "2026-07-31"
+  "data": "2026-08-07"
 }
 ```
 
@@ -165,8 +170,8 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "2bakjiie8ps1bu9gs45iifvul4@google.com",
-    "date": "2026-07-31",
+    "eventId": "b3bp66c9olbjuvgto1f55fduao@google.com",
+    "date": "2026-08-07",
     "time": "21:00",
     "people": 2,
     "name": "Ricci",
@@ -181,8 +186,8 @@
   },
   "reservations": [
     {
-      "eventId": "2bakjiie8ps1bu9gs45iifvul4@google.com",
-      "date": "2026-07-31",
+      "eventId": "b3bp66c9olbjuvgto1f55fduao@google.com",
+      "date": "2026-08-07",
       "time": "21:00",
       "people": 2,
       "name": "Ricci",
@@ -201,16 +206,99 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="2bakjiie8ps1bu9gs45iifvul4@google.com", nome="Ricci", data="2026-07-31", ora="21:30", persone=2, note="")` → ✅ ok [UPDATE] eventId=2bakjiie8ps1...
+→ 🔧 `modifica_prenotazione(evento="b3bp66c9olbjuvgto1f55fduao@google.com", nome="Ricci", data="2026-08-07", ora="21:30", persone=2, note="")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "2bakjiie8ps1bu9gs45iifvul4@google.com",
+  "evento": "b3bp66c9olbjuvgto1f55fduao@google.com",
   "nome": "Ricci",
-  "data": "2026-07-31",
+  "data": "2026-08-07",
+  "ora": "21:30",
+  "persone": 2,
+  "note": ""
+}
+```
+
+```json
+// RESPONSE
+{
+  "success": false,
+  "reason": "missing_eventid",
+  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
+}
+```
+
+</details>
+
+**[Giulia]**: Un attimo, sto recuperando di nuovo i dati necessari per aggiornare l’orario.
+
+→ 🔧 `trova_prenotazione(nome="Ricci", data="2026-08-07")` → ✅ trovata (1)
+
+<details><summary>🔎 payload & response</summary>
+
+```json
+// PAYLOAD
+{
+  "nome": "Ricci",
+  "data": "2026-08-07"
+}
+```
+
+```json
+// RESPONSE
+{
+  "found": true,
+  "count": 1,
+  "reservation": {
+    "eventId": "b3bp66c9olbjuvgto1f55fduao@google.com",
+    "date": "2026-08-07",
+    "time": "21:00",
+    "people": 2,
+    "name": "Ricci",
+    "phone": null,
+    "email": null,
+    "status": "CONFIRMED",
+    "matchType": "name",
+    "fuzzyConfidence": 1,
+    "fuzzyType": "exact",
+    "requiresConfirmation": false,
+    "notes": "Gruppo: No"
+  },
+  "reservations": [
+    {
+      "eventId": "b3bp66c9olbjuvgto1f55fduao@google.com",
+      "date": "2026-08-07",
+      "time": "21:00",
+      "people": 2,
+      "name": "Ricci",
+      "phone": null,
+      "email": null,
+      "status": "CONFIRMED",
+      "matchType": "name",
+      "fuzzyConfidence": 1,
+      "fuzzyType": "exact",
+      "requiresConfirmation": false,
+      "notes": "Gruppo: No"
+    }
+  ]
+}
+```
+
+</details>
+
+→ 🔧 `modifica_prenotazione(eventId="b3bp66c9olbjuvgto1f55fduao@google.com", nome="Ricci", data="2026-08-07", ora="21:30", persone=2, note="")` → ✅ ok [UPDATE] eventId=b3bp66c9olbj...
+
+<details><summary>🔎 payload & response</summary>
+
+```json
+// PAYLOAD
+{
+  "eventId": "b3bp66c9olbjuvgto1f55fduao@google.com",
+  "nome": "Ricci",
+  "data": "2026-08-07",
   "ora": "21:30",
   "persone": 2,
   "note": ""
@@ -222,49 +310,50 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "2bakjiie8ps1bu9gs45iifvul4@google.com",
+  "eventId": "b3bp66c9olbjuvgto1f55fduao@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, ho aggiornato la prenotazione a Ricci: venerdì alle 21:30, per 2 persone. A presto!
+**[Giulia]**: Perfetto, ho aggiornato l’orario a 21:30 per Ricci, 2 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, confermato! La prenotazione rimane a Ricci per venerdì alle 21:30, per 2 persone.
+**[Giulia]**: Perfetto, confermato: Ricci, venerdì alle 21:30, per 2 persone. A presto!
 
 ---
 
-## B07-003 ❌ modify — Cliente corregge subito il numero di persone (2 → 3) (25.8s)
+## B07-003 ❌ modify — Cliente corregge subito il numero di persone (2 → 3) (26.7s)
 
-> ⚠️ **Failed**: reply must contain 'tre' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Ok, verifico la disponibilità per quell’orario e poi registro la prenotazione se è libera. Prenotazione confermata: Bru
+> ⚠️ **Failed**: reply must contain 'tre' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Prenotazione confermata: Bruno, venerdì alle 21:00, per 2 
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Bruno
 
-**[Giulia]**: Ok, verifico la disponibilità per quell’orario e poi registro la prenotazione se è libera.
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Bruno", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 3uf0fsjl06mr8conl8h0...)
+→ 🔧 `crea_prenotazione(nome="Bruno", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 0idnnefl0tq9dqh653iv...)
 
-**[Giulia]**: Prenotazione confermata: Bruno, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Bruno, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, siamo in tre
 
-**[Giulia]**: Un attimo, controllo la prenotazione e poi aggiorno il numero di persone.
+**[Giulia]**: Un attimo, recupero la prenotazione e poi aggiorno il numero di persone.
 
-→ 🔧 `trova_prenotazione(nome="Bruno")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Bruno", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "nome": "Bruno"
+  "nome": "Bruno",
+  "data": "2026-07-31"
 }
 ```
 
@@ -272,9 +361,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "3uf0fsjl06mr8conl8h00jvktc@google.com",
+    "eventId": "0idnnefl0tq9dqh653ivt6oltc@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -290,7 +379,7 @@
   },
   "reservations": [
     {
-      "eventId": "3uf0fsjl06mr8conl8h00jvktc@google.com",
+      "eventId": "0idnnefl0tq9dqh653ivt6oltc@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -303,20 +392,6 @@
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Marino",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.6,
-      "fuzzyType": "lev3",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -324,20 +399,18 @@
 
 </details>
 
-**[Giulia]**: Procedo con l’aggiornamento della prenotazione a 3 persone.
-
-→ 🔧 `modifica_prenotazione(eventId="3uf0fsjl06mr8conl8h00jvktc@google.com", nome="Bruno", data="2026-07-31", ora="21:00", persone=3, note="")` → ✅ ok [UPDATE] eventId=3uf0fsjl06mr...
+→ 🔧 `modifica_prenotazione(nome="Bruno", data="2026-07-31", ora="21:00", persone=3, eventId="0idnnefl0tq9dqh653ivt6oltc@google.com", note="")` → ✅ ok [UPDATE] eventId=0idnnefl0tq9...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "3uf0fsjl06mr8conl8h00jvktc@google.com",
   "nome": "Bruno",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 3,
+  "eventId": "0idnnefl0tq9dqh653ivt6oltc@google.com",
   "note": ""
 }
 ```
@@ -347,42 +420,40 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "3uf0fsjl06mr8conl8h00jvktc@google.com",
+  "eventId": "0idnnefl0tq9dqh653ivt6oltc@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Fatto. La prenotazione è aggiornata: Bruno, venerdì alle 21:00, per 3 persone.
+**[Giulia]**: Aggiornamento effettuato: Bruno, venerdì alle 21:00, per 3 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, la prenotazione è confermata. A presto!
+**[Giulia]**: Perfetto, confermato! Ti aspettiamo a presto.
 
 ---
 
-## B07-004 ❌ modify — Cliente corregge subito il numero di persone (4 → 2) (25.9s)
+## B07-004 ❌ modify — Cliente corregge subito il numero di persone (4 → 2) (28.8s)
 
-> ⚠️ **Failed**: reply must contain 'due' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quell’orario. Perfetto, procede con la prenotazione. Prenotazione confermata:
+> ⚠️ **Failed**: reply must contain 'due' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, un attimo mentre controllo la disponibilità per questo orario. Prenotazione confermata: Costa, venerdì alle 2
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Costa
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
+**[Giulia]**: Perfetto, un attimo mentre controllo la disponibilità per questo orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=4)` → slot_available
 
-**[Giulia]**: Perfetto, procede con la prenotazione.
-
-→ 🔧 `crea_prenotazione(nome="Costa", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ creata (eventId: ehmomlilti71bnnt6vh7...)
+→ 🔧 `crea_prenotazione(nome="Costa", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ creata (eventId: fo0p1o6nul4q5mt3s219...)
 
 **[Giulia]**: Prenotazione confermata: Costa, venerdì alle 21:00, per 4 persone. A presto!
 
 **[Cliente]**: Aspetta, siamo solo in due
 
-**[Giulia]**: Un attimo, controllo la prenotazione per aggiornare il gruppo.
+**[Giulia]**: Un attimo, cerco la prenotazione esistente prima di aggiornarla.
 
 → 🔧 `trova_prenotazione(nome="Costa", data="2026-07-31")` → ✅ trovata (1)
 
@@ -402,7 +473,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "ehmomlilti71bnnt6vh74itlf4@google.com",
+    "eventId": "fo0p1o6nul4q5mt3s2199hh2r8@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 4,
@@ -418,7 +489,7 @@
   },
   "reservations": [
     {
-      "eventId": "ehmomlilti71bnnt6vh74itlf4@google.com",
+      "eventId": "fo0p1o6nul4q5mt3s2199hh2r8@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 4,
@@ -438,45 +509,19 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(nome="Costa", data="2026-07-31", ora="21:00", persone=2, note="")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
+→ 🔧 `modifica_prenotazione(eventId="fo0p1o6nul4q5mt3s2199hh2r8@google.com", nome="Costa", data="2026-07-31", ora="21:00", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=fo0p1o6nul4q...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
+  "eventId": "fo0p1o6nul4q5mt3s2199hh2r8@google.com",
   "nome": "Costa",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 2,
-  "note": ""
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": false,
-  "reason": "missing_eventid",
-  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
-}
-```
-
-</details>
-
-→ 🔧 `modifica_prenotazione(eventId="ehmomlilti71bnnt6vh74itlf4@google.com", nome="Costa", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=ehmomlilti71...
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "eventId": "ehmomlilti71bnnt6vh74itlf4@google.com",
-  "nome": "Costa",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 2,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -485,49 +530,50 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "ehmomlilti71bnnt6vh74itlf4@google.com",
+  "eventId": "fo0p1o6nul4q5mt3s2199hh2r8@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Ok, aggiornato: Costa, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Perfetto, ho aggiornato la prenotazione a 2 persone per Costa, venerdì alle 21:00. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, confermato: Costa, venerdì alle 21:00, 2 persone. A presto!
+**[Giulia]**: Perfetto, grazie per la conferma. A presto!
 
 ---
 
-## B07-005 ✅ modify — Cliente corregge il cognome (Rossi → Russo) (27.0s)
+## B07-005 ✅ modify — Cliente corregge il cognome (Rossi → Russo) (32.3s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Rossi
 
-**[Giulia]**: Un momento, controllo la disponibilità per quel giorno e orario.
+**[Giulia]**: Un attimo, controllo la disponibilità per questo orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Perfetto, procedo con la registrazione della prenotazione.
+**[Giulia]**: Perfect, I'll register the reservation now.
 
-→ 🔧 `crea_prenotazione(nome="Rossi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: lju3imj0tfi6krlrtssv...)
+→ 🔧 `crea_prenotazione(nome="Rossi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 1dq28botjvq3ifnouc8f...)
 
-**[Giulia]**: La prenotazione è confermata: Rossi, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Rossi, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, ho sbagliato, è Russo con la U
 
-**[Giulia]**: Un attimo, controllo la prenotazione e poi la modifico.
+**[Giulia]**: Un attimo, recupero la prenotazione per aggiornare solo il nome.
 
-→ 🔧 `trova_prenotazione(nome="Rossi")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Rossi", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "nome": "Rossi"
+  "nome": "Rossi",
+  "data": "2026-07-31"
 }
 ```
 
@@ -535,9 +581,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "lju3imj0tfi6krlrtssvmql8q4@google.com",
+    "eventId": "1dq28botjvq3ifnouc8fj5rgis@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -553,7 +599,7 @@
   },
   "reservations": [
     {
-      "eventId": "lju3imj0tfi6krlrtssvmql8q4@google.com",
+      "eventId": "1dq28botjvq3ifnouc8fj5rgis@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -566,21 +612,6 @@
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": "roahaq6g7d84d9m15jomhf88h0@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Russo",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true,
-      "notes": "Gruppo: No"
     }
   ]
 }
@@ -588,19 +619,19 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="lju3imj0tfi6krlrtssvmql8q4@google.com", nome="Russo", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=lju3imj0tfi6...
+→ 🔧 `modifica_prenotazione(eventId="1dq28botjvq3ifnouc8fj5rgis@google.com", nome="Russo", data="2026-07-31", ora="21:00", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=1dq28botjvq3...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "lju3imj0tfi6krlrtssvmql8q4@google.com",
+  "eventId": "1dq28botjvq3ifnouc8fj5rgis@google.com",
   "nome": "Russo",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 2,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -609,40 +640,40 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "lju3imj0tfi6krlrtssvmql8q4@google.com",
+  "eventId": "1dq28botjvq3ifnouc8fj5rgis@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Fatto, ho aggiornato il nome in Russo. Prenotazione confermata: Russo, venerdì alle 21:00, 2 persone.
+**[Giulia]**: Perfetto, ho aggiornato il nome a “Russo”. Prenotazione confermata per 2 persone alle 21:00 di venerdì.
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, conferma ricevuta. La prenotazione per Russo è confermata: venerdì alle 21:00, 2 persone.
+**[Giulia]**: Perfetto, grazie! Prenotazione confermata: Russo, venerdì alle 21:00, per 2 persone.
 
 ---
 
-## B07-006 ✅ modify — Cliente aggiunge il cognome (Giorgio → Giorgio Bianchi) (28.0s)
+## B07-006 ✅ modify — Cliente aggiunge il cognome (Giorgio → Giorgio Bianchi) (30.2s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone, mi chiamo Giorgio
 
-**[Giulia]**: Un attimo, controllo la disponibilità per l’orario richiesto.
+**[Giulia]**: Perfetto, un attimo, controllo la disponibilità per questo orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Perfetto, ora registro la prenotazione.
+**[Giulia]**: Un attimo, registro la prenotazione a nome del cliente.
 
-→ 🔧 `crea_prenotazione(nome="Giorgio", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: jamn53epanc8jgvo2271...)
+→ 🔧 `crea_prenotazione(nome="Giorgio", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: l8v7fnuenrtjlgm10uf1...)
 
-**[Giulia]**: Prenotazione confermata per Giorgio, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Giorgio, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Il cognome è Bianchi, aggiungilo per favore
 
-**[Giulia]**: Ok, aggiungo il cognome alla prenotazione; controllo prima il record esistente.
+**[Giulia]**: Un momento, recupero la prenotazione per aggiornare il nome.
 
 → 🔧 `trova_prenotazione(nome="Giorgio", data="2026-07-31")` → ✅ trovata (1)
 
@@ -662,7 +693,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "jamn53epanc8jgvo22713v9i5o@google.com",
+    "eventId": "l8v7fnuenrtjlgm10uf19uutm8@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -678,7 +709,7 @@
   },
   "reservations": [
     {
-      "eventId": "jamn53epanc8jgvo22713v9i5o@google.com",
+      "eventId": "l8v7fnuenrtjlgm10uf19uutm8@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -698,47 +729,19 @@
 
 </details>
 
-**[Giulia]**: Un attimo, aggiorno i dati della prenotazione.
-
-→ 🔧 `modifica_prenotazione(nome="Giorgio Bianchi", data="2026-07-31", ora="21:00", persone=2, note="Gruppo: No")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
+→ 🔧 `modifica_prenotazione(eventId="l8v7fnuenrtjlgm10uf19uutm8@google.com", nome="Giorgio Bianchi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=l8v7fnuenrtj...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
+  "eventId": "l8v7fnuenrtjlgm10uf19uutm8@google.com",
   "nome": "Giorgio Bianchi",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 2,
-  "note": "Gruppo: No"
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": false,
-  "reason": "missing_eventid",
-  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
-}
-```
-
-</details>
-
-→ 🔧 `modifica_prenotazione(eventId="jamn53epanc8jgvo22713v9i5o@google.com", nome="Giorgio Bianchi", data="2026-07-31", ora="21:00", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=jamn53epanc8...
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "eventId": "jamn53epanc8jgvo22713v9i5o@google.com",
-  "nome": "Giorgio Bianchi",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 2,
-  "note": "Gruppo: No"
+  "note": ""
 }
 ```
 
@@ -747,38 +750,38 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "jamn53epanc8jgvo22713v9i5o@google.com",
+  "eventId": "l8v7fnuenrtjlgm10uf19uutm8@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Aggiornato! La prenotazione è confermata con il nome Giorgio Bianchi, sempre per venerdì alle 21:00, 2 persone.
+**[Giulia]**: Fatto! Ho aggiornato la prenotazione: Giorgio Bianchi, venerdì alle 21:00, per 2 persone.
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, la prenotazione è confermata. A presto, Giorgio Bianchi!
+**[Giulia]**: Perfetto, grazie! La prenotazione è confermata, a presto!
 
 ---
 
-## B07-007 ✅ modify — Cliente cambia il giorno (venerdì → giovedì) (50.6s)
+## B07-007 ✅ modify — Cliente cambia il giorno (venerdì → giovedì) (30.6s)
 
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+**[Giulia]**: Salve, sono l’assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Palermo
 
-**[Giulia]**: Un momento, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Palermo", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 4hjo2ibfch4dcnaeeqig...)
+→ 🔧 `crea_prenotazione(nome="Palermo", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: k0npkkbrsrg5shms41bu...)
 
-**[Giulia]**: Prenotazione confermata: Palermo, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Palermo, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, era per giovedì, non venerdì
 
-**[Giulia]**: Un attimo, trovo la prenotazione e aggiorno il giorno.
+**[Giulia]**: Un attimo, controllo il booking esistente per aggiornarlo al giovedì.
 
 → 🔧 `trova_prenotazione(nome="Palermo")` → ✅ trovata (1)
 
@@ -797,7 +800,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "4hjo2ibfch4dcnaeeqigj3m99k@google.com",
+    "eventId": "k0npkkbrsrg5shms41bumh053k@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -813,7 +816,7 @@
   },
   "reservations": [
     {
-      "eventId": "4hjo2ibfch4dcnaeeqigj3m99k@google.com",
+      "eventId": "k0npkkbrsrg5shms41bumh053k@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -833,14 +836,14 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="4hjo2ibfch4dcnaeeqigj3m99k@google.com", nome="Palermo", data="2026-07-30", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=4hjo2ibfch4d...
+→ 🔧 `modifica_prenotazione(eventId="k0npkkbrsrg5shms41bumh053k@google.com", nome="Palermo", data="2026-07-30", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=k0npkkbrsrg5...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "4hjo2ibfch4dcnaeeqigj3m99k@google.com",
+  "eventId": "k0npkkbrsrg5shms41bumh053k@google.com",
   "nome": "Palermo",
   "data": "2026-07-30",
   "ora": "21:00",
@@ -854,40 +857,38 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "4hjo2ibfch4dcnaeeqigj3m99k@google.com",
+  "eventId": "k0npkkbrsrg5shms41bumh053k@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Prenotazione aggiornata: Palermo, giovedì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione aggiornata: Palermo, giovedì 30 luglio alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, la prenotazione è confermata per giovedì alle 21:00 per 2 persone. A presto!
+**[Giulia]**: Perfetto, la conferma è registrata. Ci vediamo giovedì alle 21:00 per 2 persone.
 
 ---
 
-## B07-008 ✅ modify — Cliente cambia giorno da venerdì a domenica (30.2s)
+## B07-008 ✅ modify — Cliente cambia giorno da venerdì a domenica (28.7s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Sanna
 
-**[Giulia]**: Ok, controlliamo la disponibilità per quell’orario. Un attimo.
+**[Giulia]**: Capisco, mi chiede di controllare disponibilità per quel giorno e orario. Lasciami verificare un momento.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Sanna", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: fumamt5vuqks63rtjukv...)
+→ 🔧 `crea_prenotazione(nome="Sanna", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: vutuh8och5opug5idlgq...)
 
-**[Giulia]**: Prenotazione confermata: Sanna, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Booking confirmed: Sanna, Friday July 31 at 21:00, for 2 people. See you then!
 
 **[Cliente]**: Aspetta, la spostiamo a domenica prossima stessa ora
 
-**[Giulia]**: Ok, un attimo: cerco la prenotazione esistente, poi aggiorniamo la data.
-
-→ 🔧 `trova_prenotazione(nome="Sanna", data="2026-07-31")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Sanna", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -903,9 +904,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "fumamt5vuqks63rtjukvnqc5js@google.com",
+    "eventId": "vutuh8och5opug5idlgq41ff7k@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -921,22 +922,7 @@
   },
   "reservations": [
     {
-      "eventId": "fumamt5vuqks63rtjukvnqc5js@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Sanna",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    },
-    {
-      "eventId": "fumamt5vuqks63rtjukvnqc5js@google.com",
+      "eventId": "vutuh8och5opug5idlgq41ff7k@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -956,18 +942,18 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="fumamt5vuqks63rtjukvnqc5js@google.com", nome="Sanna", data="2026-08-02", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=fumamt5vuqks...
+→ 🔧 `modifica_prenotazione(nome="Sanna", data="2026-08-02", ora="21:00", persone=2, eventId="vutuh8och5opug5idlgq41ff7k@google.com", note="")` → ✅ ok [UPDATE] eventId=vutuh8och5op...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "fumamt5vuqks63rtjukvnqc5js@google.com",
   "nome": "Sanna",
   "data": "2026-08-02",
   "ora": "21:00",
   "persone": 2,
+  "eventId": "vutuh8och5opug5idlgq41ff7k@google.com",
   "note": ""
 }
 ```
@@ -977,7 +963,7 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "fumamt5vuqks63rtjukvnqc5js@google.com",
+  "eventId": "vutuh8och5opug5idlgq41ff7k@google.com",
   "changeType": "UPDATE"
 }
 ```
@@ -988,49 +974,49 @@
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, confermato. Sabato è aggiornato a domenica alle 21:00 per 2 persone.
+**[Giulia]**: Perfetto, grazie per la conferma! A presto, Sanna!
 
 ---
 
-## B07-009 ✅ modify — Cliente cambia giorno a lunedì (chiuso) — modello deve rifiutare la modifica (20.4s)
+## B07-009 ❌ modify — Cliente cambia giorno a lunedì (chiuso) — modello deve rifiutare la modifica (7.8s)
+
+> ⚠️ **Failed**: last reply not in 'it': mi spiace, lunedì prossima siamo chiusi. vuole provare martedì o un altro giorno dalla nostra settimana?
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Longo
 
-**[Giulia]**: Ok, un attimo, controllo la disponibilità per questa richiesta ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per questa data e ora.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Longo", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: kuech53977mrki6j8pii...)
-
-**[Giulia]**: Prenotazione confermata: Longo, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Perfetto. Confermo: Longo, venerdì 31 luglio 2026, alle 21:00, 2 persone. Vuole che proceda con la prenotazione?
 
 **[Cliente]**: Aspetta, la spostiamo a lunedì prossimo stessa ora
 
-**[Giulia]**: Purtroppo lunedì siamo chiusi, quindi non posso spostare la prenotazione a quella data. Vorrebbe restare a venerdì o provare martedì?
+**[Giulia]**: Mi spiace, lunedì prossima siamo chiusi. Vuole provare martedì o un altro giorno dalla nostra settimana?
 
 ---
 
-## B07-010 ❌ modify — Cliente cambia ora a orario fuori servizio — modello deve rifiutare la modifica (32.3s)
+## B07-010 ❌ modify — Cliente cambia ora a orario fuori servizio — modello deve rifiutare la modifica (27.7s)
 
-> ⚠️ **Failed**: forbidden tool call 'modifica_prenotazione' was made | reply must contain '22:30' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e orario. Prenotazione confermata per Fabbri, venerdì alle 21:00,
+> ⚠️ **Failed**: forbidden tool call 'modifica_prenotazione' was made | reply must contain '22:30' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità. Prenotazione confermata: Fabbri, venerdì alle 21:00, per 2 persone. A presto! Un
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Fabbri
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e orario.
+**[Giulia]**: Un attimo, controllo la disponibilità.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Fabbri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: tordt6dcdt9qolj8k5gp...)
+→ 🔧 `crea_prenotazione(nome="Fabbri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: tp4kvt5u9c50bqgn6d7a...)
 
-**[Giulia]**: Prenotazione confermata per Fabbri, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Fabbri, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, cambia in ventidue e quarantacinque
 
-**[Giulia]**: Ok, un attimo: vado a recuperare la prenotazione per aggiornare l’orario.
+**[Giulia]**: Un attimo, cerco la prenotazione e poi aggiorno l’orario.
 
 → 🔧 `trova_prenotazione(nome="Fabbri", data="2026-07-31")` → ✅ trovata (1)
 
@@ -1050,7 +1036,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "tordt6dcdt9qolj8k5gp868boo@google.com",
+    "eventId": "tp4kvt5u9c50bqgn6d7aqfv900@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -1066,7 +1052,7 @@
   },
   "reservations": [
     {
-      "eventId": "tordt6dcdt9qolj8k5gp868boo@google.com",
+      "eventId": "tp4kvt5u9c50bqgn6d7aqfv900@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -1086,21 +1072,19 @@
 
 </details>
 
-**[Giulia]**: Perfetto, ora aggiorno la prenotazione con il nuovo orario.
-
-→ 🔧 `modifica_prenotazione(eventId="tordt6dcdt9qolj8k5gp868boo@google.com", nome="Fabbri", data="2026-07-31", ora="22:45", persone=2, note="")` → ✅ ok [UPDATE] eventId=tordt6dcdt9q...
+→ 🔧 `modifica_prenotazione(eventId="tp4kvt5u9c50bqgn6d7aqfv900@google.com", nome="Fabbri", data="2026-07-31", ora="22:45", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=tp4kvt5u9c50...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "tordt6dcdt9qolj8k5gp868boo@google.com",
+  "eventId": "tp4kvt5u9c50bqgn6d7aqfv900@google.com",
   "nome": "Fabbri",
   "data": "2026-07-31",
   "ora": "22:45",
   "persone": 2,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -1109,38 +1093,36 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "tordt6dcdt9qolj8k5gp868boo@google.com",
+  "eventId": "tp4kvt5u9c50bqgn6d7aqfv900@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, la nuova prenotazione è confermata alle 22:45 per Fabbri, 2 persone.
+**[Giulia]**: Ok, ho aggiornato l’orario a 22:45. Prenotazione confermata per Fabbri, il 31 luglio, 2 persone.
 
 ---
 
-## B07-011 ✅ modify — Cliente aggiunge una nota dopo la creazione (allergia) (28.3s)
+## B07-011 ✅ modify — Cliente aggiunge una nota dopo la creazione (allergia) (32.4s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Testa
 
-**[Giulia]**: Perfetto, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per questo orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Va bene, registro la prenotazione per quella data e ora.
+→ 🔧 `crea_prenotazione(nome="Testa", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: qhj8fvss30ctr3vgkhbn...)
 
-→ 🔧 `crea_prenotazione(nome="Testa", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: mmfo6htfmnsjevi5fnkt...)
-
-**[Giulia]**: Prenotazione confermata: Testa, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata per Testa, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Ah dimenticavo, uno di noi è celiaco, potete aggiungerlo?
 
-**[Giulia]**: Un attimo, controllo la prenotazione per aggiornare la nota.
+**[Giulia]**: Un attimo, aggiorno la prenotazione con l’indicazione celiaco.
 
-→ 🔧 `trova_prenotazione(nome="Testa", data="2026-07-31")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Testa", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -1156,9 +1138,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "mmfo6htfmnsjevi5fnkttg85q4@google.com",
+    "eventId": "qhj8fvss30ctr3vgkhbn0qd014@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -1174,7 +1156,7 @@
   },
   "reservations": [
     {
-      "eventId": "mmfo6htfmnsjevi5fnkttg85q4@google.com",
+      "eventId": "qhj8fvss30ctr3vgkhbn0qd014@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -1187,20 +1169,6 @@
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 4,
-      "name": "Costa",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -1208,14 +1176,14 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="mmfo6htfmnsjevi5fnkttg85q4@google.com", nome="Testa", data="2026-07-31", ora="21:00", persone=2, note="Celiaco.")` → ✅ ok [UPDATE] eventId=mmfo6htfmnsj...
+→ 🔧 `modifica_prenotazione(eventId="qhj8fvss30ctr3vgkhbn0qd014@google.com", nome="Testa", data="2026-07-31", ora="21:00", persone=2, note="Celiaco.")` → ✅ ok [UPDATE] eventId=qhj8fvss30ct...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "mmfo6htfmnsjevi5fnkttg85q4@google.com",
+  "eventId": "qhj8fvss30ctr3vgkhbn0qd014@google.com",
   "nome": "Testa",
   "data": "2026-07-31",
   "ora": "21:00",
@@ -1229,193 +1197,79 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "mmfo6htfmnsjevi5fnkttg85q4@google.com",
+  "eventId": "qhj8fvss30ctr3vgkhbn0qd014@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: La prenotazione è stata aggiornata. Ho segnato l’allergia: celiaco.
+**[Giulia]**: Fatto! Ho aggiunto l’indicazione “celiaco” alla prenotazione per Testa, venerdì alle 21:00, per 2 persone.
 
 **[Cliente]**: Sì grazie
 
-**[Giulia]**: Perfetto, a presto! Buona serata e grazie per averci avvisato.
+**[Giulia]**: Perfetto, a presto! Se ha bisogno di altro, sono qui.
 
 ---
 
-## B07-012 ✅ modify — Cliente aggiunge una nota dopo la creazione (tavolo esterno) (37.3s)
+## B07-012 ❌ modify — Cliente aggiunge una nota dopo la creazione (tavolo esterno) (51.5s)
+
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Greco","persone":4} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":4}},{"name":"crea_prenotazione","args":{"nome":"Greco","data":"2026-07-31","ora":"21:00","persone":4,"note":""}},{"name":"crea_prenotazione","args":{"nome":"Greco","data":"2026-07-31","ora":"21:00","persone":4,"note":""}},{"name":"crea_prenotazione","args":{"nome":"Greco","data":"2026-07-31","ora":"21:00","persone":4,"note":"Richiesta: tavolo esterno se possibile."}}]
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Greco
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e orario.
+**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario prima di confermare la prenotazione.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=4)` → slot_available
 
-**[Giulia]**: Perfetto, procedo con la prenotazione.
+→ 🔧 `crea_prenotazione(nome="Greco", data="2026-07-31", ora="21:00", persone=4, note="")` → ❌ error: This operation was aborted
 
-→ 🔧 `crea_prenotazione(nome="Greco", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ creata (eventId: ccdciuigd4i5u5agbaeh...)
+**[Giulia]**: Un momento, riprovo la registrazione.
 
-**[Giulia]**: Prenotazione confermata: Greco, venerdì alle 21:00, per 4 persone. A presto!
+→ 🔧 `crea_prenotazione(nome="Greco", data="2026-07-31", ora="21:00", persone=4, note="")` → ❌ error: This operation was aborted
+
+**[Giulia]**: Perfetto, ho verificato la disponibilità. Tuttavia la registrazione non è andata a buon fine.  
+Posso provare di nuovo o preferisce un altro orario o una data diversa?
 
 **[Cliente]**: Se possibile un tavolo esterno, dimenticavo
 
-**[Giulia]**: Un attimo, recupero la prenotazione per aggiornare la nota.
-
-→ 🔧 `trova_prenotazione(nome="Greco", data="2026-07-31")` → ✅ trovata (2)
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Greco",
-  "data": "2026-07-31"
-}
-```
-
-```json
-// RESPONSE
-{
-  "found": true,
-  "count": 2,
-  "reservation": {
-    "eventId": "ccdciuigd4i5u5agbaehhsd12g@google.com",
-    "date": "2026-07-31",
-    "time": "21:00",
-    "people": 4,
-    "name": "Greco",
-    "phone": null,
-    "email": null,
-    "status": "CONFIRMED",
-    "matchType": "name",
-    "fuzzyConfidence": 1,
-    "fuzzyType": "exact",
-    "requiresConfirmation": false,
-    "notes": "Gruppo: No"
-  },
-  "reservations": [
-    {
-      "eventId": "ccdciuigd4i5u5agbaehhsd12g@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 4,
-      "name": "Greco",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    },
-    {
-      "eventId": "ccdciuigd4i5u5agbaehhsd12g@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 4,
-      "name": "Greco",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    }
-  ]
-}
-```
-
-</details>
-
-→ 🔧 `modifica_prenotazione(nome="Greco", data="2026-07-31", ora="21:00", persone=4, note="Tavolo esterno se possibile.")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Greco",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 4,
-  "note": "Tavolo esterno se possibile."
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": false,
-  "reason": "missing_eventid",
-  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
-}
-```
-
-</details>
-
-→ 🔧 `modifica_prenotazione(eventId="ccdciuigd4i5u5agbaehhsd12g@google.com", nome="Greco", data="2026-07-31", ora="21:00", persone=4, note="Tavolo esterno se possibile.")` → ✅ ok [UPDATE] eventId=ccdciuigd4i5...
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "eventId": "ccdciuigd4i5u5agbaehhsd12g@google.com",
-  "nome": "Greco",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 4,
-  "note": "Tavolo esterno se possibile."
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": true,
-  "status": "CONFIRMED",
-  "eventId": "ccdciuigd4i5u5agbaehhsd12g@google.com",
-  "changeType": "UPDATE"
-}
-```
-
-</details>
-
-**[Giulia]**: Fatto, ho segnato la richiesta del tavolo esterno per la prenotazione di Greco.
+**[Giulia]**: Certo, ho capito: vuole un tavolo esterno.  
+La prenotazione non è stata salvata, quindi non posso applicare la nota ancora. Vuole riprovare con la stessa richiesta o preferisce cambiare data o orario?
 
 **[Cliente]**: Sì grazie
 
-**[Giulia]**: Perfetto, a presto! Se serve altro, sono qui.
+**[Giulia]**: Un attimo, riprovo la registrazione con la nota per il tavolo esterno.
+
+→ 🔧 `crea_prenotazione(nome="Greco", data="2026-07-31", ora="21:00", persone=4, note="Richiesta: tavolo esterno se possibile.")` → ✅ creata (eventId: mf2h6hfqd9tgmh1b2geo...)
+
+**[Giulia]**: Prenotazione confermata: Greco, venerdì alle 21:00, per 4 persone.  
+Ho segnato la richiesta del tavolo esterno se possibile. A presto!
 
 ---
 
-## B07-013 ❌ modify — Doppia correzione — cliente cambia sia ora sia persone (29.3s)
+## B07-013 ❌ modify — Doppia correzione — cliente cambia sia ora sia persone (26.8s)
 
-> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Amato","persone":3,"ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Amato","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Amato","data":"2026-08-07"}},{"name":"modifica_prenotazione","args":{"eventId":"gajj6a2upf8blfk896vt8mhf3s@google.com","nome":"Amato","data":"2026-08-07","ora":"21:00","persone":3,"note":"Gruppo: No"}}] | reply must contain '22:00' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quell’orario. Prenotazione confermata: Amato, venerdì alle 21:00, per 2 perso
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Amato","persone":3,"ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Amato","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Amato","data":"2026-07-31"}},{"name":"modifica_prenotazione","args":{"eventId":"qnbpqmt35735pr0eo03jbo8p4o@google.com","nome":"Amato","data":"2026-07-31","ora":"21:00","persone":3,"note":""}}] | reply must contain '22:00' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e ora. Prenotazione confermata: Amato, venerdì alle 21:00, per 2 
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Amato
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
+**[Giulia]**: Un attimo, controllo la disponibilità per quel giorno e ora.
 
-→ 🔧 `controlla_disponibilita(data="2026-08-07", ora="21:00", persone=2)` → slot_available
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Amato", data="2026-08-07", ora="21:00", persone=2, note="")` → ✅ creata (eventId: gajj6a2upf8blfk896vt...)
+→ 🔧 `crea_prenotazione(nome="Amato", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: qnbpqmt35735pr0eo03j...)
 
 **[Giulia]**: Prenotazione confermata: Amato, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta cambio: cambia in ventidue e siamo in tre
 
-**[Giulia]**: Un attimo, controllo la prenotazione e poi applico il cambio richiesto.
+**[Giulia]**: Un attimo, recupero la prenotazione per aggiornare nome, data, ora e numero persone.
 
-→ 🔧 `trova_prenotazione(nome="Amato", data="2026-08-07")` → ✅ trovata (1)
+→ 🔧 `trova_prenotazione(nome="Amato", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -1423,7 +1277,7 @@
 // PAYLOAD
 {
   "nome": "Amato",
-  "data": "2026-08-07"
+  "data": "2026-07-31"
 }
 ```
 
@@ -1433,8 +1287,8 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "gajj6a2upf8blfk896vt8mhf3s@google.com",
-    "date": "2026-08-07",
+    "eventId": "qnbpqmt35735pr0eo03jbo8p4o@google.com",
+    "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
     "name": "Amato",
@@ -1449,8 +1303,8 @@
   },
   "reservations": [
     {
-      "eventId": "gajj6a2upf8blfk896vt8mhf3s@google.com",
-      "date": "2026-08-07",
+      "eventId": "qnbpqmt35735pr0eo03jbo8p4o@google.com",
+      "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
       "name": "Amato",
@@ -1469,19 +1323,21 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="gajj6a2upf8blfk896vt8mhf3s@google.com", nome="Amato", data="2026-08-07", ora="21:00", persone=3, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=gajj6a2upf8b...
+**[Giulia]**: Un momento, aggiorno i dati della prenotazione.
+
+→ 🔧 `modifica_prenotazione(eventId="qnbpqmt35735pr0eo03jbo8p4o@google.com", nome="Amato", data="2026-07-31", ora="21:00", persone=3, note="")` → ✅ ok [UPDATE] eventId=qnbpqmt35735...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "gajj6a2upf8blfk896vt8mhf3s@google.com",
+  "eventId": "qnbpqmt35735pr0eo03jbo8p4o@google.com",
   "nome": "Amato",
-  "data": "2026-08-07",
+  "data": "2026-07-31",
   "ora": "21:00",
   "persone": 3,
-  "note": "Gruppo: No"
+  "note": ""
 }
 ```
 
@@ -1490,42 +1346,42 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "gajj6a2upf8blfk896vt8mhf3s@google.com",
+  "eventId": "qnbpqmt35735pr0eo03jbo8p4o@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, ho aggiornato la prenotazione a 3 persone all’orario delle 21:00. A presto!
+**[Giulia]**: Perfetto, ho aggiornato la prenotazione: Amato, venerdì alle 21:00, 3 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, grazie per la conferma! A presto!
+**[Giulia]**: Perfetto, confermato. A presto, e grazie!
 
 ---
 
-## B07-014 ✅ modify — Modifica persone che porta a gruppo grande (pending owner) (26.5s)
+## B07-014 ✅ modify — Modifica persone che porta a gruppo grande (pending owner) (28.3s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ferri
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per quel venerdì.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Perfetto, registrerò la prenotazione.
+**[Giulia]**: Perfetto, procedo con la prenotazione.
 
-→ 🔧 `crea_prenotazione(nome="Ferri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: q7nfib4kb56fhhbckcum...)
+→ 🔧 `crea_prenotazione(nome="Ferri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: upbo3d57k5qrdompsrvb...)
 
 **[Giulia]**: Prenotazione confermata: Ferri, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, siamo in nove in realtà
 
-**[Giulia]**: Un attimo, verifico la prenotazione e aggiorno il numero.
+**[Giulia]**: Un attimo, trovo la prenotazione esistente prima di aggiornarla.
 
-→ 🔧 `trova_prenotazione(nome="Ferri", data="2026-07-31")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Ferri", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -1541,9 +1397,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "q7nfib4kb56fhhbckcum5j2vis@google.com",
+    "eventId": "upbo3d57k5qrdompsrvboeiumk@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -1559,7 +1415,7 @@
   },
   "reservations": [
     {
-      "eventId": "q7nfib4kb56fhhbckcum5j2vis@google.com",
+      "eventId": "upbo3d57k5qrdompsrvboeiumk@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -1572,20 +1428,6 @@
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Fabbri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.6,
-      "fuzzyType": "lev3",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -1593,19 +1435,47 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="q7nfib4kb56fhhbckcum5j2vis@google.com", nome="Ferri", data="2026-07-31", ora="21:00", persone=9, note="")` → ✅ ok [UPDATE] eventId=q7nfib4kb56f...
+→ 🔧 `modifica_prenotazione(nome="Ferri", data="2026-07-31", ora="21:00", persone=9, note="Gruppo di 9.")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "q7nfib4kb56fhhbckcum5j2vis@google.com",
   "nome": "Ferri",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 9,
-  "note": ""
+  "note": "Gruppo di 9."
+}
+```
+
+```json
+// RESPONSE
+{
+  "success": false,
+  "reason": "missing_eventid",
+  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
+}
+```
+
+</details>
+
+**[Giulia]**: Un attimo, riprovo con l’ID della prenotazione.
+
+→ 🔧 `modifica_prenotazione(eventId="upbo3d57k5qrdompsrvboeiumk@google.com", nome="Ferri", data="2026-07-31", ora="21:00", persone=9, note="Gruppo di 9.")` → ✅ ok [UPDATE] eventId=upbo3d57k5qr...
+
+<details><summary>🔎 payload & response</summary>
+
+```json
+// PAYLOAD
+{
+  "eventId": "upbo3d57k5qrdompsrvboeiumk@google.com",
+  "nome": "Ferri",
+  "data": "2026-07-31",
+  "ora": "21:00",
+  "persone": 9,
+  "note": "Gruppo di 9."
 }
 ```
 
@@ -1614,42 +1484,42 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "q7nfib4kb56fhhbckcum5j2vis@google.com",
+  "eventId": "upbo3d57k5qrdompsrvboeiumk@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, ho aggiornato la prenotazione a 9 persone. Confermata per Ferri, venerdì alle 21:00.
+**[Giulia]**: Fatto, modifico la prenotazione: Ferri, venerdì alle 21:00, per 9 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, confermato. La prenotazione per Ferri è aggiornata a 9 persone.
+**[Giulia]**: Perfetto, grazie per la conferma. La prenotazione è aggiornata per Ferri, venerdì alle 21:00, per 9 persone. A presto!
 
 ---
 
-## B07-015 ❌ modify — Cliente cambia idea più volte — modello mantiene stato coerente (44.0s)
+## B07-015 ❌ modify — Cliente cambia idea più volte — modello mantiene stato coerente (35.9s)
 
-> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Neri","persone":4,"ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Neri","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Neri","data":"2026-07-31"}},{"name":"modifica_prenotazione","args":{"eventId":"crfhqd3mq0odk7f6iur1d2m9ik@google.com","nome":"Neri","data":"2026-07-31","ora":"21:00","persone":3,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Neri","data":"2026-07-31"}},{"name":"modifica_prenotazione","args":{"eventId":"crfhqd3mq0odk7f6iur1d2m9ik@google.com","nome":"Neri","data":"2026-07-31","ora":"21:00","persone":4,"note":""}}] | reply must contain 'quattro' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e orario. Prenotazione confermata: Neri, venerdì 31 luglio alle 2
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Neri","persone":4,"ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Neri","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Neri","data":"2026-07-31"}},{"name":"modifica_prenotazione","args":{"eventId":"gbup14ptl82rbgitar0evn2go8@google.com","nome":"Neri","data":"2026-07-31","ora":"21:00","persone":3,"note":"Gruppo: No"}},{"name":"trova_prenotazione","args":{"nome":"Neri","data":"2026-07-31"}},{"name":"modifica_prenotazione","args":{"eventId":"gbup14ptl82rbgitar0evn2go8@google.com","nome":"Neri","data":"2026-07-31","ora":"21:00","persone":4,"note":"Gruppo: No"}}] | reply must contain 'quattro' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, verifichiamo la disponibilità per quell’orario. Perfetto, la prenotazione è stata confermata: Neri, venerdì 
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Neri
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quel giorno e orario.
+**[Giulia]**: Un attimo, verifichiamo la disponibilità per quell’orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Neri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: crfhqd3mq0odk7f6iur1...)
+→ 🔧 `crea_prenotazione(nome="Neri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: gbup14ptl82rbgitar0e...)
 
-**[Giulia]**: Prenotazione confermata: Neri, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Perfetto, la prenotazione è stata confermata: Neri, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, siamo in tre
 
 **[Giulia]**: Un attimo, recupero la prenotazione e aggiorno il numero di persone.
 
-→ 🔧 `trova_prenotazione(nome="Neri", data="2026-07-31")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Neri", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -1665,9 +1535,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+    "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -1683,7 +1553,7 @@
   },
   "reservations": [
     {
-      "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+      "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -1696,20 +1566,6 @@
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Ferri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -1717,19 +1573,19 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="crfhqd3mq0odk7f6iur1d2m9ik@google.com", nome="Neri", data="2026-07-31", ora="21:00", persone=3, note="")` → ✅ ok [UPDATE] eventId=crfhqd3mq0od...
+→ 🔧 `modifica_prenotazione(eventId="gbup14ptl82rbgitar0evn2go8@google.com", nome="Neri", data="2026-07-31", ora="21:00", persone=3, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=gbup14ptl82r...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+  "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
   "nome": "Neri",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 3,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -1738,20 +1594,20 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+  "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Aggiornamento effettuato. Prenotazione confermata: Neri, venerdì 31 luglio alle 21:00, per 3 persone.
+**[Giulia]**: La prenotazione è aggiornata: Neri, venerdì alle 21:00, per 3 persone. A presto!
 
 **[Cliente]**: Anzi no, cambia in ventidue e siamo in quattro
 
-**[Giulia]**: Un attimo, recupero la prenotazione e applico le modifiche.
+**[Giulia]**: Un attimo, controllo la prenotazione esistente e poi aggiorno i dati.
 
-→ 🔧 `trova_prenotazione(nome="Neri", data="2026-07-31")` → ✅ trovata (3)
+→ 🔧 `trova_prenotazione(nome="Neri", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -1767,9 +1623,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 3,
+  "count": 1,
   "reservation": {
-    "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+    "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 3,
@@ -1785,7 +1641,7 @@
   },
   "reservations": [
     {
-      "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+      "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 3,
@@ -1798,35 +1654,6 @@
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Neri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Ferri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -1834,19 +1661,19 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="crfhqd3mq0odk7f6iur1d2m9ik@google.com", nome="Neri", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ ok [UPDATE] eventId=crfhqd3mq0od...
+→ 🔧 `modifica_prenotazione(eventId="gbup14ptl82rbgitar0evn2go8@google.com", nome="Neri", data="2026-07-31", ora="21:00", persone=4, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=gbup14ptl82r...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+  "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
   "nome": "Neri",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 4,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -1855,82 +1682,80 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "crfhqd3mq0odk7f6iur1d2m9ik@google.com",
+  "eventId": "gbup14ptl82rbgitar0evn2go8@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, ho aggiornato la prenotazione. Confermata: Neri, venerdì 31 luglio alle 21:00, per 4 persone.
+**[Giulia]**: Perfetto, la prenotazione è aggiornata: Neri, venerdì alle 21:00, per 4 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, la prenotazione è confermata. A presto!
-
 ---
 
-## B07-016 ✅ modify — Cliente chiede modifica senza specificare cosa — modello deve chiedere (18.0s)
+## B07-016 ❌ modify — Cliente chiede modifica senza specificare cosa — modello deve chiedere (14.0s)
+
+> ⚠️ **Failed**: reply must contain 'cosa' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per questa richiesta. Prenotazione confermata: Marchetti, venerdì alle 21:00, per
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marchetti
 
-**[Giulia]**: Ok, un attimo: controllo la disponibilità per quella data, orario e numero di persone.
+**[Giulia]**: Un attimo, controllo la disponibilità per questa richiesta.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Marchetti", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: n8h73ds3li410632tujv...)
+→ 🔧 `crea_prenotazione(nome="Marchetti", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 85q1j7ke8rjoinnhmpk1...)
 
-**[Giulia]**: Perfetto. Prenotazione confermata: Marchetti, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Marchetti, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Vorrei modificare la prenotazione
 
-**[Giulia]**: Certo, posso aiutarla. Che cosa vuole modificare: nome, data, ora o numero di persone?
-
 ---
 
-## B07-017 ✅ modify — Cliente crea, ripensa, poi mantiene tutto uguale (idempotenza) (22.7s)
+## B07-017 ✅ modify — Cliente crea, ripensa, poi mantiene tutto uguale (idempotenza) (16.9s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Colombo
 
+**[Giulia]**: Un attimo, controllo la disponibilità per questa prenotazione.
+
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Un momento, confermo la prenotazione per Colombo.
+**[Giulia]**: Perfetto, la riserva può essere registrata.
 
-→ 🔧 `crea_prenotazione(nome="Colombo", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: gjp54q8cvbib7q4320jm...)
+→ 🔧 `crea_prenotazione(nome="Colombo", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: vmhpidl4iich3hu942km...)
 
-**[Giulia]**: La prenotazione è confermata: Colombo, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Colombo, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, volevo cambiare ora... no lascia stare, va bene alle nove di sera
 
-**[Giulia]**: Perfetto, allora resta alle nove di sera. Non faccio nessuna modifica: va bene così.
+**[Giulia]**: Perfetto, allora restiamo alle 21:00. La prenotazione è confermata, a presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, allora confermato: tutto resta come prenotato. A presto!
-
 ---
 
-## B07-018 ✅ modify — Cliente vuole modificare ma dà solo il cognome — modello usa quello (25.5s)
+## B07-018 ❌ modify — Cliente vuole modificare ma dà solo il cognome — modello usa quello (20.7s)
+
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Barbieri","persone":2,"ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Barbieri","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Barbieri","data":"2026-07-31"}}] | reply must contain '22:00' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per l’orario indicato. Prenotazione confermata: Barbieri, venerdì alle 21:00, per
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Barbieri
 
-**[Giulia]**: Un attimo, controllo la disponibilità per questo orario.
+**[Giulia]**: Un attimo, controllo la disponibilità per l’orario indicato.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Barbieri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 2f9jcv3fn82fel6otq5c...)
+→ 🔧 `crea_prenotazione(nome="Barbieri", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: qop0q1e1dr2l0kgbt58n...)
 
 **[Giulia]**: Prenotazione confermata: Barbieri, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Cambia solo l'ora in ventidue
-
-**[Giulia]**: Un attimo, cerco la prenotazione per aggiornare solo l’orario.
 
 → 🔧 `trova_prenotazione(nome="Barbieri", data="2026-07-31")` → ✅ trovata (1)
 
@@ -1950,7 +1775,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "2f9jcv3fn82fel6otq5ci050no@google.com",
+    "eventId": "qop0q1e1dr2l0kgbt58nphnmqc@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -1966,7 +1791,7 @@
   },
   "reservations": [
     {
-      "eventId": "2f9jcv3fn82fel6otq5ci050no@google.com",
+      "eventId": "qop0q1e1dr2l0kgbt58nphnmqc@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -1986,43 +1811,11 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="2f9jcv3fn82fel6otq5ci050no@google.com", nome="Barbieri", data="2026-07-31", ora="22:00", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=2f9jcv3fn82f...
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "eventId": "2f9jcv3fn82fel6otq5ci050no@google.com",
-  "nome": "Barbieri",
-  "data": "2026-07-31",
-  "ora": "22:00",
-  "persone": 2,
-  "note": "Gruppo: No"
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": true,
-  "status": "CONFIRMED",
-  "eventId": "2f9jcv3fn82fel6otq5ci050no@google.com",
-  "changeType": "UPDATE"
-}
-```
-
-</details>
-
-**[Giulia]**: Fatto! La prenotazione è aggiornata per Barbieri, venerdì alle 22:00, per 2 persone.
-
 **[Cliente]**: Sì confermo
-
-**[Giulia]**: Perfetto, grazie! La prenotazione è aggiornata e confermata. A presto!
 
 ---
 
-## B07-019 ❌ modify — Cliente vuole spostare la prenotazione a un giorno con seed pieno (sabato) (35.5s)
+## B07-019 ❌ modify — Cliente vuole spostare la prenotazione a un giorno con seed pieno (sabato) (27.9s)
 
 > ⚠️ **Failed**: forbidden tool call 'modifica_prenotazione' was made
 
@@ -2030,21 +1823,19 @@
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Vitale
 
-**[Giulia]**: Ok, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per la data e l’orario richiesti.
 
-→ 🔧 `controlla_disponibilita(data="2026-08-07", ora="21:00", persone=4)` → slot_available
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=4)` → slot_available
 
-**[Giulia]**: Un attimo, faccio la prenotazione.
+→ 🔧 `crea_prenotazione(nome="Vitale", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ creata (eventId: p5mnt2bt894ofvf4q54d...)
 
-→ 🔧 `crea_prenotazione(nome="Vitale", data="2026-08-07", ora="21:00", persone=4, note="")` → ✅ creata (eventId: eokvorhue2kb0bnk3ncj...)
-
-**[Giulia]**: Prenotazione confermata: Vitale, venerdì alle 21:00, 4 persone. A presto!
+**[Giulia]**: Perfetto, prenotazione confermata: Vitale, venerdì alle 21:00, per 4 persone. A presto!
 
 **[Cliente]**: Aspetta, la spostiamo a sabato prossimo stessa ora
 
-**[Giulia]**: Un attimo, recupero la prenotazione per aggiornarla.
+**[Giulia]**: Un attimo, trovo la prenotazione per aggiornarla.
 
-→ 🔧 `trova_prenotazione(nome="Vitale")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Vitale")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -2059,12 +1850,12 @@
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": null,
+    "eventId": "p5mnt2bt894ofvf4q54d3ui5q4@google.com",
     "date": "2026-07-31",
     "time": "21:00",
-    "people": 2,
+    "people": 4,
     "name": "Vitale",
     "phone": null,
     "email": null,
@@ -2072,26 +1863,13 @@
     "matchType": "name",
     "fuzzyConfidence": 1,
     "fuzzyType": "exact",
-    "requiresConfirmation": false
+    "requiresConfirmation": false,
+    "notes": "Gruppo: No"
   },
   "reservations": [
     {
-      "eventId": null,
+      "eventId": "p5mnt2bt894ofvf4q54d3ui5q4@google.com",
       "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Vitale",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false
-    },
-    {
-      "eventId": "eokvorhue2kb0bnk3ncjd11h5o@google.com",
-      "date": "2026-08-07",
       "time": "21:00",
       "people": 4,
       "name": "Vitale",
@@ -2110,21 +1888,19 @@
 
 </details>
 
-**[Giulia]**: Trovo la prenotazione giusta e aggiorno data e ora.
-
-→ 🔧 `modifica_prenotazione(eventId="eokvorhue2kb0bnk3ncjd11h5o@google.com", nome="Vitale", data="2026-08-08", ora="21:00", persone=4, note="")` → ✅ ok [UPDATE] eventId=eokvorhue2kb...
+→ 🔧 `modifica_prenotazione(eventId="p5mnt2bt894ofvf4q54d3ui5q4@google.com", nome="Vitale", data="2026-08-01", ora="21:00", persone=4, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=p5mnt2bt894o...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "eokvorhue2kb0bnk3ncjd11h5o@google.com",
+  "eventId": "p5mnt2bt894ofvf4q54d3ui5q4@google.com",
   "nome": "Vitale",
-  "data": "2026-08-08",
+  "data": "2026-08-01",
   "ora": "21:00",
   "persone": 4,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -2133,36 +1909,34 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "eokvorhue2kb0bnk3ncjd11h5o@google.com",
+  "eventId": "p5mnt2bt894ofvf4q54d3ui5q4@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Fatto, la prenotazione è spostata a sabato alle 21:00 per 4 persone. A presto!
+**[Giulia]**: Ecco fatto: Vitale, sabato alle 21:00, sempre per 4 persone. Tutto confermato.
 
 ---
 
-## B07-020 ✅ modify — Cliente aggiunge nota compleanno dopo creazione (44.0s)
+## B07-020 ✅ modify — Cliente aggiunge nota compleanno dopo creazione (25.2s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Esposito
 
-**[Giulia]**: Perfetto, controllo adesso la disponibilità per quell’orario.
+**[Giulia]**: Perfetto, controllo la disponibilità per quella prenotazione. Un attimo.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=4)` → slot_available
 
-**[Giulia]**: Check done — I’ll register the reservation now.
+→ 🔧 `crea_prenotazione(nome="Esposito", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ creata (eventId: upu343u6jh5pm4jtdlvo...)
 
-→ 🔧 `crea_prenotazione(nome="Esposito", data="2026-07-31", ora="21:00", persone=4, note="")` → ✅ creata (eventId: s0bkt9f0hgh9nkn64nlc...)
-
-**[Giulia]**: Prenotazione confermata a nome Esposito: venerdì alle 21:00, 4 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Esposito, venerdì alle 21:00, per 4 persone. A presto!
 
 **[Cliente]**: Ah, se possibile segnate che è per un compleanno
 
-**[Giulia]**: Un attimo, controllo la prenotazione e aggiungo la nota per compleanno.
+**[Giulia]**: Un attimo, controllo la prenotazione e poi aggiorno la nota per il compleanno.
 
 → 🔧 `trova_prenotazione(nome="Esposito", data="2026-07-31")` → ✅ trovata (1)
 
@@ -2182,7 +1956,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "s0bkt9f0hgh9nkn64nlciesd94@google.com",
+    "eventId": "upu343u6jh5pm4jtdlvo6b7ulo@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 4,
@@ -2198,7 +1972,7 @@
   },
   "reservations": [
     {
-      "eventId": "s0bkt9f0hgh9nkn64nlciesd94@google.com",
+      "eventId": "upu343u6jh5pm4jtdlvo6b7ulo@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 4,
@@ -2218,14 +1992,15 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="s0bkt9f0hgh9nkn64nlciesd94@google.com", nome="Esposito", data="2026-07-31", ora="21:00", persone=4, note="Compleanno")` → ✅ ok [UPDATE] eventId=s0bkt9f0hgh9...
+**[Giulia]**: Aggiorno la prenotazione con la nota del compleanno. Un attimo.
+
+→ 🔧 `modifica_prenotazione(nome="Esposito", data="2026-07-31", ora="21:00", persone=4, note="Compleanno")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "s0bkt9f0hgh9nkn64nlciesd94@google.com",
   "nome": "Esposito",
   "data": "2026-07-31",
   "ora": "21:00",
@@ -2237,142 +2012,54 @@
 ```json
 // RESPONSE
 {
-  "success": true,
-  "status": "CONFIRMED",
-  "eventId": "s0bkt9f0hgh9nkn64nlciesd94@google.com",
-  "changeType": "UPDATE"
+  "success": false,
+  "reason": "missing_eventid",
+  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
 }
 ```
 
 </details>
 
-**[Giulia]**: Fatto! Ho segnato che è un compleanno nella sua prenotazione. A presto!
+**[Giulia]**: Mi serve l’identificativo della prenotazione per aggiornare la nota, e non l’ho ricavato correttamente.  
+Per favore, ripeti il nome o la data, così trovo la prenotazione e aggiungo “Compleanno” subito.
 
 **[Cliente]**: Sì grazie
 
-**[Giulia]**: Perfetto, è un piacere! Arrivederci e buona serata!
-
 ---
 
-## B07-021 ✅ modify — Cliente aggiunge nota cane dopo creazione (26.0s)
+## B07-021 ❌ modify — Cliente aggiunge nota cane dopo creazione (16.1s)
+
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Romano","persone":2} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Romano","data":"2026-07-31","ora":"21:00","persone":2,"note":""}}] | reply must contain 'cane' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, controllo subito la disponibilità per quella data e ora. Un attimo. Ok, procedo con la registrazione della pr
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Romano
 
-**[Giulia]**: Un attimo, controllo la disponibilità per la data e l’orario richiesti.
+**[Giulia]**: Perfetto, controllo subito la disponibilità per quella data e ora. Un attimo.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Ok, ora la registriamo.
+**[Giulia]**: Ok, procedo con la registrazione della prenotazione.
 
-→ 🔧 `crea_prenotazione(nome="Romano", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: ks4htilv2rfm9s1v468b...)
+→ 🔧 `crea_prenotazione(nome="Romano", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 32li22h2jqjuph8ss6ht...)
 
 **[Giulia]**: Prenotazione confermata: Romano, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Ah, veniamo con il cane, va bene?
 
-**[Giulia]**: Un attimo, aggiorno la prenotazione con la richiesta del cane.
-
-→ 🔧 `trova_prenotazione(nome="Romano", data="2026-07-31")` → ✅ trovata (1)
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Romano",
-  "data": "2026-07-31"
-}
-```
-
-```json
-// RESPONSE
-{
-  "found": true,
-  "count": 1,
-  "reservation": {
-    "eventId": "ks4htilv2rfm9s1v468bre6fb0@google.com",
-    "date": "2026-07-31",
-    "time": "21:00",
-    "people": 2,
-    "name": "Romano",
-    "phone": null,
-    "email": null,
-    "status": "CONFIRMED",
-    "matchType": "name",
-    "fuzzyConfidence": 1,
-    "fuzzyType": "exact",
-    "requiresConfirmation": false,
-    "notes": "Gruppo: No"
-  },
-  "reservations": [
-    {
-      "eventId": "ks4htilv2rfm9s1v468bre6fb0@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Romano",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    }
-  ]
-}
-```
-
-</details>
-
-→ 🔧 `modifica_prenotazione(eventId="ks4htilv2rfm9s1v468bre6fb0@google.com", nome="Romano", data="2026-07-31", ora="21:00", persone=2, note="Con cane.")` → ✅ ok [UPDATE] eventId=ks4htilv2rfm...
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "eventId": "ks4htilv2rfm9s1v468bre6fb0@google.com",
-  "nome": "Romano",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 2,
-  "note": "Con cane."
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": true,
-  "status": "CONFIRMED",
-  "eventId": "ks4htilv2rfm9s1v468bre6fb0@google.com",
-  "changeType": "UPDATE"
-}
-```
-
-</details>
-
-**[Giulia]**: Perfetto, ho segnato che verrete con il cane. La prenotazione resta confermata: Romano, venerdì alle 21:00, per 2 persone.
-
 **[Cliente]**: Sì grazie
-
-**[Giulia]**: Perfetto, a presto! Se dovesse servirvi qualcosa, chiamateci pure.
 
 ---
 
-## B07-022 ✅ modify — Cliente chiede di modificare una prenotazione inesistente — modello deve dire non trovata (22.2s)
+## B07-022 ✅ modify — Cliente chiede di modificare una prenotazione inesistente — modello deve dire non trovata (8.4s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, avevo una prenotazione a nome Franceschini per venerdì prossimo, vorrei cambiarla in giovedì stessa ora
 
-**[Giulia]**: Un attimo, controllo la prenotazione per Franceschini.
+**[Giulia]**: Un attimo, controllo la prenotazione prima di procedere con la modifica.
 
-→ 🔧 `trova_prenotazione(nome="Franceschini", data="2026-07-31")` → ❌ error: This operation was aborted
+→ 🔧 `trova_prenotazione(nome="Franceschini", data="2026-07-31")` → ❌ non trovata
 
 <details><summary>🔎 payload & response</summary>
 
@@ -2387,26 +2074,6 @@
 ```json
 // RESPONSE
 {
-  "error": "This operation was aborted"
-}
-```
-
-</details>
-
-→ 🔧 `trova_prenotazione(nome="Franceschini")` → ❌ non trovata
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Franceschini"
-}
-```
-
-```json
-// RESPONSE
-{
   "found": false,
   "reason": "not_found",
   "message": "Nessuna prenotazione trovata"
@@ -2415,37 +2082,36 @@
 
 </details>
 
-**[Giulia]**: Mi dispiace, non ho trovato nessuna prenotazione a nome Franceschini. Potrebbe esserci un errore nel nome o nella data, o non è registrata. Vuole riprovare con più dati, come nome completo o un’altra data?
+**[Giulia]**: Non ho trovato nessuna prenotazione a nome Franceschini per venerdì prossimo. Per cambiare “stessa ora” a giovedì, mi serve che mi dica la data e l’orario esatto, e magari il numero di persone, così posso verificarla e modificare la prenotazione.
 
 ---
 
-## B07-023 ✅ modify — Cliente crea e poi anticipa a stessa ora giorno precedente (25.8s)
+## B07-023 ✅ modify — Cliente crea e poi anticipa a stessa ora giorno precedente (31.6s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Lombardi
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e quell’orario.
+**[Giulia]**: Perfetto, controlla disponibilità per quel orario per la prenotazione. Un attimo.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Lombardi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: rrc1ro5tttdrdm5fl2eq...)
+→ 🔧 `crea_prenotazione(nome="Lombardi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: s1c0t1enfr9ntavegc1u...)
 
 **[Giulia]**: Prenotazione confermata: Lombardi, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Aspetta, l'anticipiamo a giovedì stessa ora
 
-**[Giulia]**: Un attimo, recupero la prenotazione per aggiornare la data e l’orario.
+**[Giulia]**: Un attimo, verifico la prenotazione Lombardi e poi aggiorno l’orario richiesto.
 
-→ 🔧 `trova_prenotazione(nome="Lombardi", data="2026-07-31")` → ✅ trovata (1)
+→ 🔧 `trova_prenotazione(nome="Lombardi")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "nome": "Lombardi",
-  "data": "2026-07-31"
+  "nome": "Lombardi"
 }
 ```
 
@@ -2455,7 +2121,7 @@
   "found": true,
   "count": 1,
   "reservation": {
-    "eventId": "rrc1ro5tttdrdm5fl2eqhlnjoo@google.com",
+    "eventId": "s1c0t1enfr9ntavegc1u39du4o@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -2471,7 +2137,7 @@
   },
   "reservations": [
     {
-      "eventId": "rrc1ro5tttdrdm5fl2eqhlnjoo@google.com",
+      "eventId": "s1c0t1enfr9ntavegc1u39du4o@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -2491,19 +2157,27 @@
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="rrc1ro5tttdrdm5fl2eqhlnjoo@google.com", nome="Lombardi", data="2026-07-30", ora="21:00", persone=2, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=rrc1ro5tttdr...
+**[Giulia]**: Ok, verifichiamo l’aggiornamento per giovedì alla stessa ora. Un attimo.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-30", ora="21:00", persone=2)` → slot_available
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, aggiorno la prenotazione a giovedì alla stessa ora. Un attimo.
+
+→ 🔧 `modifica_prenotazione(eventId="s1c0t1enfr9ntavegc1u39du4o@google.com", nome="Lombardi", data="2026-07-30", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=s1c0t1enfr9n...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "rrc1ro5tttdrdm5fl2eqhlnjoo@google.com",
+  "eventId": "s1c0t1enfr9ntavegc1u39du4o@google.com",
   "nome": "Lombardi",
   "data": "2026-07-30",
   "ora": "21:00",
   "persone": 2,
-  "note": "Gruppo: No"
+  "note": ""
 }
 ```
 
@@ -2512,42 +2186,38 @@
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "rrc1ro5tttdrdm5fl2eqhlnjoo@google.com",
+  "eventId": "s1c0t1enfr9ntavegc1u39du4o@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, ho spostato la prenotazione a giovedì alle 21:00 per Lombardi, 2 persone. A presto!
-
-**[Cliente]**: Sì confermo
-
-**[Giulia]**: Perfetto, confermato! La prenotazione è registrata per Lombardi, giovedì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Prenotazione confermata: Lombardi, giovedì alle 21:00, per 2 persone. A presto!
 
 ---
 
-## B07-024 ❌ modify — Cliente chiede 'annulla e rifai' — modello deve preferire modifica (34.9s)
+## B07-024 ❌ modify — Cliente chiede 'annulla e rifai' — modello deve preferire modifica (29.9s)
 
-> ⚠️ **Failed**: forbidden tool call 'cancella_prenotazione' was made
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Costa","persone":2} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Costa","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Costa","data":"2026-07-31"}},{"name":"cancella_prenotazione","args":{"nome":"Costa"}}] | forbidden tool call 'cancella_prenotazione' was made
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Costa
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Costa", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 0kgstai5f000q4ubr5nu...)
+→ 🔧 `crea_prenotazione(nome="Costa", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: eiqnk1p601i5k6mbp085...)
 
 **[Giulia]**: Prenotazione confermata: Costa, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Cancella e rifai per giovedì stessa ora
 
-**[Giulia]**: Verifico la prenotazione corrente e poi procedo con l’aggiornamento richiesto.
+**[Giulia]**: Perfetto, me ne occupo: prima elimino la prenotazione corrente, poi verifico quella nuova per giovedì.
 
-→ 🔧 `trova_prenotazione(nome="Costa", data="2026-07-31")` → ✅ trovata (3)
+→ 🔧 `trova_prenotazione(nome="Costa", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -2563,9 +2233,9 @@
 // RESPONSE
 {
   "found": true,
-  "count": 3,
+  "count": 1,
   "reservation": {
-    "eventId": "0kgstai5f000q4ubr5nue8sfos@google.com",
+    "eventId": "eiqnk1p601i5k6mbp085n4smr4@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -2581,39 +2251,10 @@
   },
   "reservations": [
     {
-      "eventId": "0kgstai5f000q4ubr5nue8sfos@google.com",
+      "eventId": "eiqnk1p601i5k6mbp085n4smr4@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
-      "name": "Costa",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Testa",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
-    },
-    {
-      "eventId": "0kgstai5f000q4ubr5nue8sfos@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 4,
       "name": "Costa",
       "phone": null,
       "email": null,
@@ -2629,34 +2270,6 @@
 ```
 
 </details>
-
-→ 🔧 `modifica_prenotazione(nome="Costa", data="2026-07-30", ora="21:00", persone=2, note="")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Costa",
-  "data": "2026-07-30",
-  "ora": "21:00",
-  "persone": 2,
-  "note": ""
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": false,
-  "reason": "missing_eventid",
-  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
-}
-```
-
-</details>
-
-**[Giulia]**: Un attimo, annullo la prenotazione corrente, poi registro quella nuova per giovedì.
 
 → 🔧 `cancella_prenotazione(nome="Costa")` → ❌ invalid_data — Data mancante per cancellazione.
 
@@ -2680,142 +2293,35 @@
 
 </details>
 
-**[Giulia]**: Capito, voglio aiutarti con la cancellazione e poi con la nuova prenotazione, ma serve un po’ più di precisione.
+**[Giulia]**: Ok, ho trovato la prenotazione, ma il tentativo di cancellazione è fallito perché il sistema richiede la data, e qui non mi permette di specificarla per cancellare direttamente.
 
-Ho trovato diverse prenotazioni apparentemente per “Costa”, e la cancellazione per nome non ha funzionato perché la data non risultava specificata per la cancellazione.  
-Mi puoi dire quale data e ora vuoi annullare? Oppure confermi se vuoi cambiare solo la data da venerdì a giovedì alle 21:00, e poi trovo la prenotazione giusta prima di procedere.
+Mi dispiace! La invito a contattare il ristorante per cancellarla, poi posso aiutarla a verificare e rifare la prenotazione per giovedì alle 21:00.
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, grazie! Ho bisogno però della data precisa della prenotazione che vuoi cambiare, perché ho trovato più opzioni con lo stesso nome “Costa”.
-
-Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 luglio”) così la annullo e poi la registro di nuovo alle 21:00 per 2 persone.
-
 ---
 
-## B07-025 ✅ modify — Cliente cambia persone da 8 a 9 (attraversa la soglia gruppi grandi) (37.5s)
+## B07-025 ✅ modify — Cliente cambia persone da 8 a 9 (attraversa la soglia gruppi grandi) (25.7s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, otto persone, a nome Ferrari
 
-**[Giulia]**: Un attimo, controllo la disponibilità per l’orario richiesto.
+**[Giulia]**: Perfetto, controllo la disponibilità per quella data e ora.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=8)` → slot_available
 
-**[Giulia]**: Perfetto, ora registro la prenotazione per otto persone.
+**[Giulia]**: Perfetto, procedo con la registrazione della prenotazione.
 
-→ 🔧 `crea_prenotazione(nome="Ferrari", data="2026-07-31", ora="21:00", persone=8, note="")` → ✅ creata (eventId: h0v0ufuvnp1pla147ckd...)
+→ 🔧 `crea_prenotazione(nome="Ferrari", data="2026-07-31", ora="21:00", persone=8, note="")` → ✅ creata (eventId: s34vuo96d5669apsq41e...)
 
 **[Giulia]**: Prenotazione confermata: Ferrari, venerdì alle 21:00, per 8 persone. A presto!
 
 **[Cliente]**: Aspetta, arriva anche mio fratello, siamo in nove
 
-**[Giulia]**: Un attimo, cerco la prenotazione esistente per aggiornare il numero di persone.
+**[Giulia]**: Un attimo, ora recupero la prenotazione per modificare la quantità.
 
-→ 🔧 `trova_prenotazione(nome="Ferrari", data="2026-07-31")` → ✅ trovata (2)
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Ferrari",
-  "data": "2026-07-31"
-}
-```
-
-```json
-// RESPONSE
-{
-  "found": true,
-  "count": 2,
-  "reservation": {
-    "eventId": "h0v0ufuvnp1pla147ckdgcvdg0@google.com",
-    "date": "2026-07-31",
-    "time": "21:00",
-    "people": 8,
-    "name": "Ferrari",
-    "phone": null,
-    "email": null,
-    "status": "CONFIRMED",
-    "matchType": "name",
-    "fuzzyConfidence": 1,
-    "fuzzyType": "exact",
-    "requiresConfirmation": false,
-    "notes": "Gruppo: No"
-  },
-  "reservations": [
-    {
-      "eventId": "h0v0ufuvnp1pla147ckdgcvdg0@google.com",
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 8,
-      "name": "Ferrari",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 1,
-      "fuzzyType": "exact",
-      "requiresConfirmation": false,
-      "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Ferri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
-    }
-  ]
-}
-```
-
-</details>
-
-**[Giulia]**: Perfetto, aggiorno la prenotazione a Ferrari, venerdì alle 21:00, per 9 persone. Confermi?
-
-**[Cliente]**: Sì confermo
-
-**[Giulia]**: Un attimo, aggiorno la prenotazione alla nuova dimensione.
-
-→ 🔧 `modifica_prenotazione(nome="Ferrari", data="2026-07-31", ora="21:00", persone=9, note="Gruppo più grande: richiesto in attesa di conferma.")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Ferrari",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 9,
-  "note": "Gruppo più grande: richiesto in attesa di conferma."
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": false,
-  "reason": "missing_eventid",
-  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
-}
-```
-
-</details>
-
-**[Giulia]**: Mi serve un attimo per recuperare l’ID della prenotazione e poi aggiornare il numero.
-
-→ 🔧 `trova_prenotazione(nome="Ferrari", data="2026-07-31")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Ferrari", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -2831,9 +2337,9 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "h0v0ufuvnp1pla147ckdgcvdg0@google.com",
+    "eventId": "s34vuo96d5669apsq41eb17830@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 8,
@@ -2849,7 +2355,7 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
   },
   "reservations": [
     {
-      "eventId": "h0v0ufuvnp1pla147ckdgcvdg0@google.com",
+      "eventId": "s34vuo96d5669apsq41eb17830@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 8,
@@ -2862,20 +2368,6 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Ferri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -2883,19 +2375,19 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 
 </details>
 
-→ 🔧 `modifica_prenotazione(eventId="h0v0ufuvnp1pla147ckdgcvdg0@google.com", nome="Ferrari", data="2026-07-31", ora="21:00", persone=9, note="Gruppo più grande: richiesto in attesa di conferma.")` → ✅ ok [UPDATE] eventId=h0v0ufuvnp1p...
+→ 🔧 `modifica_prenotazione(eventId="s34vuo96d5669apsq41eb17830@google.com", nome="Ferrari", data="2026-07-31", ora="21:00", persone=9, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=s34vuo96d566...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "h0v0ufuvnp1pla147ckdgcvdg0@google.com",
+  "eventId": "s34vuo96d5669apsq41eb17830@google.com",
   "nome": "Ferrari",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 9,
-  "note": "Gruppo più grande: richiesto in attesa di conferma."
+  "note": "Gruppo: No"
 }
 ```
 
@@ -2904,40 +2396,40 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "h0v0ufuvnp1pla147ckdgcvdg0@google.com",
+  "eventId": "s34vuo96d5669apsq41eb17830@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Perfetto, la prenotazione è aggiornata: Ferrari, venerdì alle 21:00, per 9 persone.
+**[Giulia]**: Perfetto, ho aggiornato la prenotazione a 9 persone per Ferrari, 21:00 di venerdì. A presto!
+
+**[Cliente]**: Sì confermo
 
 ---
 
-## B07-026 ❌ modify — Cliente cambia persone da 9 (large group) a 6 (torna a normale) (28.1s)
+## B07-026 ❌ modify — Cliente cambia persone da 9 (large group) a 6 (torna a normale) (34.1s)
 
-> ⚠️ **Failed**: reply must contain 'sei' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per questo gruppo grande. Ok, procedo con la registrazione. Prenotazione registra
+> ⚠️ **Failed**: reply must contain 'sei' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e orario. Prenotazione registrata a nome Ferrero, venerdì alle 21
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, nove persone, a nome Ferrero
 
-**[Giulia]**: Un attimo, controllo la disponibilità per questo gruppo grande.
+**[Giulia]**: Un attimo, controllo la disponibilità per quel giorno e orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=9)` → slot_available
 
-**[Giulia]**: Ok, procedo con la registrazione.
+→ 🔧 `crea_prenotazione(nome="Ferrero", data="2026-07-31", ora="21:00", persone=9, note="Richiesta per un gruppo grande (nove persone). Prenotazione registrata in attesa di conferma dal ristorante.")` → ✅ creata (eventId: a3fqegl05tmd8kcpj138...)
 
-→ 🔧 `crea_prenotazione(nome="Ferrero", data="2026-07-31", ora="21:00", persone=9, note="Gruppo grande: richiesta in attesa di conferma dal ristorante.")` → ✅ creata (eventId: 1gvikvu7kdfa2i2spab5...)
-
-**[Giulia]**: Prenotazione registrata: Ferrero, venerdì alle 21:00, 9 persone. È un gruppo grande, la richiesta è in attesa di conferma dal ristorante.
+**[Giulia]**: Prenotazione registrata a nome Ferrero, venerdì alle 21:00, per 9 persone. Ho segnato che si tratta di un gruppo grande, in attesa di conferma dal ristorante.
 
 **[Cliente]**: Aspetta, saremo solo in sei alla fine
 
-**[Giulia]**: Un attimo, verifico la prenotazione esistente e aggiorno il numero.
+**[Giulia]**: Un attimo, aggiorno la prenotazione con il nuovo numero di persone.
 
-→ 🔧 `trova_prenotazione(nome="Ferrero", data="2026-07-31")` → ✅ trovata (3)
+→ 🔧 `trova_prenotazione(nome="Ferrero", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -2953,9 +2445,9 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 // RESPONSE
 {
   "found": true,
-  "count": 3,
+  "count": 1,
   "reservation": {
-    "eventId": "1gvikvu7kdfa2i2spab55udf6c@google.com",
+    "eventId": "a3fqegl05tmd8kcpj138rre4r0@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 9,
@@ -2971,7 +2463,7 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
   },
   "reservations": [
     {
-      "eventId": "1gvikvu7kdfa2i2spab55udf6c@google.com",
+      "eventId": "a3fqegl05tmd8kcpj138rre4r0@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 9,
@@ -2984,34 +2476,6 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 8,
-      "name": "Ferrari",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Ferri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.6,
-      "fuzzyType": "lev3",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -3019,21 +2483,19 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 
 </details>
 
-**[Giulia]**: Ok, sto aggiornando la prenotazione con il nuovo numero di persone.
-
-→ 🔧 `modifica_prenotazione(eventId="1gvikvu7kdfa2i2spab55udf6c@google.com", nome="Ferrero", data="2026-07-31", ora="21:00", persone=6, note="")` → ✅ ok [UPDATE] eventId=1gvikvu7kdfa...
+→ 🔧 `modifica_prenotazione(eventId="a3fqegl05tmd8kcpj138rre4r0@google.com", nome="Ferrero", data="2026-07-31", ora="21:00", persone=6, note="Gruppo: No")` → ✅ ok [UPDATE] eventId=a3fqegl05tmd...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "1gvikvu7kdfa2i2spab55udf6c@google.com",
+  "eventId": "a3fqegl05tmd8kcpj138rre4r0@google.com",
   "nome": "Ferrero",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 6,
-  "note": ""
+  "note": "Gruppo: No"
 }
 ```
 
@@ -3042,22 +2504,22 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "1gvikvu7kdfa2i2spab55udf6c@google.com",
+  "eventId": "a3fqegl05tmd8kcpj138rre4r0@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: La prenotazione è aggiornata: Ferrero, venerdì alle 21:00, per 6 persone. A presto!
+**[Giulia]**: Aggiornamento effettuato: Ferrero, venerdì alle 21:00, per 6 persone. Prenotazione confermata.
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, confermata! La prenotazione è aggiornata per 6 persone.
+**[Giulia]**: Perfetto, grazie per la conferma! A presto, ci vediamo venerdì.
 
 ---
 
-## B07-027 ✅ modify — Cliente vuole modificare una nota già registrata (allergia → intolleranza) (28.7s)
+## B07-027 ✅ modify — Cliente vuole modificare una nota già registrata (allergia → intolleranza) (34.2s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
@@ -3067,17 +2529,17 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Ok, confermo la prenotazione adesso.
+**[Giulia]**: Un attimo, registro la prenotazione ora.
 
-→ 🔧 `crea_prenotazione(nome="Sala", data="2026-07-31", ora="21:00", persone=2, note="Celiaco.")` → ✅ creata (eventId: 9om81leroodmume53ocf...)
+→ 🔧 `crea_prenotazione(nome="Sala", data="2026-07-31", ora="21:00", persone=2, note="Celiaco.")` → ✅ creata (eventId: anc6vb45mvvuhbg2ol67...)
 
-**[Giulia]**: Prenotazione confermata a nome Sala, venerdì alle 21:00, per 2 persone. Ho segnato la celiachia. A presto!
+**[Giulia]**: Prenotazione confermata: Sala, venerdì 31 luglio alle 21:00, per 2 persone. Ho segnato la celiachia per il servizio.
 
 **[Cliente]**: In realtà non sono celiaco, ho solo un'intolleranza al lattosio, potete cambiare la nota?
 
-**[Giulia]**: Certo, aggiorno la nota della prenotazione. Un attimo mentre recupero i dati.
+**[Giulia]**: Un attimo, verifico la prenotazione per aggiornarla correttamente.
 
-→ 🔧 `trova_prenotazione(nome="Sala", data="2026-07-31")` → ✅ trovata (2)
+→ 🔧 `trova_prenotazione(nome="Sala", data="2026-07-31")` → ✅ trovata (1)
 
 <details><summary>🔎 payload & response</summary>
 
@@ -3093,9 +2555,9 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 // RESPONSE
 {
   "found": true,
-  "count": 2,
+  "count": 1,
   "reservation": {
-    "eventId": "9om81leroodmume53ocft5spfc@google.com",
+    "eventId": "anc6vb45mvvuhbg2ol67bktmkg@google.com",
     "date": "2026-07-31",
     "time": "21:00",
     "people": 2,
@@ -3111,7 +2573,7 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
   },
   "reservations": [
     {
-      "eventId": "9om81leroodmume53ocft5spfc@google.com",
+      "eventId": "anc6vb45mvvuhbg2ol67bktmkg@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
@@ -3124,20 +2586,6 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
       "fuzzyType": "exact",
       "requiresConfirmation": false,
       "notes": "Gruppo: No"
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Sanna",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
     }
   ]
 }
@@ -3145,49 +2593,21 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 
 </details>
 
-**[Giulia]**: Ok, aggiorno la nota con l'intolleranza al lattosio.
+**[Giulia]**: Un attimo, aggiorno la nota con la nuova intolleranza.
 
-→ 🔧 `modifica_prenotazione(nome="Sala", data="2026-07-31", ora="21:00", persone=2, note="Intolleranza al lattosio.")` → ❌ missing_eventid — eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito.
-
-<details><summary>🔎 payload & response</summary>
-
-```json
-// PAYLOAD
-{
-  "nome": "Sala",
-  "data": "2026-07-31",
-  "ora": "21:00",
-  "persone": 2,
-  "note": "Intolleranza al lattosio."
-}
-```
-
-```json
-// RESPONSE
-{
-  "success": false,
-  "reason": "missing_eventid",
-  "message": "eventId richiesto per la modifica. Chiama trova_prenotazione prima e passa l'eventId restituito."
-}
-```
-
-</details>
-
-**[Giulia]**: Un attimo, riprendo l’ID prenotazione e completò la modifica.
-
-→ 🔧 `modifica_prenotazione(eventId="9om81leroodmume53ocft5spfc@google.com", nome="Sala", data="2026-07-31", ora="21:00", persone=2, note="Intolleranza al lattosio.")` → ✅ ok [UPDATE] eventId=9om81leroodm...
+→ 🔧 `modifica_prenotazione(eventId="anc6vb45mvvuhbg2ol67bktmkg@google.com", nome="Sala", data="2026-07-31", ora="21:00", persone=2, note="Intolleranza al lattosio. Nessuna celiachia.")` → ✅ ok [UPDATE] eventId=anc6vb45mvvu...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "9om81leroodmume53ocft5spfc@google.com",
+  "eventId": "anc6vb45mvvuhbg2ol67bktmkg@google.com",
   "nome": "Sala",
   "data": "2026-07-31",
   "ora": "21:00",
   "persone": 2,
-  "note": "Intolleranza al lattosio."
+  "note": "Intolleranza al lattosio. Nessuna celiachia."
 }
 ```
 
@@ -3196,71 +2616,49 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "9om81leroodmume53ocft5spfc@google.com",
+  "eventId": "anc6vb45mvvuhbg2ol67bktmkg@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Fatto! Ho aggiornato la prenotazione: ho segnato l’intolleranza al lattosio. A presto!
+**[Giulia]**: Fatto, ho aggiornato la nota: intolleranza al lattosio, nessuna celiachia. A presto!
 
 **[Cliente]**: Sì grazie
 
+**[Giulia]**: Perfetto, grazie a te! A presto, buon appetito!
+
 ---
 
-## B07-028 ❌ modify — Cliente vuole rimuovere una nota già registrata (15.8s)
-
-> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Grasso","persone":4} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":4}},{"name":"crea_prenotazione","args":{"nome":"Grasso","data":"2026-07-31","ora":"21:00","persone":4,"note":"Tavolo esterno se possibile."}}]
+## B07-028 ✅ modify — Cliente vuole rimuovere una nota già registrata (26.8s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
 **[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Grasso. Se possibile tavolo esterno
 
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per quel giorno e l’orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=4)` → slot_available
 
-**[Giulia]**: Ok, ora procedo con la registrazione della prenotazione.
+**[Giulia]**: Perfetto, verifico la prenotazione per il tavolo.
 
-→ 🔧 `crea_prenotazione(nome="Grasso", data="2026-07-31", ora="21:00", persone=4, note="Tavolo esterno se possibile.")` → ✅ creata (eventId: t9djtc6i6hsq627etf2l...)
+→ 🔧 `crea_prenotazione(nome="Grasso", data="2026-07-31", ora="21:00", persone=4, note="Tavolo esterno se possibile.")` → ✅ creata (eventId: n01hf1qqf1oik39b02h0...)
 
-**[Giulia]**: Prenotazione confermata: Grasso, venerdì alle 21:00, 4 persone. Ho segnato la richiesta per un tavolo esterno se possibile.
+**[Giulia]**: Prenotazione confermata: Grasso, venerdì 31 luglio alle 21:00, per 4 persone. Ho segnato la richiesta per il tavolo esterno. A presto!
 
 **[Cliente]**: Non importa più del tavolo esterno, va bene qualsiasi
 
-**[Cliente]**: Sì confermo
+**[Giulia]**: Un attimo, recupero la prenotazione prima di aggiornare la nota.
 
----
-
-## B07-029 ✅ modify — Cliente crea, poi corregge il nome usando 'no, mi chiamo' (29.6s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Verdi
-
-**[Giulia]**: Perfetto, verifico subito la disponibilità per quella data e ora.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
-
-**[Giulia]**: Perfetto, procedo con la registrazione della prenotazione.
-
-→ 🔧 `crea_prenotazione(nome="Verdi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: edobf6bpgsge6ovidq02...)
-
-**[Giulia]**: Prenotazione confermata per Verdi, venerdì alle 21:00, per 2 persone. A presto!
-
-**[Cliente]**: No aspetta, non è Verdi, mi chiamo Bianchi
-
-**[Giulia]**: Un attimo, recupero la prenotazione per correggere il nome.
-
-→ 🔧 `trova_prenotazione(nome="Verdi", data="2026-07-31")` → ✅ trovata (4)
+→ 🔧 `trova_prenotazione(nome="Grasso", data="2026-07-31")` → ✅ trovata (3)
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "nome": "Verdi",
+  "nome": "Grasso",
   "data": "2026-07-31"
 }
 ```
@@ -3269,13 +2667,13 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 // RESPONSE
 {
   "found": true,
-  "count": 4,
+  "count": 3,
   "reservation": {
-    "eventId": "edobf6bpgsge6ovidq02borr24@google.com",
+    "eventId": "n01hf1qqf1oik39b02h0bbh1tc@google.com",
     "date": "2026-07-31",
     "time": "21:00",
-    "people": 2,
-    "name": "Verdi",
+    "people": 4,
+    "name": "Grasso",
     "phone": null,
     "email": null,
     "status": "CONFIRMED",
@@ -3287,11 +2685,11 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
   },
   "reservations": [
     {
-      "eventId": "edobf6bpgsge6ovidq02borr24@google.com",
+      "eventId": "n01hf1qqf1oik39b02h0bbh1tc@google.com",
       "date": "2026-07-31",
       "time": "21:00",
-      "people": 2,
-      "name": "Verdi",
+      "people": 4,
+      "name": "Grasso",
       "phone": null,
       "email": null,
       "status": "CONFIRMED",
@@ -3302,46 +2700,34 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
       "notes": "Gruppo: No"
     },
     {
-      "eventId": null,
+      "eventId": "8gs19sre4sfi806en0lea6ccsc@google.com",
       "date": "2026-07-31",
       "time": "21:00",
-      "people": 3,
-      "name": "Neri",
+      "people": 4,
+      "name": "Greco",
       "phone": null,
       "email": null,
       "status": "CONFIRMED",
       "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
+      "fuzzyConfidence": 0.6,
+      "fuzzyType": "lev3",
+      "requiresConfirmation": true,
+      "notes": "Gruppo: No"
     },
     {
-      "eventId": null,
+      "eventId": "1dq28botjvq3ifnouc8fj5rgis@google.com",
       "date": "2026-07-31",
       "time": "21:00",
       "people": 2,
-      "name": "Neri",
+      "name": "Russo",
       "phone": null,
       "email": null,
       "status": "CONFIRMED",
       "matchType": "name",
       "fuzzyConfidence": 0.7,
       "fuzzyType": "lev2",
-      "requiresConfirmation": true
-    },
-    {
-      "eventId": null,
-      "date": "2026-07-31",
-      "time": "21:00",
-      "people": 2,
-      "name": "Ferri",
-      "phone": null,
-      "email": null,
-      "status": "CONFIRMED",
-      "matchType": "name",
-      "fuzzyConfidence": 0.7,
-      "fuzzyType": "lev2",
-      "requiresConfirmation": true
+      "requiresConfirmation": true,
+      "notes": "Gruppo: No"
     }
   ]
 }
@@ -3349,23 +2735,21 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 
 </details>
 
-**[Giulia]**: Ok, cambio il nome in Bianchi. Confermi che resta il 31/07 alle 21:00, 2 persone?
+**[Giulia]**: Perfetto, aggiorno la nota per rimuovere la preferenza.
 
-**[Cliente]**: Sì confermo
-
-→ 🔧 `modifica_prenotazione(eventId="edobf6bpgsge6ovidq02borr24@google.com", nome="Bianchi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ ok [UPDATE] eventId=edobf6bpgsge...
+→ 🔧 `modifica_prenotazione(nome="Grasso", data="2026-07-31", ora="21:00", persone=4, note="", eventId="n01hf1qqf1oik39b02h0bbh1tc@google.com")` → ✅ ok [UPDATE] eventId=n01hf1qqf1oi...
 
 <details><summary>🔎 payload & response</summary>
 
 ```json
 // PAYLOAD
 {
-  "eventId": "edobf6bpgsge6ovidq02borr24@google.com",
-  "nome": "Bianchi",
+  "nome": "Grasso",
   "data": "2026-07-31",
   "ora": "21:00",
-  "persone": 2,
-  "note": ""
+  "persone": 4,
+  "note": "",
+  "eventId": "n01hf1qqf1oik39b02h0bbh1tc@google.com"
 }
 ```
 
@@ -3374,20 +2758,44 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 {
   "success": true,
   "status": "CONFIRMED",
-  "eventId": "edobf6bpgsge6ovidq02borr24@google.com",
+  "eventId": "n01hf1qqf1oik39b02h0bbh1tc@google.com",
   "changeType": "UPDATE"
 }
 ```
 
 </details>
 
-**[Giulia]**: Prenotazione aggiornata a nome Bianchi, sempre venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Perfetto, la nota è stata aggiornata. Non c’è più la preferenza del tavolo esterno, ma la prenotazione resta confermata per 4 persone alle 21:00.
+
+**[Cliente]**: Sì confermo
 
 ---
 
-## B07-030 ❌ modify — Cliente chiede modifica dopo aver confermato — flow completo (16.3s)
+## B07-029 ❌ modify — Cliente crea, poi corregge il nome usando 'no, mi chiamo' (15.6s)
 
-> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Salvatore","persone":3} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Salvatore","data":"2026-07-31","ora":"21:00","persone":2,"note":""}}] | reply must contain 'tre' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Prenotazione confermata: Salvatore, venerdì alle 21:00, pe
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Bianchi","persone":2} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Verdi","data":"2026-07-31","ora":"21:00","persone":2,"note":""}}] | reply must contain 'Bianchi' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Aspetta un attimo, controllo la disponibilità per quella data e ora. Prenotazione confermata: Verdi, venerdì alle 21:00
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Verdi
+
+**[Giulia]**: Aspetta un attimo, controllo la disponibilità per quella data e ora.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Verdi", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: vhdmdaum84ceo1ogkd0a...)
+
+**[Giulia]**: Prenotazione confermata: Verdi, venerdì alle 21:00, per 2 persone. A presto!
+
+**[Cliente]**: No aspetta, non è Verdi, mi chiamo Bianchi
+
+**[Cliente]**: Sì confermo
+
+---
+
+## B07-030 ❌ modify — Cliente chiede modifica dopo aver confermato — flow completo (20.1s)
+
+> ⚠️ **Failed**: expected tool call 'modifica_prenotazione' with args {"nome":"Salvatore","persone":3} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Salvatore","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Salvatore"}}] | reply must contain 'tre' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Perfetto, prenotazione confermata: Salvatore, venerdì alle
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
@@ -3397,13 +2805,70 @@ Gimme la data esatta (per esempio “venerdì 31 luglio” o “giovedì 30 lugl
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Salvatore", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 2r8rqk80auroug3tqt13...)
+→ 🔧 `crea_prenotazione(nome="Salvatore", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: ho9ruk5i5p1hj0uttsfd...)
 
-**[Giulia]**: Prenotazione confermata: Salvatore, venerdì alle 21:00, per 2 persone. A presto!
+**[Giulia]**: Perfetto, prenotazione confermata: Salvatore, venerdì alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
+**[Giulia]**: Perfetto, la prenotazione è stata registrata. A presto!
+
 **[Cliente]**: Aspetta, in realtà ci serve un tavolo per tre persone
+
+**[Giulia]**: Un attimo, cerco la prenotazione esistente per aggiornare il numero di persone.
+
+→ 🔧 `trova_prenotazione(nome="Salvatore")` → ✅ trovata (1)
+
+<details><summary>🔎 payload & response</summary>
+
+```json
+// PAYLOAD
+{
+  "nome": "Salvatore"
+}
+```
+
+```json
+// RESPONSE
+{
+  "found": true,
+  "count": 1,
+  "reservation": {
+    "eventId": "ho9ruk5i5p1hj0uttsfd7lf63c@google.com",
+    "date": "2026-07-31",
+    "time": "21:00",
+    "people": 2,
+    "name": "Salvatore",
+    "phone": null,
+    "email": null,
+    "status": "CONFIRMED",
+    "matchType": "name",
+    "fuzzyConfidence": 1,
+    "fuzzyType": "exact",
+    "requiresConfirmation": false,
+    "notes": "Gruppo: No"
+  },
+  "reservations": [
+    {
+      "eventId": "ho9ruk5i5p1hj0uttsfd7lf63c@google.com",
+      "date": "2026-07-31",
+      "time": "21:00",
+      "people": 2,
+      "name": "Salvatore",
+      "phone": null,
+      "email": null,
+      "status": "CONFIRMED",
+      "matchType": "name",
+      "fuzzyConfidence": 1,
+      "fuzzyType": "exact",
+      "requiresConfirmation": false,
+      "notes": "Gruppo: No"
+    }
+  ]
+}
+```
+
+</details>
 
 **[Cliente]**: Sì confermo
 
