@@ -1,0 +1,469 @@
+[
+  {
+    "id": "B06-001",
+    "category": "entity-capture",
+    "description": "Cognome con apostrofo — D'Angelo",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome D'Angelo",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "D'Angelo" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["D'Angelo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-002",
+    "category": "entity-capture",
+    "description": "Cognome composto — De Luca",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove, tre persone, a nome De Luca",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "De Luca" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["De Luca"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-003",
+    "category": "entity-capture",
+    "description": "Nome e cognome — deve catturare entrambi",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, mi chiamo Alessandro Bianchi",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Alessandro Bianchi" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Bianchi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-004",
+    "category": "entity-capture",
+    "description": "Cognome straniero (tedesco) — Schneider",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove, due persone, a nome Schneider",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Schneider" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Schneider"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-005",
+    "category": "entity-capture",
+    "description": "Cliente compita il cognome lettera per lettera",
+    "userTurns": [
+      "Vorrei prenotare per venerdì prossimo alle nove di sera, due persone",
+      "Il cognome è Ceccarelli: CI, E, CI, CI, A, ERRE, E, ELLE, ELLE, I",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Ceccarelli" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Ceccarelli"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-006",
+    "category": "entity-capture",
+    "description": "Cliente si corregge sul cognome",
+    "userTurns": [
+      "Vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Rossi",
+      "Aspetta, ho sbagliato, è Russo con la U",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Russo" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Russo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-007",
+    "category": "entity-capture",
+    "description": "Persone dette come 'siamo in quattro'",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, siamo in quattro, a nome Marini",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Marini" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Marini"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-008",
+    "category": "entity-capture",
+    "description": "Persone dette come 'io e mia moglie' → 2 persone",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per me e mia moglie, a nome Colombo",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Colombo" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Colombo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-009",
+    "category": "entity-capture",
+    "description": "Persone come 'una famiglia di cinque' → 5",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, siamo una famiglia di cinque, a nome Ferrero",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 5, "nome": "Ferrero" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Ferrero"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-010",
+    "category": "entity-capture",
+    "description": "Persone come 'in coppia' → 2",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera in coppia, a nome Bruno",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Bruno" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Bruno"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-011",
+    "category": "entity-capture",
+    "description": "Persone come 'in tre coppie' → 6",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, saremo tre coppie, a nome Ricci",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 6, "nome": "Ricci" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Ricci"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-012",
+    "category": "entity-capture",
+    "description": "Cliente si corregge sul numero di persone",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Vitale",
+      "Aspetta, siamo in tre in realtà",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Vitale" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Vitale"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-013",
+    "category": "entity-capture",
+    "description": "Cliente aggiunge nota — allergia",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Longo. Volevo segnalare che uno di noi è allergico ai crostacei",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Longo" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["allergi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-014",
+    "category": "entity-capture",
+    "description": "Cliente aggiunge nota — seggiolone per bambino",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, tre persone, a nome Testa. Ci serve un seggiolone per il bambino",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Testa" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["seggiolone"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-015",
+    "category": "entity-capture",
+    "description": "Cliente chiede tavolo esterno",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Costa. Se possibile un tavolo esterno",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Costa" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["ester"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-016",
+    "category": "entity-capture",
+    "description": "Nota compleanno",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Fabbri. È il compleanno di mia figlia",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Fabbri" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["compleanno"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-017",
+    "category": "entity-capture",
+    "description": "Nome con particella nobiliare — Della Valle",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Della Valle",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Della Valle" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Della Valle"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-018",
+    "category": "entity-capture",
+    "description": "Nome doppio — Maria Chiara Neri",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Maria Chiara Neri",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Maria Chiara Neri" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Neri"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-019",
+    "category": "entity-capture",
+    "description": "Cliente dà solo il nome, poi il cognome nel turno successivo",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone, mi chiamo Giorgio",
+      "Il cognome è Bianchi",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Giorgio Bianchi" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Bianchi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-020",
+    "category": "entity-capture",
+    "description": "Cliente dà solo il cognome quando gli si chiede il nome",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone",
+      "A nome Ferrari",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Ferrari" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Ferrari"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-021",
+    "category": "entity-capture",
+    "description": "Cognome fonicamente ambiguo — cliente ripete e conferma",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Gaggi",
+      "Gaggi, con due gi in mezzo",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Gaggi" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Gaggi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-022",
+    "category": "entity-capture",
+    "description": "Nome tipicamente ambiguo al telefono — Villa vs Villani",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Villani",
+      "Villani, con la enne alla fine",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Villani" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Villani"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-023",
+    "category": "entity-capture",
+    "description": "Cliente dice tutto in un turno — persone, ora, nome, nota",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, siamo in quattro, a nome Romano, se possibile vicino alla finestra",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Romano" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["finestra"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-024",
+    "category": "entity-capture",
+    "description": "Cliente dà nome mentre parla di altro — deve estrarlo comunque",
+    "userTurns": [
+      "Buonasera, allora sarebbe per venerdì prossimo, poi vediamo se veniamo in due o tre, comunque a nome Esposito",
+      "Diciamo due",
+      "Alle nove di sera",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Esposito" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Esposito"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-025",
+    "category": "entity-capture",
+    "description": "Doppia richiesta — allergia + tavolo lontano dalla porta",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Sanna. Sono celiaca e se possibile un tavolo lontano dalla porta",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Sanna" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["celia"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-026",
+    "category": "entity-capture",
+    "description": "Cliente aggiunge la nota DOPO la conferma iniziale",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Greco",
+      "Ah dimenticavo, siamo con un cane, va bene?",
+      "Ok grazie confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 4, "nome": "Greco" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["cane"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-027",
+    "category": "entity-capture",
+    "description": "Cliente ha un nome tipicamente maschile ma è donna che prenota per marito — cattura correttamente",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, la prenoto a nome di mio marito Antonio Ferri",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Antonio Ferri" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Ferri"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-028",
+    "category": "entity-capture",
+    "description": "Il cliente NON dice il nome — Giulia deve chiederlo, il cliente risponde",
+    "userTurns": [
+      "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone",
+      "Ah scusi, Palermo, si scrive come la città",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Palermo" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Palermo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-029",
+    "category": "entity-capture",
+    "description": "Cliente pronuncia il cognome in modo non chiaro — Giulia deve chiedere ripetizione",
+    "userTurns": [
+      "Vorrei prenotare per venerdì prossimo alle nove di sera, due persone",
+      "A nome Sciarrone",
+      "Sciarrone: esse ci a due erre o ne e",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Sciarrone" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Sciarrone"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B06-030",
+    "category": "entity-capture",
+    "description": "Cliente dà informazioni sparse in molti turni",
+    "userTurns": [
+      "Buonasera, vorrei prenotare",
+      "Per venerdì prossimo",
+      "Alle nove di sera",
+      "Due persone",
+      "A nome Amato",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Amato" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Amato"],
+    "replyLanguage": "it"
+  }
+]
