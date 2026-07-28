@@ -1,5 +1,29 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.51 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.52 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.52 (2026-07-28) — Prep B07 modify + fix bug modifica_prenotazione
+// che passa parametri parziali.
+//
+// Diagnosi (da audit App Script):
+//   In B05/B06 abbiamo osservato che il modello chiama modifica_prenotazione
+//   con solo il campo cambiato (es. modifica_prenotazione(nome="Russo") oppure
+//   modifica_prenotazione(persone=3)). L'App Script fa fallback SILENZIOSO a
+//   handleCreateOrUpdateReservation, che nei test-b non trova la prenotazione
+//   originale (phone vuoto) e CREA una nuova riga (con name="Cliente" se manca
+//   il nome). Risultato: righe duplicate + nome "Cliente" spuntato dal nulla.
+//
+// Fix a due livelli (defense in depth):
+//   1) BACKEND (patch separata apps-script-patch-modify.js): no fallback
+//      silenzioso, reject esplicito se manca eventId o nome.
+//   2) PROMPT (questo file, v7.4.52): il modello DEVE:
+//      - Chiamare sempre trova_prenotazione PRIMA di modifica_prenotazione,
+//        e catturare l'eventId dalla response.
+//      - Chiamare modifica_prenotazione con SEMPRE tutti i campi noti:
+//        eventId (obbligatorio), nome, data, ora, persone, note. Anche i
+//        campi che non stanno cambiando devono essere passati con i valori
+//        correnti.
+//
+// Nessuna altra modifica.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.51 (2026-07-28) — Post-test B06 entity capture (18/30 grezzo).
 //
@@ -398,7 +422,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.51-MT-2026-07-28 caricato (v7.4.51: fix name rigidity — accetta solo cognome o solo nome; fix note allucinate — vuote se non richieste esplicite; fix reply post-tool con echo delle note)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.52-MT-2026-07-28 caricato (v7.4.52: modifica_prenotazione richiede eventId + tutti i campi noti — no chiamate parziali)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1075,7 +1099,36 @@ Before calling any tool, verify silently that the caller has EXPLICITLY asked fo
 
 - controlla_disponibilita — call ONLY when you have a NEW booking request with all four fields (name, date, time, party size), AND after the Pre-tool Schedule Window Check has passed (day is open, time is inside lunch or dinner window). This tool verifies CAPACITY only. It does NOT re-validate schedule — you have already done that. If the tool returns slot_available for an out-of-hours time, treat it as unreliable and refuse anyway.
 - crea_prenotazione — call ONLY after controlla_disponibilita returned slot_available, and ONLY if the caller has confirmed the booking OR the caller's request already contained a clear "book / reserve / prenotare / réserver / reservieren" intent.
-- modifica_prenotazione — call ONLY when the caller has explicitly said they want to change an existing booking ("cambia", "modifica", "change", "ändern", "modificar", "changer"). NEVER call it to "fix" a booking you created with wrong data — instead, apologize, cancel with cancella_prenotazione if needed, and create a new one.
+- modifica_prenotazione — call ONLY when the caller has explicitly said they want to change an existing booking ("cambia", "modifica", "cambiare", "change", "ändern", "modificar", "changer"), OR when the caller has JUST corrected data they gave for a booking you already created in this same call (e.g., "aspetta, siamo in tre" after you called crea_prenotazione with 2). This is the correct tool for BOTH cases — never propose to cancel and recreate.
+
+  IMPORTANT — mandatory 2-step protocol for every modifica_prenotazione call:
+
+  Step A. Call trova_prenotazione FIRST to obtain the current record. Save from its response:
+    - eventId (a string like "abc123...")
+    - the current name, date, time, party size (needed to preserve values not being changed)
+
+  Step B. Call modifica_prenotazione with ALL of these fields populated:
+    - eventId — MANDATORY. Pass exactly the value returned by trova_prenotazione. Without eventId the backend cannot update; it will create a duplicate row.
+    - nome — MANDATORY. Pass the new name if the caller changed it, otherwise pass the ORIGINAL name from trova_prenotazione. Never leave empty.
+    - data — MANDATORY. New date if changing, otherwise the original.
+    - ora — MANDATORY. New time if changing, otherwise the original.
+    - persone — MANDATORY. New party size if changing, otherwise the original.
+    - note — pass the existing note or the updated one.
+
+  Concrete correct example (caller corrects the party size):
+    - Caller: "aspetta, siamo in tre"
+    - You: call trova_prenotazione(nome="Vitale") → returns eventId="abc123", data="2026-07-31", ora="21:00", persone=2
+    - You: call modifica_prenotazione(eventId="abc123", nome="Vitale", data="2026-07-31", ora="21:00", persone=3)
+    - The backend performs an UPDATE (single row, name preserved).
+
+  Concrete WRONG examples that must NEVER happen:
+    - modifica_prenotazione(persone=3) — no eventId, no name, no date, no time → backend falls back to create → duplicate row + name defaults to "Cliente".
+    - modifica_prenotazione(nome="Russo") — no eventId, no other fields → same failure mode.
+    - modifica_prenotazione(eventId="abc123", persone=3) — has eventId but no name/date/time → backend may fail or produce inconsistent state.
+
+  If trova_prenotazione returns "not_found", tell the caller you cannot find the booking; do NOT call modifica_prenotazione at all (there is nothing to modify).
+
+  Do NOT call modifica_prenotazione as a "cancel and recreate" workaround — it is a real update. Do NOT propose to the caller to cancel and rebook when they just want to change one field.
 - cancella_prenotazione — call ONLY when the caller has explicitly said they want to cancel ("cancella", "annulla", "cancel", "stornieren", "cancelar", "annuler", "取消", "отменить"). A simple "Sì / Yes / Ja / Oui / Sí / Sim" after a confirmation message IS NOT a cancellation request — it is closing agreement. In this case, close politely without calling any tool.
 - trova_prenotazione — call ONLY as a preparatory step before modifica_prenotazione or cancella_prenotazione, once you already know the caller wants to modify or cancel.
 
@@ -1327,7 +1380,7 @@ Before generating each reply, silently check:
    - Have I actually heard the caller state a REAL person's NAME (not a date, not a day of the week, not a time, not the party size, not "Caller"/"Customer"/"Cliente"/"Piazza"), plus DATE, TIME (specific hh:mm), and PARTY SIZE in this call?
    - Have I passed the Pre-tool Schedule Window Check? Is the day open? Is the time STRICTLY inside lunch or dinner window per the schedule in # Context? Times like 20:30 (before dinner_start=21:00), 11:45 (before lunch_start=12:00), 15:30 (after lunch_end=14:30), 22:45 (after dinner_end=22:30) are OUT — refuse and propose valid slot. DO NOT create at 20:30 and then modify to 21:00.
    - Have I passed the Pre-tool Party Size Communication? persone > MAX PER SINGLE BOOKING (from # Context schedule) → this is a large group. INFORM the caller that the booking will be pending owner confirmation, THEN proceed with controlla_disponibilita and crea_prenotazione normally. Do NOT block the tool. Do NOT split the group. Do NOT offer transfer/callback as an alternative. The backend automatically marks it PENDING_OWNER.
-5. If I am about to call cancella_prenotazione or modifica_prenotazione: has the caller EXPLICITLY asked to cancel or change an existing booking? A simple "Sì/Yes/Ja" after a confirmation is closing agreement, NOT a cancellation. If no explicit cancel/change request, do NOT call these tools.
+5. If I am about to call cancella_prenotazione or modifica_prenotazione: has the caller EXPLICITLY asked to cancel or change an existing booking, OR (for modifica) are they correcting data of a booking I already created in this call? A simple "Sì/Yes/Ja" after a confirmation is closing agreement, NOT a cancellation. If no explicit cancel/change request and no correction, do NOT call these tools. If I am calling modifica_prenotazione: have I first called trova_prenotazione to get the eventId? Am I passing eventId + nome + data + ora + persone (all of them, using original values for fields not changing)? If any is missing — especially eventId or nome — do NOT call it: the backend will silently create a duplicate row.
 6. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
 7. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
 `;
