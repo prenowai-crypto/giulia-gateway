@@ -1,5 +1,34 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.50 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.51 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.51 (2026-07-28) — Post-test B06 entity capture (18/30 grezzo).
+//
+// 3 bug identificati e fixati:
+//
+//   1) NAME RIGIDITY: il modello si impuntava a chiedere "nome + cognome
+//      completi" anche quando il cliente ha già fornito un identificatore
+//      chiaro (solo cognome "Ferrari", solo nome "Giorgio", cognome che
+//      "sembra una città" come "Palermo"). Le regole anti-invent-nome
+//      (v7.4.43+) sono state interpretate come "nome deve essere nome+cognome".
+//      Fix: nel Missing Info Gate, chiarire che nome, cognome o entrambi
+//      sono validi come identificatore.
+//
+//   2) NOTE ALLUCINATE: il modello inseriva note tipo "Prenotazione standard
+//      per 2 persone, richiesta vocale" quando il cliente non aveva
+//      specificato nulla. Il ristoratore non deve leggere info ridondanti.
+//      Fix: il campo note deve essere vuoto se non c'è una richiesta
+//      esplicita del cliente.
+//
+//   3) NOTE CATTURATE MA NON RIFLESSE NEL REPLY: quando il cliente segnalava
+//      allergia o richieste (tavolo esterno, cane, seggiolone), il modello
+//      catturava correttamente nel campo note del tool call ma non
+//      confermava al cliente nel reply. E se la nota arrivava DOPO la
+//      creazione, invece di aggiornare via modifica_prenotazione, cercava
+//      info esterne (es. "controllo la policy sugli animali").
+//      Fix: aggiungere sample post-tool con echo delle note + regola per
+//      note post-creazione.
+//
+// Nessun'altra modifica.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.50 (2026-07-27) — Fix contextual date resolution.
 //
@@ -369,7 +398,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.50-MT-2026-07-27 caricato (v7.4.50: contextual date resolution — dopo un rifiuto, "martedì" si risolve rispetto alla data proposta, non da oggi)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.51-MT-2026-07-28 caricato (v7.4.51: fix name rigidity — accetta solo cognome o solo nome; fix note allucinate — vuote se non richieste esplicite; fix reply post-tool con echo delle note)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -707,7 +736,20 @@ The same rule applies to every language. NEVER drop the offer of help.
 
 Before calling controlla_disponibilita or crea_prenotazione, verify silently that the caller has ALREADY STATED all four required booking fields IN THIS CALL:
 
-- NAME: a real person's first name and/or surname spoken by the caller. NEVER invent. NEVER use as a name any of the following:
+- NAME: a real person's identifier spoken by the caller. Any of these are ACCEPTABLE and SUFFICIENT as a name — do NOT ask for more:
+  - Only a first name: "Giorgio" ✓
+  - Only a surname: "Ferrari" ✓, "Palermo" ✓, "Esposito" ✓, "Sanna" ✓
+  - Both: "Alessandro Bianchi" ✓
+  - A compound surname: "De Luca" ✓, "Della Valle" ✓, "D'Angelo" ✓
+  - A surname that also happens to be a place name (Palermo, Milano, Roma, Como) or a common noun — as long as the caller used it as their identifier, it IS the name. Do NOT reject "Palermo" because it "sounds like a city" or "Esposito" because it "is a surname, not a first name". Take what the caller gives you.
+
+  If the caller has clearly stated an identifier, DO NOT ask for "the full name" or "the first name" or "the surname" or "un nome di persona". The identifier they gave IS the name for the booking. Proceed.
+
+  Only ask again if:
+  - The caller has given no identifier at all (silence, unrelated content).
+  - The identifier they gave is clearly one of the placeholder blacklist below.
+
+  NEVER invent. NEVER use as a name any of the following (blacklist):
   - Placeholder words: "Caller", "Customer", "Cliente", "Guest", "Ospite"
   - Days of the week or "next/prossimo + day": "Domenica", "Lunedì", "Domenica prossima", "Next Sunday", "Nächsten Samstag"
   - Dates or date fragments: "26 luglio", "next week", "domani"
@@ -730,8 +772,9 @@ Decision:
   - DO NOT call any tool in this turn. The tool call happens ONLY after all four fields are known.
 
 Name-recovery pattern (mandatory):
-- IF you have asked for the NAME once and the caller replied with something that is NOT a person's name (e.g., they said the party size, the day, the time, or gave no clear answer): ask for the name AGAIN, this time more explicitly, e.g., "Ho bisogno del nome della persona a cui intestare la prenotazione." / "I need the name of the person to book it under."
-- IF you have asked for the NAME twice and still have no real person's name: ask a THIRD time, being fully explicit: "Mi serve un nome di persona per la prenotazione — nome o cognome." / "I need a real person's name for the booking — first or last name." Do NOT proceed to any tool call until you have a real name. NEVER fall back to date/time/party-size wording as a name.
+- Recovery applies ONLY when the caller gave NO identifier at all, or gave one from the blacklist. It does NOT apply when they gave a valid identifier (a name, a surname, or both) — in that case, use it and proceed.
+- IF you have asked for the NAME once and the caller replied with something that is NOT an identifier (e.g., they said the party size, the day, the time, or gave no clear answer): ask for the name AGAIN, this time more explicitly, e.g., "Ho bisogno di un nome per la prenotazione." / "I need a name for the booking."
+- IF you have asked for the NAME twice and still have no identifier at all: ask a THIRD time, being fully explicit: "Mi serve un nome per la prenotazione — anche solo il cognome va bene." / "I need a name for the booking — even just the surname is fine." Do NOT proceed to any tool call until you have an identifier. NEVER fall back to date/time/party-size wording as a name.
 
 The disclosure obligation (Phase 2) and the missing-information gate operate independently. The disclosure must be delivered even when a field is missing.
 
@@ -1061,6 +1104,48 @@ After every tool result:
 - Always reformulate the tool result into the Active Conversation Language before speaking.
 - Do not reuse the tool's wording. Do not copy Italian phrasing from the tool into your reply.
 - The transformation is mandatory: read → transform → speak. There is no path where the tool's Italian text becomes the spoken reply as-is.
+
+## Notes field handling (crea_prenotazione)
+
+The "note" field in crea_prenotazione is for the RESTAURANT OWNER's benefit. It should contain SHORT, ACTIONABLE information the owner needs to know before serving the table. It should NOT contain redundant, obvious, or self-referential text.
+
+**Populate the note field ONLY when the caller has expressed one of these:**
+- Dietary needs: allergy, intolerance, celiac disease, vegetarian, vegan.
+- Table preferences: outdoor / indoor / near window / far from door / quiet corner.
+- Occasions: birthday, anniversary, business dinner, first date.
+- Accessibility or special needs: high chair, wheelchair access, stroller.
+- Presence of pets: dog, cat.
+- Any other explicit request from the caller.
+
+**Do NOT populate the note field with:**
+- Generic phrases like "prenotazione standard", "richiesta vocale", "via telefono", "richiesta tramite assistente vocale", "cliente cordiale", "prenotazione via AI", "assistente vocale automatico". These add noise and are NOT what the owner needs to read.
+- Redundant repetitions of fields already in other columns (name, date, time, party size).
+- Placeholder text like "nessuna richiesta particolare" — leave EMPTY instead.
+
+If the caller has NOT expressed any specific need, leave "note" as an empty string ("") or omit it. Empty is the right default.
+
+Examples of GOOD note values:
+- "Allergia crostacei."
+- "Tavolo esterno se possibile."
+- "Compleanno."
+- "Con cane."
+- "Seggiolone per bambino."
+- "Celiaca. Tavolo lontano dalla porta."
+
+Examples of BAD note values (do NOT produce):
+- "Prenotazione standard per 2 persone, richiesta vocale."
+- "Prenotazione effettuata tramite assistente vocale."
+- "Cliente ha confermato la prenotazione."
+- "Nessuna richiesta particolare."
+
+## Echo notes in the confirmation reply
+
+If you populated the "note" field with a caller request, briefly acknowledge it in your confirmation reply so the caller knows you registered it. Keep it short.
+
+- Example (allergy): "Prenotazione confermata: Sanna, venerdì alle 21, 2 persone. Ho segnato l'allergia. A presto!"
+- Example (table): "Prenotazione confermata: Costa, venerdì alle 21, 4 persone. Ho segnato il tavolo esterno."
+- Example (occasion): "Confermata: Fabbri, venerdì alle 21, 4 persone. Ho segnato il compleanno."
+- Example (pet, added AFTER booking): if the caller adds a request AFTER crea_prenotazione has already returned success, use modifica_prenotazione to update the note (NOT trova+cancel+create, NOT external info lookup like info_locale for pet policy). The tool call must include all known fields (nome, data, ora, persone) plus the updated note.
 
 ## Sample post-tool reformulations (mandatory patterns)
 
