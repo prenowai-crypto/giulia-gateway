@@ -1,574 +1,621 @@
-# Test Conversations — Run 2026-07-27 22:10
+# Test Conversations — Run 2026-07-28 03:33
 
-**Model**: gpt-realtime-2.1-mini | **Total**: 30 | **Passed**: 25 (83%) | **Failed**: 5 | **Duration**: 429.6s
+**Model**: gpt-realtime-2.1-mini | **Total**: 30 | **Passed**: 20 (67%) | **Failed**: 10 | **Duration**: 474.7s
 
-## ❌ Failed tests (5)
+## ❌ Failed tests (10)
 
-- [B04-001](#b04-001) availability-edge — reply must contain 'chius' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Mi di
-- [B04-005](#b04-005) availability-edge — last reply not in 'it': mi dispiace, alle 15:30 non possiamo prenotare — l’orario non è previsto per il pranzo.  
-per pr
-- [B04-008](#b04-008) availability-edge — last reply not in 'it': per la cena non possiamo prenotare alle 20:00; il servizio inizia alle 21:00. vuole prenotare al
-- [B04-012](#b04-012) availability-edge — last reply not in 'it': mi dispiace, non posso prenotare per una data passata. vuole prenotare per un giorno futuro?
-- [B04-018](#b04-018) availability-edge — expected tool call 'crea_prenotazione' with args {"persone":50,"nome":"Riccardo Palumbo"} not found. Actual: []
+- [B05-004](#b05-004) datetime-parsing — forbidden tool call 'crea_prenotazione' was made | reply must contain 'mese' — got: Salve, sono l'assistente vocale auto
+- [B05-006](#b05-006) datetime-parsing — reply must contain 'giovedì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un 
+- [B05-007](#b05-007) datetime-parsing — reply must contain 'martedì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un 
+- [B05-008](#b05-008) datetime-parsing — reply must contain 'mercoledì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? U
+- [B05-018](#b05-018) datetime-parsing — reply must contain 'orario' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perf
+- [B05-020](#b05-020) datetime-parsing — last reply not in 'it': mi spiace, alle 20:30 non possiamo prenotare. la cena inizia alle 21:00. vuole prenotare alle 21
+- [B05-022](#b05-022) datetime-parsing — reply must contain 'mercoledì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? P
+- [B05-024](#b05-024) datetime-parsing — reply must contain '15 agosto' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? U
+- [B05-026](#b05-026) datetime-parsing — expected tool call 'crea_prenotazione' with args {"persone":2,"nome":"Riccardo Grasso","ora":"22:00"} not found. Actual:
+- [B05-030](#b05-030) datetime-parsing — last reply not in 'it': per quell’orario siamo in pausa. per pranzo è possibile tra le 12:00 e le 14:30; oppure cena all
 
 ## By category
 
-- `availability-edge`: 25/30 pass
+- `datetime-parsing`: 20/30 pass
 
 ---
 
-## B04-001 ❌ availability-edge — Lunedì chiuso — cliente rifiutato (2.6s)
-
-> ⚠️ **Failed**: reply must contain 'chius' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Mi dispiace, chiudiamo il lunedì. Vuole prenotare per martedì o un altro giorno tra martedì e domenica?
+## B05-001 ✅ datetime-parsing — Data formato numerico europeo 'gg/mm' → deve risolvere correttamente (17.8s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buonasera, vorrei prenotare per lunedì prossimo alle 21:30 per 2 persone, a nome Marco Bianchi
+**[Cliente]**: Buonasera, vorrei prenotare per il 31/07 alle 21, 2 persone, a nome Luca Rossi
 
-**[Giulia]**: Mi dispiace, chiudiamo il lunedì. Vuole prenotare per martedì o un altro giorno tra martedì e domenica?
-
----
-
-## B04-002 ✅ availability-edge — Lunedì chiuso — cliente insiste, modello mantiene rifiuto (2.5s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Ciao, prenotazione per lunedì alle 21 per 4 persone, a nome Anna Rossi
-
-**[Giulia]**: Mi dispiace, lunedì siamo chiusi. Vuole provare martedì o un altro giorno tra martedì e domenica?
-
-**[Cliente]**: Ma per me è importante lunedì, non potete fare un'eccezione?
-
-**[Giulia]**: Capisco, ma non possiamo fare eccezioni: lunedì restiamo chiusi. Posso aiutarla a trovare un orario in un altro giorno, magari martedì o un altro giorno da martedì a domenica.
-
----
-
-## B04-003 ✅ availability-edge — Lunedì chiuso — cliente accetta spostare a martedì (23.5s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per lunedì prossimo alle 21, 3 persone, a nome Luca Ferrari
-
-**[Giulia]**: Mi dispiace, lunedì siamo chiuso. Vuole provare martedì o un altro giorno tra martedì e domenica?
-
-**[Cliente]**: Va bene, allora per martedì prossimo stessa ora
-
-**[Giulia]**: Ok, un attimo: controllo la disponibilità per martedì alla stessa ora.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-28", ora="21:00", persone=3)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Luca Ferrari", data="2026-07-28", ora="21:00", persone=3, note="Prenotazione standard")` → ✅ creata (eventId: 2tp5e3ekmbraksj1pr4g...)
-
-**[Giulia]**: Perfetto, la prenotazione è confermata: Luca Ferrari, martedì alle 21:00, 3 persone. A presto!
-
----
-
-## B04-004 ✅ availability-edge — Lunedì chiuso — cliente accetta spostare a domenica (19.3s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per lunedì alle 21:30, 2 persone, a nome Sofia Marino
-
-**[Giulia]**: Mi dispiace, lunedì siamo chiusi, quindi non posso prenotare quel giorno.  
-Vuole una data tra martedì e domenica?
-
-**[Cliente]**: Domenica prossima stessa ora allora
-
-**[Giulia]**: Perfetto, controllo subito la disponibilità per domenica alle 21:30.
-
-→ 🔧 `controlla_disponibilita(data="2026-08-02", ora="21:30", persone=2)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Sofia Marino", data="2026-08-02", ora="21:30", persone=2, note="")` → ✅ creata (eventId: ttee75ed8nlvv4tmea3d...)
-
-**[Giulia]**: Prenotazione confermata per Sofia Marino, domenica alle 21:30, per 2 persone.
-
----
-
-## B04-005 ❌ availability-edge — Alle 15:30 — dopo chiusura pranzo (14:30) (2.5s)
-
-> ⚠️ **Failed**: last reply not in 'it': mi dispiace, alle 15:30 non possiamo prenotare — l’orario non è previsto per il pranzo.  
-per pranzo possiamo prenotare fino alle 14:30, oppure per ce
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 15:30, 2 persone, a nome Paolo Verdi
-
-**[Giulia]**: Mi dispiace, alle 15:30 non possiamo prenotare — l’orario non è previsto per il pranzo.  
-Per pranzo possiamo prenotare fino alle 14:30, oppure per cena dalle 21:00 alle 22:30. Vuole un’altra ora?
-
----
-
-## B04-006 ✅ availability-edge — Alle 16:00 — gap tra pranzo e cena, chiuso (3.5s)
-
-**[Giulia]**: Salve, sono l’assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 16, 3 persone, a nome Chiara Neri
-
-**[Giulia]**: Mi dispiace, alle 16:00 non possiamo prenotare, è fuori orario di servizio. Per venerdì prossimo va bene il pranzo tra 12:00 e 14:30 o la cena tra 21:00 e 22:30?
-
----
-
-## B04-007 ✅ availability-edge — Alle 11:00 — prima apertura pranzo (12:00) (2.1s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buongiorno, vorrei prenotare per venerdì prossimo alle 11, 2 persone, a nome Giovanni Costa
-
-**[Giulia]**: Mi dispiace, 11:00 non è un orario di servizio. Per il pranzo apriamo alle 12:00, che va bene?
-
----
-
-## B04-008 ❌ availability-edge — Alle 20:00 — prima apertura cena (21:00 config reale) (4.3s)
-
-> ⚠️ **Failed**: last reply not in 'it': per la cena non possiamo prenotare alle 20:00; il servizio inizia alle 21:00. vuole prenotare alle 21:00 invece?
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 20, 4 persone, a nome Elena Ricci
-
-**[Giulia]**: Per la cena non possiamo prenotare alle 20:00; il servizio inizia alle 21:00. Vuole prenotare alle 21:00 invece?
-
----
-
-## B04-009 ✅ availability-edge — Alle 20:30 — 30 minuti prima cena, cliente accetta 21:00 (17.4s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 20:30, 2 persone, a nome Andrea Moretti
-
-**[Giulia]**: Mi dispiace, alle 20:30 non possiamo accogliere prenotazioni per cena (la cena inizia alle 21:00). Preferisce alle 21:00 o un altro orario?
-
-**[Cliente]**: Va bene allora alle 21
-
-**[Giulia]**: Perfetto, controllo la disponibilità per quella data e ora.
+**[Giulia]**: Un attimo, controllo la disponibilità per quel giorno e orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Andrea Moretti", data="2026-07-31", ora="21:00", persone=2, note="Prenotazione standard per cena.")` → ✅ creata (eventId: qfok2unp6tp9np1fsfqb...)
+→ 🔧 `crea_prenotazione(nome="Luca Rossi", data="2026-07-31", ora="21:00", persone=2, note="Prenotazione effettuata tramite assistente vocale.")` → ✅ creata (eventId: i0mus8i6j81qe1i8h5kr...)
 
-**[Giulia]**: Prenotazione confermata: Andrea Moretti, venerdì alle 21:00, per 2 persone. A presto!
-
----
-
-## B04-010 ✅ availability-edge — Alle 23:00 — dopo last booking (22:30) (2.5s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 23, 2 persone, a nome Francesco Lombardi
-
-**[Giulia]**: Perfetto, grazie. Purtroppo alle 23:00 non possiamo accogliere prenotazioni: la cena inizia alle 21:00 e termina alle 22:30. Vuole prenotare alle 22:30, oppure a un orario tra 21:00 e 22:30?
-
----
-
-## B04-011 ✅ availability-edge — Dopo 22:30 — cliente accetta anticipare a 22:00 (19.4s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 23:30, 2 persone, a nome Roberto Greco
-
-**[Giulia]**: Capito, Roberto. Venerdì prossimo alle 23:30 non è possibile: la cena termina alle 22:30.
-
-Vuole prenotare alle 22:30, sempre per due persone, o preferisce un altro orario?
-
-**[Cliente]**: Va bene allora alle 22
-
-**[Giulia]**: Ok, controllo la disponibilità per questo orario e poi registro la prenotazione.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="22:00", persone=2)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Roberto Greco", data="2026-07-31", ora="22:00", persone=2, note="Prenotazione effettuata tramite assistente vocale automatico")` → ✅ creata (eventId: e1j2vs2ih32htq6jpbr3...)
-
-**[Giulia]**: Prenotazione confermata: Roberto Greco, venerdì 31 luglio alle 22:00, per 2 persone. A presto!
-
----
-
-## B04-012 ❌ availability-edge — Data passata — 'ieri sera' (1.4s)
-
-> ⚠️ **Failed**: last reply not in 'it': mi dispiace, non posso prenotare per una data passata. vuole prenotare per un giorno futuro?
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per ieri sera alle 21, 2 persone, a nome Laura Bianchi
-
-**[Giulia]**: Mi dispiace, non posso prenotare per una data passata. Vuole prenotare per un giorno futuro?
-
----
-
-## B04-013 ✅ availability-edge — Data passata specifica poi correzione a futura (11 agosto = martedì aperto) (19.0s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Vorrei prenotare per il 10 luglio alle 21, 3 persone, a nome Alessandro Ferri
-
-**[Giulia]**: Mi dispiace, non posso prenotare per il 10 luglio, è una data passata. Vuole prenotare per un giorno futuro?
-
-**[Cliente]**: Ah scusi intendevo 11 agosto
-
-**[Giulia]**: Perfetto, controlliamo la disponibilità per quell’orario e procediamo se c’è posto.
-
-→ 🔧 `controlla_disponibilita(data="2026-08-11", ora="21:00", persone=3)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Alessandro Ferri", data="2026-08-11", ora="21:00", persone=3, note="")` → ✅ creata (eventId: 11b9sr2sg91qss0rosj4...)
-
-**[Giulia]**: Prenotazione confermata: Alessandro Ferri, 11 agosto alle 21:00, per 3 persone. A presto!
+**[Giulia]**: Prenotazione confermata per Luca Rossi, 31/07 alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, la prenotazione è confermata. Non è necessario fare altro — a presto!
+**[Giulia]**: Perfetto, grazie per la conferma. La prenotazione è registrata, a presto!
 
 ---
 
-## B04-014 ✅ availability-edge — Prenotazione last minute per domani sera (martedì aperto) (17.9s)
+## B05-002 ✅ datetime-parsing — Data formato numerico completo 'gg/mm/aaaa' (17.4s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buonasera, vorrei prenotare per domani alle 22, 2 persone, a nome Beatrice Testa
+**[Cliente]**: Vorrei prenotare per il 05/08/2026 alle 13, 2 persone, a nome Anna Bianchi
 
-**[Giulia]**: Perfetto, controllo la disponibilità per quella data e ora. Un attimo.
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
 
-→ 🔧 `controlla_disponibilita(data="2026-07-28", ora="22:00", persone=2)` → slot_available
+→ 🔧 `controlla_disponibilita(data="2026-08-05", ora="13:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Beatrice Testa", data="2026-07-28", ora="22:00", persone=2, note="")` → ✅ creata (eventId: kmcal0l4dd6i44e94rr5...)
+**[Giulia]**: Perfetto, procedo con la prenotazione a nome Anna Bianchi.
 
-**[Giulia]**: Prenotazione confermata: Beatrice Testa, domani alle 22:00, per 2 persone. A presto!
+→ 🔧 `crea_prenotazione(nome="Anna Bianchi", data="2026-08-05", ora="13:00", persone=2, note="")` → ✅ creata (eventId: ut9uqs99seritlueoc22...)
 
-**[Cliente]**: Sì confermo
-
-**[Giulia]**: Perfetto, confermo: la prenotazione è registrata. La aspettiamo domani alle 22:00.
-
----
-
-## B04-015 ✅ availability-edge — 9 persone — sopra MAX (8), deve creare prenotazione pending owner e informare cliente (18.3s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 21, 9 persone, a nome Federico Rossi
-
-**[Giulia]**: Un attimo, controllo la disponibilità. Per un gruppo così grande sarà registrata in attesa di conferma del ristorante.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=9)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Federico Rossi", data="2026-07-31", ora="21:00", persone=9, note="Gruppo 9 persone, registrato come pending owner confirmation.")` → ✅ creata (eventId: v4keq0fieh1dukqmgi4j...)
-
-**[Giulia]**: Prenotazione registrata: Federico Rossi, venerdì alle 21:00, per 9 persone. La richiesta è stata inviata in attesa di conferma del ristorante.
-
-**[Cliente]**: Sì procediamo
-
-**[Giulia]**: Perfetto, la prenotazione è stata registrata e confermata. A presto, Federico Rossi, per 9 persone, venerdì alle 21:00.
-
----
-
-## B04-016 ✅ availability-edge — 10 persone — large group, deve creare prenotazione pending owner (19.3s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 21, 10 persone, a nome Michele Barbieri
-
-**[Giulia]**: Perfetto, ho il nome, la data, l’orario e il numero di persone. Per un gruppo così grande la prenotazione sarà registrata in attesa di conferma del ristorante. Un attimo, controllo la disponibilità.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=10)` → slot_available
-
-**[Giulia]**: Ok, la disponibilità è stata confermata. Creo la prenotazione.
-
-→ 🔧 `crea_prenotazione(nome="Michele Barbieri", data="2026-07-31", ora="21:00", persone=10, note="Gruppo grande, registrato in attesa di conferma dal ristorante.")` → ✅ creata (eventId: 4leag821314oldqshl4q...)
-
-**[Giulia]**: Prenotazione confermata: Michele Barbieri, venerdì 31 luglio alle 21:00, per 10 persone. A presto!
-
-**[Cliente]**: Sì procediamo
-
-**[Giulia]**: Perfetto, grazie! La richiesta è stata registrata e la prenotazione è confermata per Michele Barbieri, venerdì alle 21:00, per 10 persone. A presto!
-
----
-
-## B04-017 ✅ availability-edge — 15 persone — large group, deve creare prenotazione pending owner (21.0s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorremmo prenotare per venerdì prossimo alle 21, siamo in 15, a nome Giulia Ferrari
-
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora. Informo che per gruppi grandi la richiesta va in attesa di conferma del ristorante.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=15)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Giulia Ferrari", data="2026-07-31", ora="21:00", persone=15, note="Gruppo grande. La prenotazione è registrata in attesa di conferma dal ristorante.")` → ✅ creata (eventId: 04ujf2pfmav2599pu4p9...)
-
-**[Giulia]**: La sua richiesta è stata registrata: Giulia Ferrari, venerdì 21:00, per 15 persone. Essendo un gruppo grande, è in attesa di conferma del ristorante.
-
-**[Cliente]**: Sì confermiamo
-
-**[Giulia]**: Perfetto, confermano la richiesta. È stata registrata e il ristorante la tratterà come in attesa di conferma finale.
-
----
-
-## B04-018 ❌ availability-edge — 50 persone — evento/large group, deve creare prenotazione pending owner (3.9s)
-
-> ⚠️ **Failed**: expected tool call 'crea_prenotazione' with args {"persone":50,"nome":"Riccardo Palumbo"} not found. Actual: []
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buongiorno, avremmo un evento aziendale per venerdì prossimo alle 21, siamo in 50, a nome Riccardo Palumbo
-
-**[Giulia]**: Perfetto, mi occuperò della richiesta. Per registrare un evento aziendale, ho bisogno di un contatto email: me la può indicare?
-
-**[Cliente]**: Sì confermiamo
-
-**[Giulia]**: Grazie mille. Confermate la richiesta, ma ho bisogno di un’email per registrare l’evento aziendale. Può indicarla, per favore?
-
----
-
-## B04-019 ✅ availability-edge — 8 persone — limite superiore MAX_PEOPLE, deve passare come normale (19.4s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 21, 8 persone, a nome Stefano Galli
-
-**[Giulia]**: Un attimo, controllo la disponibilità per questo orario.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=8)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Stefano Galli", data="2026-07-31", ora="21:00", persone=8, note="Prenotazione registrata per 8 persone.")` → ✅ creata (eventId: sbejsu76q3u7tmeka88c...)
-
-**[Giulia]**: Perfetto, la prenotazione è confermata: Stefano Galli, venerdì alle 21:00, per 8 persone. A presto!
-
-**[Cliente]**: Sì confermo
-
-**[Giulia]**: Perfetto, grazie per la conferma! A presto, andiamo avanti con la prenotazione.
-
----
-
-## B04-020 ✅ availability-edge — 1 sola persona — deve funzionare normalmente (17.9s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 21 per una persona, a nome Valentina Colombo
-
-**[Giulia]**: Perfetto, un attimo: controllerò la disponibilità per quell’orario.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=1)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Valentina Colombo", data="2026-07-31", ora="21:00", persone=1, note="")` → ✅ creata (eventId: 9edip25e9duvpoer53i7...)
-
-**[Giulia]**: Prenotazione confermata: Valentina Colombo, venerdì 2026-07-31 alle 21:00, per 1 persona. A presto!
+**[Giulia]**: Prenotazione confermata: Anna Bianchi, 05/08/2026 alle 13:00, per 2 persone. A presto!
 
 **[Cliente]**: Sì
 
-**[Giulia]**: Perfetto, grazie! La prenotazione è registrata, ci vediamo presto.
+**[Giulia]**: Perfetto, a presto alla Osteria Test! Se serve altro, io sono qua.
 
 ---
 
-## B04-021 ✅ availability-edge — 'ora di pranzo' — modello chiede orario, cliente specifica 13:00 (21.9s)
+## B05-003 ✅ datetime-parsing — Data testuale 'il 31 luglio' (16.0s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buongiorno, vorrei prenotare per venerdì prossimo all'ora di pranzo, 2 persone, a nome Simone De Luca
+**[Cliente]**: Vorrei prenotare per il 31 luglio alle 21, 4 persone, a nome Marco Verdi
 
-**[Giulia]**: Perfetto, grazie! Per venerdì prossimo posso aiutarla, ma mi serve un orario preciso per il pranzo: tra 12:00 e 14:30, che orario preferisce?
+**[Giulia]**: Un attimo, controlliamo la disponibilità per quell’orario.
 
-**[Cliente]**: Va bene alle 13
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=4)` → slot_available
 
-**[Giulia]**: Un attimo, controllo la disponibilità.
+→ 🔧 `crea_prenotazione(nome="Marco Verdi", data="2026-07-31", ora="21:00", persone=4, note="Prenotazione standard")` → ✅ creata (eventId: noe38sjmhmgh8i3epqrs...)
 
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="13:00", persone=2)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Simone De Luca", data="2026-07-31", ora="13:00", persone=2, note="Prenotazione a nome Simone De Luca per 2 persone alle 13:00 di venerdì prossimo.")` → ✅ creata (eventId: o2d37j637j5qtu7ff084...)
-
-**[Giulia]**: Prenotazione confermata: Simone De Luca, venerdì 31 luglio alle 13:00, per 2 persone. A presto!
+**[Giulia]**: Marcos Verdi, prenotazione confermata per il 31 luglio alle 21:00, per 4 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, grazie per la conferma! Tutto è già impostato per la prenotazione.
+**[Giulia]**: Perfetto, confermo: la prenotazione è registrata. A presto, Marco Verdi!
 
 ---
 
-## B04-022 ✅ availability-edge — 'per cena' — modello chiede orario, cliente specifica 21:00 (28.6s)
+## B05-004 ❌ datetime-parsing — Data solo giorno del mese 'il 5' senza mese — deve chiedere chiarimento (16.3s)
+
+> ⚠️ **Failed**: forbidden tool call 'crea_prenotazione' was made | reply must contain 'mese' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Ok, controllo la disponibilità per quell’orario e gruppo, un attimo. Prenotazione confermata: Sara Neri, 5 agosto alle 
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo per cena, 2 persone, a nome Marta Fabbri
+**[Cliente]**: Vorrei prenotare per il 5 alle 21, 2 persone, a nome Sara Neri
 
-**[Giulia]**: Perfetto, Marta Fabbri. Posso suggerire un orario per cena?
+**[Giulia]**: Ok, controllo la disponibilità per quell’orario e gruppo, un attimo.
 
-A che ora vuole prenotare, tra le 21:00 e le 22:30?
+→ 🔧 `controlla_disponibilita(data="2026-08-05", ora="21:00", persone=2)` → slot_available
 
-**[Cliente]**: Alle 21
+→ 🔧 `crea_prenotazione(nome="Sara Neri", data="2026-08-05", ora="21:00", persone=2, note="")` → ✅ creata (eventId: 48j26uhb00lshchdc620...)
+
+**[Giulia]**: Prenotazione confermata: Sara Neri, 5 agosto alle 21:00, per 2 persone. A presto!
+
+---
+
+## B05-005 ✅ datetime-parsing — Data formato ISO 'aaaa-mm-gg' (20.2s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per il 2026-08-14 alle 21, 3 persone, a nome Paolo Costa
+
+**[Giulia]**: Un attimo, controllo la disponibilità.
+
+→ 🔧 `controlla_disponibilita(data="2026-08-14", ora="21:00", persone=3)` → slot_available
+
+**[Giulia]**: Perfetto, lo registro subito.
+
+→ 🔧 `crea_prenotazione(nome="Paolo Costa", data="2026-08-14", ora="21:00", persone=3, note="")` → ✅ creata (eventId: nqubcpss0ipbhvl9k06n...)
+
+**[Giulia]**: Prenotazione confermata: Paolo Costa, 2026-08-14 alle 21:00, per 3 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto! Prenotazione confermata: Paolo Costa, 2026-08-14 alle 21:00, 3 persone. A presto!
+
+---
+
+## B05-006 ❌ datetime-parsing — Espressione relativa 'tra tre giorni' — oggi è lunedì 27/07, tra 3 giorni = giovedì 30/07 (16.3s)
+
+> ⚠️ **Failed**: reply must contain 'giovedì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e orario. prenotazione confermata per Elena Ferri, venerdì 31 lug
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare tra tre giorni alle 21, 2 persone, a nome Elena Ferri
 
 **[Giulia]**: Un attimo, controllo la disponibilità per quella data e orario.
 
 → 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-→ 🔧 `crea_prenotazione(nome="Marta Fabbri", data="2026-07-31", ora="21:00", persone=2, note="Prenotazione per 2 persone, cena.")` → ✅ creata (eventId: cjstr75e5rl2a1qvkfg0...)
+→ 🔧 `crea_prenotazione(nome="Elena Ferri", data="2026-07-31", ora="21:00", persone=2, note="Prenotazione effettuata via assistente vocale automatico. Slot disponibile.")` → ✅ creata (eventId: uusuf7lv5m5785fpvkg4...)
 
-**[Giulia]**: Prenotazione confermata: Marta Fabbri, venerdì alle 21:00, per 2 persone. A presto!
-
-**[Cliente]**: Sì confermo
-
-**[Giulia]**: Perfetto, grazie per la conferma! La sua prenotazione è registrata e ti aspettiamo venerdì alle 21:00.
-
----
-
-## B04-023 ✅ availability-edge — 'presto' — ambiguo, modello deve chiedere chiarimento (2.4s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buongiorno, vorrei prenotare per venerdì prossimo presto, 2 persone, a nome Fabio Pellegrini
-
-**[Giulia]**: Perfetto, Fabio Pellegrini. Venerdì prossimo è il 31 luglio, ma “presto” è troppo generico. A che ora vuole prenotare per pranzo, tra le 12:00 e le 14:30?
-
----
-
-## B04-024 ✅ availability-edge — 'tarda serata' — deve proporre ultimo slot (22:30) (19.0s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo in tarda serata, 3 persone, a nome Ilaria Marchetti
-
-**[Giulia]**: Perfetto, grazie Ilaria! Vorrei comunque un orario specifico per la tarda serata, tra le 21:00 e le 22:30: che ora preferisce?
-
-**[Cliente]**: Va bene alle 22:30
-
-**[Giulia]**: Un attimo, ora controllo la disponibilità per quell’orario.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="22:30", persone=3)` → slot_available
-
-**[Giulia]**: Perfetto, registro la prenotazione.
-
-→ 🔧 `crea_prenotazione(nome="Ilaria Marchetti", data="2026-07-31", ora="22:30", persone=3, note="")` → ✅ creata (eventId: grm4c0j4kofvcj1ii6pg...)
-
-**[Giulia]**: Prenotazione confermata: Ilaria Marchetti, venerdì 31 luglio alle 22:30, per 3 persone. A presto!
-
----
-
-## B04-025 ✅ availability-edge — 'quando aprite' — cliente chiede orario apertura, poi prenota (18.0s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buongiorno, a che ora aprite per pranzo? Vorrei prenotare per venerdì prossimo per 2 persone a nome Camilla Vitale
-
-**[Giulia]**: Per pranzo apriamo alle 12:00. Per venerdì prossimo, a che ora desidera prenotare: tra le 12:00 e 14:30?
-
-**[Cliente]**: Alle 12 allora, confermo
-
-**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
-
-→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="12:00", persone=2)` → slot_available
-
-→ 🔧 `crea_prenotazione(nome="Camilla Vitale", data="2026-07-31", ora="12:00", persone=2, note="")` → ✅ creata (eventId: jm9liv8g8e1l1s3dtj0d...)
-
-**[Giulia]**: Perfetto, la prenotazione è confermata: Camilla Vitale, venerdì 31 luglio alle 12:00, per 2 persone. A presto!
-
----
-
-## B04-026 ✅ availability-edge — Ferragosto (15 agosto) — festivo, deve accettare (16.3s)
-
-**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buongiorno, vorrei prenotare per il 15 agosto alle 21, 4 persone, a nome Nicola Basile
-
-**[Giulia]**: Un attimo, controllo la disponibilità per quella data e l’orario.
-
-→ 🔧 `controlla_disponibilita(data="2026-08-15", ora="21:00", persone=4)` → slot_available
-
-**[Giulia]**: Perfetto, registro la prenotazione.
-
-→ 🔧 `crea_prenotazione(nome="Nicola Basile", data="2026-08-15", ora="21:00", persone=4, note="")` → ✅ creata (eventId: hh18fspnehoufim9k6la...)
-
-**[Giulia]**: Prenotazione confermata: Nicola Basile, 15 agosto alle 21:00, per 4 persone. A presto!
+**[Giulia]**: prenotazione confermata per Elena Ferri, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
 
 **[Cliente]**: Sì confermo
 
-**[Giulia]**: Perfetto, grazie! La conferma è registrata. A presto, Nicola!
+**[Giulia]**: Perfetto, grazie! La prenotazione è già registrata. A presto!
 
 ---
 
-## B04-027 ✅ availability-edge — Data lontana (dicembre) — deve accettare senza problemi (15.9s)
+## B05-007 ❌ datetime-parsing — 'domani' — oggi lunedì 27/07, domani martedì 28/07 (14.3s)
 
-**[Giulia]**: Salve, sono l’assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[Cliente]**: Buongiorno, vorrei prenotare per il 20 dicembre alle 21:30, 6 persone, a nome Emanuele Costa
-
-**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
-
-→ 🔧 `controlla_disponibilita(data="2026-12-20", ora="21:30", persone=6)` → slot_available
-
-**[Giulia]**: Disponibile. Proseguo con la registrazione della prenotazione.
-
-→ 🔧 `crea_prenotazione(nome="Emanuele Costa", data="2026-12-20", ora="21:30", persone=6, note="Prenotazione standard")` → ✅ creata (eventId: q47irem31cmfqkkn3ajq...)
-
-**[Giulia]**: La prenotazione è confermata: Emanuele Costa, 20 dicembre alle 21:30, per 6 persone. A presto!
-
-**[Cliente]**: Sì grazie
-
-**[Giulia]**: Perfetto, grazie a te! A presto, buona giornata e buon appetito!
-
----
-
-## B04-028 ✅ availability-edge — Orario borderline — esattamente 22:30 (last booking) (21.6s)
+> ⚠️ **Failed**: reply must contain 'martedì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Perfetto! Prenotazione confermata: Giulia Marino, domani a
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buonasera, vorrei prenotare per venerdì prossimo alle 22:30, 2 persone, a nome Silvia Conte
+**[Cliente]**: Vorrei prenotare per domani alle 21, 2 persone, a nome Giulia Marino
 
 **[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
 
-→ 🔧 `controlla_disponibilita(data="2026-08-01", ora="22:30", persone=2)` → slot_available
+→ 🔧 `controlla_disponibilita(data="2026-07-29", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Perfetto, concludo la prenotazione.
+→ 🔧 `crea_prenotazione(nome="Giulia Marino", data="2026-07-29", ora="21:00", persone=2, note="")` → ✅ creata (eventId: t4iglh1lhjgoeelaougd...)
 
-→ 🔧 `crea_prenotazione(nome="Silvia Conte", data="2026-08-01", ora="22:30", persone=2, note="Prenotazione standard per 2 persone alle 22:30.")` → ✅ creata (eventId: 3oo5321gu2b3rrsovdpr...)
+**[Giulia]**: Perfetto! Prenotazione confermata: Giulia Marino, domani alle 21:00, per 2 persone. A presto!
 
-**[Giulia]**: Prenotazione confermata: Silvia Conte, venerdì 2026-08-01 alle 22:30, per 2 persone. A presto!
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie mille! La prenotazione è confermata. A presto!
+
+---
+
+## B05-008 ❌ datetime-parsing — 'dopodomani' — mercoledì 29/07 (18.4s)
+
+> ⚠️ **Failed**: reply must contain 'mercoledì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e orario. Prenotazione confermata: Roberto Lombardi, dopodomani a
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per dopodomani alle 13, 2 persone, a nome Roberto Lombardi
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e orario.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-30", ora="13:00", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Roberto Lombardi", data="2026-07-30", ora="13:00", persone=2, note="Prenotazione telefonica tramite assistente vocale.")` → ✅ creata (eventId: 362ldihvjrmh6ej7v6et...)
+
+**[Giulia]**: Prenotazione confermata: Roberto Lombardi, dopodomani alle 13:00, per 2 persone. A presto!
 
 **[Cliente]**: Sì
 
-**[Giulia]**: Perfetto, grazie! A presto e buona serata!
+**[Giulia]**: Perfetto, a presto! Buona giornata e grazie per la prenotazione.
 
 ---
 
-## B04-029 ✅ availability-edge — OVERBOOKING sabato 21:00 pieno, cliente accetta 22:30 [SEED: 30 pax sabato prossimo 21:00] (27.0s)
+## B05-009 ✅ datetime-parsing — 'weekend prossimo' — ambiguo (sabato o domenica?) deve chiedere (3.5s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buonasera, vorrei prenotare per sabato prossimo alle 21, 4 persone, a nome Matteo Fumagalli
+**[Cliente]**: Vorrei prenotare per il weekend prossimo alle 21, 2 persone, a nome Marta Testa
+
+**[Giulia]**: Perfetto! Ho i dati principali, ma “weekend prossimo” è ambiguo. Vuole prenotare sabato o domenica alle 21?
+
+---
+
+## B05-010 ✅ datetime-parsing — 'primo venerdì di agosto' — 7 agosto 2026 (16.5s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per il primo venerdì di agosto alle 21, 4 persone, a nome Federico Palumbo
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
+
+→ 🔧 `controlla_disponibilita(data="2026-08-07", ora="21:00", persone=4)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Federico Palumbo", data="2026-08-07", ora="21:00", persone=4, note="Prenotazione effettuata tramite assistente vocale.")` → ✅ creata (eventId: 875aoapnj0cvee6sealh...)
+
+**[Giulia]**: Prenotazione confermata: Federico Palumbo, venerdì 7 agosto alle 21:00, per 4 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma! La prenotazione è registrata a nome di Federico Palumbo, venerdì 7 agosto alle 21:00, per 4 persone.
+
+---
+
+## B05-011 ✅ datetime-parsing — Orario 'le nove di sera' = 21:00 (16.1s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle nove di sera, 2 persone, a nome Chiara Ricci
 
 **[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
 
-→ 🔧 `controlla_disponibilita(data="2026-08-01", ora="21:00", persone=4)` → slot_full
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
 
-**[Giulia]**: Mi dispiace, il sabato prossimo alle 21 è già pieno. Vuole provare alle 21:30 o un altro orario da 21:00 a 22:30?
+**[Giulia]**: Perfetto, ora registro la prenotazione.
 
-**[Cliente]**: Va bene alle 22:30 allora
+→ 🔧 `crea_prenotazione(nome="Chiara Ricci", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: unua93rvmqvqc09dnm7u...)
 
-**[Giulia]**: Perfetto, controllo la disponibilità per quell’orario.
+**[Giulia]**: Prenotazione confermata: Chiara Ricci, venerdì alle 21:00, per 2 persone. A presto!
 
-→ 🔧 `controlla_disponibilita(data="2026-08-01", ora="22:30", persone=4)` → slot_available
+**[Cliente]**: Sì confermo
 
-→ 🔧 `crea_prenotazione(nome="Matteo Fumagalli", data="2026-08-01", ora="22:30", persone=4, note="Prenotazione telefonica")` → ✅ creata (eventId: jqv0b8d5n040n4ogja66...)
-
-**[Giulia]**: Prenotazione confermata: Matteo Fumagalli, sabato 22:30, per 4 persone. A presto!
+**[Giulia]**: Perfetto, grazie per la conferma! La prenotazione è registrata, a presto!
 
 ---
 
-## B04-030 ✅ availability-edge — OVERBOOKING sabato 21:00 pieno, cliente accetta domenica [SEED: 30 pax sabato prossimo 21:00] (21.4s)
+## B05-012 ✅ datetime-parsing — Orario 'le 21 e mezza' = 21:30 (19.3s)
 
 **[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[Cliente]**: Buonasera, vorrei prenotare per sabato prossimo alle 21, 4 persone, a nome Davide Sala
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 21 e mezza, 3 persone, a nome Stefano Galli
 
-**[Giulia]**: Un attimo, controllo la disponibilità.
+**[Giulia]**: Let me quickly check availability for that time.
 
-→ 🔧 `controlla_disponibilita(data="2026-08-01", ora="21:00", persone=4)` → slot_full
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:30", persone=3)` → slot_available
 
-**[Giulia]**: Purtroppo alle 21:00 sabato prossimo non c’è disponibilità, è pieno. Vuole provare un’altra ora sabato, o preferisce un altro giorno tra martedì e domenica?
+**[Giulia]**: Perfetto, procederò a registrare la prenotazione.
 
-**[Cliente]**: No grazie, allora domenica prossima stessa ora
+→ 🔧 `crea_prenotazione(nome="Stefano Galli", data="2026-07-31", ora="21:30", persone=3, note="Prenotazione standard per 3 persone.")` → ✅ creata (eventId: aft3hmm7achcarp5d0k9...)
 
-**[Giulia]**: Perfetto, un attimo: controllo la disponibilità per domenica alle 21.
+**[Giulia]**: Prenotazione confermata: Stefano Galli, venerdì 31 luglio alle 21:30, per 3 persone. A presto!
 
-→ 🔧 `controlla_disponibilita(data="2026-08-02", ora="21:00", persone=4)` → slot_available
+**[Cliente]**: Sì confermo
 
-→ 🔧 `crea_prenotazione(nome="Davide Sala", data="2026-08-02", ora="21:00", persone=4, note="")` → ✅ creata (eventId: ebp8n5t4aavd136qjsd1...)
+**[Giulia]**: Perfetto, confermo: la prenotazione per Stefano Galli, 3 persone, è registrata. A presto!
 
-**[Giulia]**: Pronto! Prenotazione confermata: Davide Sala, domenica 2 agosto alle 21:00, per 4 persone. A presto!
+---
+
+## B05-013 ✅ datetime-parsing — Orario 'un quarto alle 22' = 21:45 (16.6s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo un quarto alle 22, 2 persone, a nome Valentina Colombo
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:45", persone=2)` → slot_available
+
+**[Giulia]**: Ho verificato una disponibilità, ma per la prenotazione mi serve un orario preciso.  
+Intende 21:45, oppure 22:00?
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, procedo ora con la creazione della prenotazione.
+
+→ 🔧 `crea_prenotazione(nome="Valentina Colombo", data="2026-07-31", ora="21:45", persone=2, note="Prenotazione telefonica")` → ✅ creata (eventId: t2m5o44lqo5umcgmimhi...)
+
+**[Giulia]**: Prenotazione confermata: Valentina Colombo, venerdì alle 21:45, per 2 persone. A presto!
+
+---
+
+## B05-014 ✅ datetime-parsing — Orario 'le 22 in punto' (18.3s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 22 in punto, 2 persone, a nome Andrea Sala
+
+**[Giulia]**: Perfetto, lo controllo subito. Un attimo, verifico la disponibilità.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="22:00", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Andrea Sala", data="2026-07-31", ora="22:00", persone=2, note="Prenotazione effettuata via assistente vocale.")` → ✅ creata (eventId: vjgp06ao0n82h7i5gqpt...)
+
+**[Giulia]**: Prenotazione confermata: Andrea Sala, venerdì 31 luglio alle 22:00, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma. La prenotazione è già registrata e l’attendiamo a breve.
+
+---
+
+## B05-015 ✅ datetime-parsing — Orario 'le 21 e un quarto' = 21:15 (28.0s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 21 e un quarto, 2 persone, a nome Ilaria Marchetti
+
+**[Giulia]**: Perfetto, un attimo mentre controllo la disponibilità.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:15", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Ilaria Marchetti", data="2026-07-31", ora="21:15", persone=2, note="Prenotazione effettuata via assistente vocale automatico.")` → ✅ creata (eventId: tl0ea8an9bso3uv68ddf...)
+
+**[Giulia]**: Prenotazione confermata per Ilaria Marchetti, venerdì 31 luglio alle 21:15, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma. La prenotazione è pronta — la aspettiamo!
+
+---
+
+## B05-016 ✅ datetime-parsing — 'le nove' senza mattina/sera — di mattino chiuso, deve dedurre sera o chiedere (16.1s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle nove, 2 persone, a nome Fabio Pellegrini
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quel giorno e orario.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Fabio Pellegrini", data="2026-07-31", ora="21:00", persone=2, note="Prenotazione effettuata via assistente vocale.")` → ✅ creata (eventId: jv3g4fe7oa069a238bg3...)
+
+**[Giulia]**: Prenotazione confermata per Fabio Pellegrini, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
+
+**[Cliente]**: Sì di sera
+
+**[Giulia]**: Perfetto, è confermata come cena, alle 21:00. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma! A presto, ci vediamo venerdì alle 21:00.
+
+---
+
+## B05-017 ✅ datetime-parsing — 'verso le 21' — accetta 21:00 come approssimazione (17.6s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo verso le 21, 2 persone, a nome Camilla Vitale
+
+**[Giulia]**: Perfetto, ho i dati base: 2 persone e nome Camilla Vitale.  
+Per la cena vorrei un orario preciso alle 21:00, 21:30 o simile, entro le 22:30.
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, ora controllo la disponibilità per quel nuovo orario.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Camilla Vitale", data="2026-07-31", ora="21:00", persone=2, note="Prenotazione telefonica")` → ✅ creata (eventId: 1u2avqm02cj6oipnspc7...)
+
+**[Giulia]**: Prenotazione confermata: Camilla Vitale, venerdì 31 luglio, alle 21:00, per 2 persone. A presto!
+
+---
+
+## B05-018 ❌ datetime-parsing — Orario impossibile 'alle 25' — deve segnalare errore e chiedere chiarimento (5.3s)
+
+> ⚠️ **Failed**: reply must contain 'orario' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, Nicola. Venerdì prossimo vale il 31 luglio. A che ora vorrebbe prenotare, ad esempio 12:00 o 21:00?
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 25, 2 persone, a nome Nicola Basile
+
+**[Giulia]**: Perfetto, Nicola. Venerdì prossimo vale il 31 luglio. A che ora vorrebbe prenotare, ad esempio 12:00 o 21:00?
+
+---
+
+## B05-019 ✅ datetime-parsing — 'un attimo prima della chiusura' — deve proporre 22:30 (18.5s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo un attimo prima della chiusura, 2 persone, a nome Silvia Conte
+
+**[Giulia]**: Perfetto, Silvia Conte per venerdì prossimo. Un attimo prima della chiusura va bene, ma serve un orario preciso. A che ora desidera prenotare, ad esempio alle 22:00?
+
+**[Cliente]**: Va bene alle 22:30
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quell’orario.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="22:30", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Silvia Conte", data="2026-07-31", ora="22:30", persone=2, note="Prenotazione effettuata per 2 persone alle 22:30 (un attimo prima della chiusura).")` → ✅ creata (eventId: e2alhvpjvn8ls031lubk...)
+
+**[Giulia]**: Prenotazione confermata per Silvia Conte: venerdì prossimo alle 22:30, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma! La tua prenotazione è registrata e ti aspettiamo.
+
+---
+
+## B05-020 ❌ datetime-parsing — Orario 'le venti e trenta' = 20:30 — fuori orario cena (21:00-22:30) (2.0s)
+
+> ⚠️ **Failed**: last reply not in 'it': mi spiace, alle 20:30 non possiamo prenotare. la cena inizia alle 21:00. vuole prenotare alle 21:00 invece?
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle venti e trenta, 2 persone, a nome Beatrice Testa
+
+**[Giulia]**: Mi spiace, alle 20:30 non possiamo prenotare. La cena inizia alle 21:00. Vuole prenotare alle 21:00 invece?
+
+---
+
+## B05-021 ✅ datetime-parsing — 'il 15' senza mese — di questo mese o del prossimo? (15 luglio è passato, deve dedurre 15 agosto o chiedere) (2.7s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per il 15 alle 21, 2 persone, a nome Emanuele Costa
+
+**[Giulia]**: Certo, posso aiutarla. Per il “15” mi serve un po’ più di precisione: è il 15 agosto o un altro mese?
+
+---
+
+## B05-022 ❌ datetime-parsing — Giorno + data incoerenti 'sabato 12 agosto' ma 12 agosto è mercoledì — deve correggere (3.2s)
+
+> ⚠️ **Failed**: reply must contain 'mercoledì' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto! Il nome è Simone De Luca, per 2 persone alle 21:00.  
+Però il 12 agosto non è sabato: intende sabato 12 agost
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per sabato 12 agosto alle 21, 2 persone, a nome Simone De Luca
+
+**[Giulia]**: Perfetto! Il nome è Simone De Luca, per 2 persone alle 21:00.  
+Però il 12 agosto non è sabato: intende sabato 12 agosto o un sabato diverso?
+
+---
+
+## B05-023 ✅ datetime-parsing — Ferragosto — cliente dice 'il 15 agosto' esplicito, sabato, deve accettare (36.6s)
+
+**[Giulia]**: I can transcribe audio clips word for word, but I can’t access or fetch external images from a URL.
+
+If you can paste the image text here, I’ll transcribe it for you. If it’s audio, you can share it and I’ll transcribe the spoken content exactly.
+
+**[Cliente]**: Vorrei prenotare per il 15 agosto alle 21, 4 persone, a nome Alessia Rinaldi
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
+
+→ 🔧 `controlla_disponibilita(data="2026-08-15", ora="21:00", persone=4)` → slot_available
+
+**[Giulia]**: Perfetto, procedo con la creazione della prenotazione.
+
+→ 🔧 `crea_prenotazione(nome="Alessia Rinaldi", data="2026-08-15", ora="21:00", persone=4, note="")` → ❌ error: This operation was aborted
+
+**[Giulia]**: Perfetto, ho verificato che l’orario era disponibile.
+
+La creazione della prenotazione è stata bloccata dal sistema. Provo a ripetere la registrazione? Se preferisce, possiamo anche tentare un altro orario.
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma. Un attimo, riprovo a registrare la prenotazione.
+
+→ 🔧 `controlla_disponibilita(data="2026-08-15", ora="21:00", persone=4)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Alessia Rinaldi", data="2026-08-15", ora="21:00", persone=4, note="")` → ✅ creata (eventId: 0j5tqfag60ggnehpljjf...)
+
+**[Giulia]**: La prenotazione è confermata per Alessia Rinaldi, sabato 15 agosto alle 21:00, per 4 persone. A presto!
+
+---
+
+## B05-024 ❌ datetime-parsing — Espressione festivo 'Ferragosto' senza data esplicita (16.1s)
+
+> ⚠️ **Failed**: reply must contain '15 agosto' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Perfetto, ora procedo con la prenotazione. Prenotazione co
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per Ferragosto alle 13, 2 persone, a nome Davide Fumagalli
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quella data e ora.
+
+→ 🔧 `controlla_disponibilita(data="2026-08-15", ora="13:00", persone=2)` → slot_available
+
+**[Giulia]**: Perfetto, ora procedo con la prenotazione.
+
+→ 🔧 `crea_prenotazione(nome="Davide Fumagalli", data="2026-08-15", ora="13:00", persone=2, note="Prenotazione Ferragosto")` → ✅ creata (eventId: imat3emrul7ss1gkq15f...)
+
+**[Giulia]**: Prenotazione confermata per Davide Fumagalli, Ferragosto alle 13:00, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie per la conferma! A presto, ci vediamo al ristorante.
+
+---
+
+## B05-025 ✅ datetime-parsing — Data ambigua 'il 3' e oggi 27/07 — 3 agosto (lunedì, chiuso!) → deve dire chiuso e proporre alternativa (3.7s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per il 3 alle 21, 2 persone, a nome Matteo Barbieri
+
+**[Giulia]**: Mi dispiace, il 3 agosto è lunedì e siamo chiusi. Vuole prenotare un altro giorno tra martedì e domenica, e in quale orario?
+
+---
+
+## B05-026 ❌ datetime-parsing — Cliente cambia ora mid-conversation (40.5s)
+
+> ⚠️ **Failed**: expected tool call 'crea_prenotazione' with args {"persone":2,"nome":"Riccardo Grasso","ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-07-31","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Riccardo Grasso","data":"2026-07-31","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Riccardo Grasso","data":"2026-07-31"}},{"name":"modifica_prenotazione","args":{"nome":"Riccardo Grasso","data":"2026-07-31","ora":"22:00"}}]
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 21, 2 persone, a nome Riccardo Grasso
+
+**[Giulia]**: Un attimo, controllo la disponibilità per quel venerdì alle 21.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → ❌ error: This operation was aborted
+
+**[Giulia]**: Un attimo, riprovo la verifica della disponibilità.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
+
+→ 🔧 `crea_prenotazione(nome="Riccardo Grasso", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: jhkviudmalnkc86ml1lk...)
+
+**[Giulia]**: Prenotazione confermata: Riccardo Grasso, venerdì 31 luglio alle 21:00, per 2 persone. A presto!
+
+**[Cliente]**: Aspetta, cambio: alle 22 invece
+
+**[Giulia]**: Un attimo, controllo la prenotazione e poi la aggiorno.
+
+→ 🔧 `trova_prenotazione(nome="Riccardo Grasso", data="2026-07-31")` → ✅ trovata (1)
+
+→ 🔧 `modifica_prenotazione(nome="Riccardo Grasso", data="2026-07-31", ora="22:00")` → ✅ ok
+
+**[Giulia]**: Perfetto, aggiornata la prenotazione: Riccardo Grasso, venerdì 31 luglio alle 22:00, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, confermato. Ti aspettiamo venerdì alle 22:00.
+
+---
+
+## B05-027 ✅ datetime-parsing — Cliente cambia giorno mid-conversation (36.7s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 21, 2 persone, a nome Lorenzo Ferrari
+
+**[Giulia]**: Certo, controllo la disponibilità per quel venerdì alle 21:00. Un attimo.
+
+→ 🔧 `controlla_disponibilita(data="2026-07-31", ora="21:00", persone=2)` → slot_available
+
+**[Giulia]**: Perfetto, registro la prenotazione. Un attimo.
+
+→ 🔧 `crea_prenotazione(nome="Lorenzo Ferrari", data="2026-07-31", ora="21:00", persone=2, note="")` → ✅ creata (eventId: n4nec0caaupuobmns6hm...)
+
+**[Giulia]**: Prenotazione confermata per Lorenzo Ferrari, venerdì alle 21:00, per 2 persone. A presto!
+
+**[Cliente]**: No aspetta, era per giovedì
+
+**[Giulia]**: Un momento, trovo la prenotazione e poi aggiorno il giorno.
+
+→ 🔧 `trova_prenotazione(nome="Lorenzo Ferrari")` → ✅ trovata (1)
+
+→ 🔧 `modifica_prenotazione(data="2026-07-30", ora="21:00", persone=2)` → ✅ ok
+
+**[Giulia]**: Perfetto, ho aggiornato la prenotazione: Lorenzo Ferrari, giovedì alle 21:00, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, confermato: Lorenzo Ferrari, giovedì alle 21:00, 2 persone. A presto!
+
+---
+
+## B05-028 ✅ datetime-parsing — 'nel weekend' senza specificare giorno — deve chiedere sabato o domenica (2.1s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare nel weekend alle 21, 2 persone, a nome Elisa Longo
+
+**[Giulia]**: Perfetto, i dati ci sono. Che giorno del weekend preferisce: sabato o domenica?
+
+---
+
+## B05-029 ✅ datetime-parsing — Data spelling 'il primo di agosto' — 1 agosto = sabato (SEED PIENO, deve gestire slot pieno o venerdì) (15.3s)
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per il primo di agosto alle 13, 2 persone, a nome Cristina Mancini
+
+**[Giulia]**: Un attimo, controllo la disponibilità per la data e l’orario che mi ha indicato.
+
+→ 🔧 `controlla_disponibilita(data="2026-08-01", ora="13:00", persone=2)` → slot_available
+
+**[Giulia]**: Perfetto, procedo con la registrazione della prenotazione.
+
+→ 🔧 `crea_prenotazione(nome="Cristina Mancini", data="2026-08-01", ora="13:00", persone=2, note="")` → ✅ creata (eventId: 7tvigbddqnrt0ss4vq4r...)
+
+**[Giulia]**: Prenotazione confermata: Cristina Mancini, 1 agosto alle 13:00, per 2 persone. A presto!
+
+**[Cliente]**: Sì confermo
+
+**[Giulia]**: Perfetto, grazie! La tua prenotazione è confermata. A presto!
+
+---
+
+## B05-030 ❌ datetime-parsing — Orario 24h vs 12h 'alle 9 di mattina' — colazione non serviamo, deve dire fuori orario (3.3s)
+
+> ⚠️ **Failed**: last reply not in 'it': per quell’orario siamo in pausa. per pranzo è possibile tra le 12:00 e le 14:30; oppure cena alle 21:00. quale preferisce?
+
+**[Giulia]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[Cliente]**: Vorrei prenotare per venerdì prossimo alle 9 di mattina, 2 persone, a nome Marco Salvatori
+
+**[Giulia]**: Per quell’orario siamo in pausa. Per pranzo è possibile tra le 12:00 e le 14:30; oppure cena alle 21:00. Quale preferisce?
 
 ---
 
