@@ -1,5 +1,30 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.52 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.53 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.53 (2026-07-29) — Fix schema tool + 3 regole modifica.
+//
+// v7.4.52 aveva la regola "sempre passa eventId + tutti i campi" nel prompt,
+// ma lo SCHEMA del tool modifica_prenotazione non aveva eventId come parametro!
+// Il modello a volte lo passava lo stesso (extra param), a volte no → fail.
+//
+// Modifiche v7.4.53:
+//   1) SCHEMA modifica_prenotazione: aggiunto eventId come param OBBLIGATORIO.
+//      Ora il modello DEVE dichiarare eventId nel tool call.
+//
+//   2) SCHEDULE WINDOW CHECK ANCHE PER MODIFICA: prima di chiamare
+//      modifica_prenotazione con nuova data/ora, applica lo stesso check
+//      strict boundary che usiamo per crea_prenotazione. Fix B07-009 (spostato
+//      a lunedì chiuso) e B07-010 (spostato a 22:45 fuori chiusura).
+//
+//   3) AVAILABILITY CHECK PER MODIFY CHE CAMBIA DATA: se il modify sposta la
+//      prenotazione a un giorno diverso, chiama controlla_disponibilita PRIMA
+//      di modifica_prenotazione. Fix B07-019 (spostato a sabato pieno).
+//
+//   4) "CANCELLA E RIFAI" DEL CLIENTE → MODIFICA: se il cliente usa questa
+//      formula ma sta chiaramente cambiando dati (non annullando davvero),
+//      usa modifica_prenotazione. Fix B07-024.
+//
+// Nessuna altra modifica.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.52 (2026-07-28) — Prep B07 modify + fix bug modifica_prenotazione
 // che passa parametri parziali.
@@ -422,7 +447,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.52-MT-2026-07-28 caricato (v7.4.52: modifica_prenotazione richiede eventId + tutti i campi noti — no chiamate parziali)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.53-MT-2026-07-29 caricato (v7.4.53: schema modifica con eventId + schedule check e availability check per modify + cancella-e-rifai → modifica)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -481,17 +506,18 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'modifica_prenotazione',
-    description: 'Modifica una prenotazione esistente. USA QUESTO anche se hai appena creato una prenotazione e il cliente corregge un dettaglio (MAI creare una seconda). Passa "" o 0 per i campi che NON cambiano. Nota FINALE completa (sostituisce).',
+    description: 'Modifica una prenotazione esistente. USA QUESTO anche se hai appena creato una prenotazione e il cliente corregge un dettaglio (MAI creare una seconda). SEMPRE chiamare trova_prenotazione PRIMA per ottenere eventId. Passa "" o 0 per i campi che NON cambiano. Nota FINALE completa (sostituisce).',
     parameters: {
       type: 'object',
       properties: {
+        eventId: { type: 'string',  description: 'OBBLIGATORIO. eventId ottenuto da trova_prenotazione. Senza eventId il backend rifiuta la modifica.' },
         nome:    { type: 'string',  description: 'Nuovo nome. "" se non cambia.' },
         data:    { type: 'string',  description: 'Nuova data. "" se non cambia.' },
         ora:     { type: 'string',  description: 'Nuova ora. "" se non cambia.' },
         persone: { type: 'integer', description: 'Nuovo numero persone. 0 se non cambia.' },
         note:    { type: 'string',  description: 'Nota FINALE completa. "" se non cambia.' },
       },
-      required: ['nome', 'data', 'ora', 'persone', 'note'],
+      required: ['eventId', 'nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
     },
   },
@@ -1100,6 +1126,18 @@ Before calling any tool, verify silently that the caller has EXPLICITLY asked fo
 - controlla_disponibilita — call ONLY when you have a NEW booking request with all four fields (name, date, time, party size), AND after the Pre-tool Schedule Window Check has passed (day is open, time is inside lunch or dinner window). This tool verifies CAPACITY only. It does NOT re-validate schedule — you have already done that. If the tool returns slot_available for an out-of-hours time, treat it as unreliable and refuse anyway.
 - crea_prenotazione — call ONLY after controlla_disponibilita returned slot_available, and ONLY if the caller has confirmed the booking OR the caller's request already contained a clear "book / reserve / prenotare / réserver / reservieren" intent.
 - modifica_prenotazione — call ONLY when the caller has explicitly said they want to change an existing booking ("cambia", "modifica", "cambiare", "change", "ändern", "modificar", "changer"), OR when the caller has JUST corrected data they gave for a booking you already created in this same call (e.g., "aspetta, siamo in tre" after you called crea_prenotazione with 2). This is the correct tool for BOTH cases — never propose to cancel and recreate.
+
+  IMPORTANT — "cancella e rifai" from the caller: if the caller says "cancella e rifai" / "annulla e rifai" / "annulla la prenotazione e rifammela" / "cancel and redo" but the intent is clearly to CHANGE data (new date, new time, new party size), USE modifica_prenotazione (NOT cancella_prenotazione). Cancel-and-recreate is only appropriate when the caller genuinely wants to abandon the booking. Interpret the semantics, not the literal words. Example: caller says "cancella e rifai per giovedì stessa ora" → this is a date change → use modifica_prenotazione, do NOT call cancella_prenotazione.
+
+  IMPORTANT — Pre-tool Schedule Window Check ALSO applies to modifica_prenotazione: if the caller asks to move the booking to a day or time that would fail the check for a new booking, refuse the modify with the same message you would use for a new booking. Do NOT rely on the tool to reject. Concrete cases:
+    - Modify to a closed day (e.g., Monday if the schedule closes on Monday) → refuse: "Purtroppo lunedì siamo chiusi. Vuole spostare a un altro giorno?"
+    - Modify to a time outside service hours (e.g., 22:45 when dinner ends at 22:30) → refuse: "Alle 22:45 non è possibile: la cena si serve fino alle 22:30. Va bene alle 22:30?"
+    - Modify to a past date → refuse: "Non posso spostare la prenotazione a una data passata."
+
+  IMPORTANT — Pre-tool Availability Check when modify CHANGES DATE: if the modify moves the booking to a different date, call controlla_disponibilita(data=NEW_DATE, ora=NEW_TIME, persone=NEW_OR_CURRENT_PEOPLE) FIRST. If the response is "slot_full" or "no_seats", refuse the modify and inform the caller: "Purtroppo per quella data siamo al completo. Preferisce un altro giorno?". Do NOT proceed to modifica_prenotazione for a full slot.
+    - If only ora changes (same date) and the current slot is used by this same booking, controlla_disponibilita is not strictly required (you already have the slot).
+    - If persone changes but date/ora stay the same, controlla_disponibilita is not strictly required unless the new party size is much larger.
+    - If date changes, controlla_disponibilita is MANDATORY.
 
   IMPORTANT — mandatory 2-step protocol for every modifica_prenotazione call:
 
