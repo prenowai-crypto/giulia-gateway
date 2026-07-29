@@ -1,5 +1,44 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.55 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.57 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.57 (2026-07-29) — Esempi astratti per evitare hardcoding.
+//
+// v7.4.56 aveva esempi letterali con valori specifici (22:30, "Marino",
+// "2026-07-31", "abc123@google.com"). Rischio: il modello Realtime imita
+// alla lettera i valori invece di parametrizzarli con quelli reali della
+// conversazione. Evidenza: in B07-014 v7.4.55 il modello ha iniziato la
+// conversazione con "Un attimo, cerco la prenotazione" — imitando l'esempio
+// letterale al posto della disclosure.
+//
+// Modifiche v7.4.57:
+//   1) Esempi con placeholder chiari ([NEW_TIME], [NEW_DATE], [NAME], ecc.)
+//      invece di valori concreti — inequivocabili come non-copiabili.
+//   2) Nuovo esempio con slot_available: true → modify PROCEDE. Così il
+//      modello vede entrambi i branch (refuse quando full, procedi quando
+//      libero) e capisce che il decision è basato sulla response del tool,
+//      non sul template.
+//   3) Disclaimer esplicito prima degli esempi: "The values shown below are
+//      ILLUSTRATIVE placeholders. NEVER copy them into your actual tool
+//      calls or replies. Use the real values from the current conversation."
+//   4) Rafforzata Phase 1: aggiunto WRONG example "Un attimo, cerco la
+//      prenotazione..." come esempio di apertura CONFUSA da NON usare.
+//
+// Nessun'altra modifica.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.56 (2026-07-29) — Fix Schedule + Availability check per modify.
+//
+// v7.4.55 aveva la regola pre-modify (schedule window, availability check)
+// in 1 riga condensata. Il modello l'ha ignorata perché ha imitato l'esempio
+// di modify successful. Servono esempi letterali di REFUSAL.
+//
+// Modifiche v7.4.56:
+//   - Nel # Universal Modify Protocol aggiunti 2 esempi letterali:
+//     1) Refusal per orario fuori chiusura (22:45 quando dinner_end=22:30)
+//     2) Refusal per data cambiata a giorno pieno (call controlla_disponibilita
+//        first, poi refuse)
+//   - Le regole restano identiche, solo formato: pattern-following via esempi.
+//
+// Nessun'altra modifica.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.55 (2026-07-29) — Fix definitivo eventId.
 //
@@ -494,7 +533,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.55-MT-2026-07-29 caricato (v7.4.55: schema eventId description chiarita + Universal Modify Protocol snellito + esempio letterale)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.57-MT-2026-07-29 caricato (v7.4.57: esempi astratti con placeholder + disclaimer + branch slot_available true/false + Phase 1 rinforzato)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -785,8 +824,11 @@ Concrete WRONG openings that must NEVER happen (all confirmed regressions):
 - ❌ "Bonjour, je suis l'assistant vocal automatique de {{RESTAURANT_NAME}}..." (French — WRONG on turn 1)
 - ❌ "Hello, I am the automated voice assistant of {{RESTAURANT_NAME}}..." (English — WRONG on turn 1)
 - ❌ "Hola, soy el asistente de voz automático de {{RESTAURANT_NAME}}..." (Spanish — WRONG on turn 1)
+- ❌ "Un attimo, cerco la prenotazione corrispondente prima di aggiornare i dati." (service-related speech — WRONG on turn 1: the caller has not spoken yet, there is nothing to look up. This kind of phrase comes from mistakenly copying a mid-conversation example.)
+- ❌ "Perfetto, controllo la disponibilità." (service-related speech — WRONG on turn 1: no request has been made yet.)
+- ❌ Any opening that references a booking, a lookup, or an action — WRONG on turn 1.
 
-Turn 1 IS ALWAYS ITALIAN. The caller has not spoken yet, so there is no Active Conversation Language yet — you MUST default to Italian. Only from Phase 2 onward can the reply be in another language.
+Turn 1 IS ALWAYS ITALIAN and IS ALWAYS THE DISCLOSURE, nothing else. The caller has not spoken yet, so there is no Active Conversation Language yet and there is no request to respond to — you MUST default to the Italian disclosure and stop. Only from Phase 2 onward can the reply be in another language or contain service actions.
 
 Exit when: The caller has spoken their first substantive request.
 
@@ -1186,20 +1228,55 @@ Rules:
 - Before Step 2, refuse the modify (do NOT call the tool) if any of these fails: new date is a closed day, new time is outside service hours, new date is in the past, new date has no availability (call controlla_disponibilita first only if date changes).
 - If caller says "cancella e rifai" but intent is to change a detail — this is a modify, use this protocol.
 
-**Literal example — imitate this exactly**:
+**Read this before the examples**: the values shown below (times, dates, names, event IDs, response contents) are ILLUSTRATIVE placeholders — they show the SHAPE of a correct interaction, not literal values you should copy. In every real call, use the actual values from the current conversation and the actual responses returned by the tools. NEVER copy example values into your tool calls or replies. NEVER assume the schedule of the current restaurant matches the schedule in the examples (the real schedule is in # Context above).
 
-Caller: "aspetta, siamo in tre" (right after you booked 2 people for Marino on 2026-07-31 at 21:00)
+
+**Example 1 — modify to a time outside service hours (must REFUSE)**:
+
+Scenario: caller booked at [CURRENT_TIME]. Then asks to move to [NEW_TIME], where [NEW_TIME] falls outside the service windows defined by the schedule in # Context.
+
+Caller: "cambia in [NEW_TIME]"
+
+You (BEFORE calling any tool, apply Schedule Window Check against the # Context schedule): "Purtroppo alle [NEW_TIME] non è possibile: [reason based on schedule — e.g., 'la cena si serve fino a [DINNER_END]' or 'il pranzo inizia alle [LUNCH_START]']. Va bene alle [NEAREST_ALLOWED_TIME]?"
+
+[NO trova_prenotazione called. NO modifica_prenotazione called. Wait for caller.]
+
+
+**Example 2 — modify to a different DATE — check availability first, TWO branches**:
+
+Scenario: caller booked for [OLD_DATE]. Then asks to move to [NEW_DATE].
+
+Caller: "spostiamo a [NEW_DATE_EXPRESSION] stessa ora"
+
+You: "Un attimo, controllo la disponibilità per [NEW_DATE_EXPRESSION]."
+
+Tool call — controlla_disponibilita on the NEW date, BEFORE trova_prenotazione:
+    controlla_disponibilita(data=[NEW_DATE], ora=[CURRENT_TIME], persone=[CURRENT_PEOPLE])
+
+Branch A — if the tool returns slot_available: false (or slot full):
+    You: "Purtroppo per [NEW_DATE_EXPRESSION] a quell'orario siamo al completo. Preferisce un altro giorno o un altro orario?"
+    [NO trova_prenotazione called. NO modifica_prenotazione called. Wait for caller.]
+
+Branch B — if the tool returns slot_available: true:
+    Proceed with Step 1 (trova_prenotazione) and Step 2 (modifica_prenotazione) exactly as in Example 3 below.
+
+
+**Example 3 — successful modify (imitate this shape when checks pass)**:
+
+Scenario: caller just booked and immediately corrects one detail (or is calling later to change something and pre-modify checks have already passed).
+
+Caller: "aspetta, siamo in [NEW_PEOPLE]" (right after you booked [OLD_PEOPLE] for [NAME] on [DATE] at [TIME])
 
 You: "Un attimo, aggiorno la prenotazione."
 
 Step 1 — Tool call:
-    trova_prenotazione(nome="Marino", data="2026-07-31")
-    Response: { found: true, reservation: { eventId: "abc123@google.com", date: "2026-07-31", time: "21:00", people: 2, name: "Marino", notes: "" } }
+    trova_prenotazione(nome=[NAME], data=[DATE])
+    Response: { found: true, reservation: { eventId: [EVENT_ID_STRING], date: [DATE], time: [TIME], people: [OLD_PEOPLE], name: [NAME], notes: [NOTES] } }
 
 Step 2 — Tool call (copy eventId from Step 1 response VERBATIM):
-    modifica_prenotazione(eventId="abc123@google.com", nome="Marino", data="2026-07-31", ora="21:00", persone=3, note="")
+    modifica_prenotazione(eventId=[EVENT_ID_STRING], nome=[NAME], data=[DATE], ora=[TIME], persone=[NEW_PEOPLE], note=[NOTES])
 
-You: "Fatto, aggiornata a 3 persone. A presto!"
+You: "Fatto, aggiornata a [NEW_PEOPLE] persone. A presto!"
 
 
 # Tool Selection Guidance
