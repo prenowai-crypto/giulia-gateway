@@ -1,5 +1,5 @@
 # Summary — Runner B
-Run: 2026-07-29T16:25:38.024Z | Model: gpt-realtime-2.1-mini
+Run: 2026-07-29T16:41:07.409Z | Model: gpt-realtime-2.1-mini
 
 **Total**: 30 | **Passed**: 9 (30%) | **Failed**: 21
 
