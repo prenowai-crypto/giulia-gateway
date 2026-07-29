@@ -1,5 +1,26 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.4.54 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.4.55 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.4.55 (2026-07-29) — Fix definitivo eventId.
+//
+// Il modello NON leggeva l'obbligo eventId perché:
+//   1) La description del tool era ambigua ("passa vuoto per i campi non
+//      cambiati") — il modello generalizzava anche a eventId.
+//   2) Le regole in # Universal Modify Protocol + # Tool Selection Guidance
+//      erano DUPLICATE e verbose — il modello si perdeva.
+//   3) Nessun esempio letterale del tool call corretto vicino allo schema.
+//
+// v7.4.55:
+//   1) Schema modifica_prenotazione: description di eventId chiarissima
+//      ("Copy the exact eventId string returned by the last trova_prenotazione
+//      call. NEVER empty. NEVER null."). Rimossa la frase generale ambigua
+//      sui campi vuoti.
+//   2) # Universal Modify Protocol dimezzato in lunghezza, un solo esempio
+//      letterale che il modello può imitare direttamente.
+//   3) # Tool Selection Guidance snellito — no duplicazioni.
+//
+// Approccio: pattern-following, non regola-following. Il modello imita
+// meglio gli esempi che le regole verbose.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.4.54 (2026-07-29) — Universal Modify Protocol.
 //
@@ -473,7 +494,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.4.54-MT-2026-07-29 caricato (v7.4.54: Universal Modify Protocol — sempre trova prima di modificare, sia stessa chiamata sia successiva)');
+console.log('🟢 openai-realtime.js GIULIA-v7.4.55-MT-2026-07-29 caricato (v7.4.55: schema eventId description chiarita + Universal Modify Protocol snellito + esempio letterale)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -532,16 +553,16 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'modifica_prenotazione',
-    description: 'Modifica una prenotazione esistente. USA QUESTO anche se hai appena creato una prenotazione e il cliente corregge un dettaglio (MAI creare una seconda). SEMPRE chiamare trova_prenotazione PRIMA per ottenere eventId. Passa "" o 0 per i campi che NON cambiano. Nota FINALE completa (sostituisce).',
+    description: 'Update an existing reservation. ALWAYS call trova_prenotazione FIRST to obtain the eventId, then call this with that exact eventId. Never call this without calling trova_prenotazione immediately before.',
     parameters: {
       type: 'object',
       properties: {
-        eventId: { type: 'string',  description: 'OBBLIGATORIO. eventId ottenuto da trova_prenotazione. Senza eventId il backend rifiuta la modifica.' },
-        nome:    { type: 'string',  description: 'Nuovo nome. "" se non cambia.' },
-        data:    { type: 'string',  description: 'Nuova data. "" se non cambia.' },
-        ora:     { type: 'string',  description: 'Nuova ora. "" se non cambia.' },
-        persone: { type: 'integer', description: 'Nuovo numero persone. 0 se non cambia.' },
-        note:    { type: 'string',  description: 'Nota FINALE completa. "" se non cambia.' },
+        eventId: { type: 'string',  description: 'REQUIRED. The exact eventId string returned by the last trova_prenotazione call in this conversation. Copy it verbatim from that response. NEVER pass an empty string. NEVER pass null. NEVER make up an id. If you do not have the eventId from trova_prenotazione, DO NOT call this tool — call trova_prenotazione first.' },
+        nome:    { type: 'string',  description: 'The name for the reservation AFTER the update. If the caller is not changing the name, pass the CURRENT name that trova_prenotazione returned.' },
+        data:    { type: 'string',  description: 'The date for the reservation AFTER the update (YYYY-MM-DD). If not changing, pass the current date from trova_prenotazione.' },
+        ora:     { type: 'string',  description: 'The time for the reservation AFTER the update (HH:MM). If not changing, pass the current time from trova_prenotazione.' },
+        persone: { type: 'integer', description: 'The party size for the reservation AFTER the update. If not changing, pass the current party size from trova_prenotazione.' },
+        note:    { type: 'string',  description: 'The COMPLETE note for the reservation AFTER the update (replaces any existing note). If not changing, pass the current note from trova_prenotazione, or empty string if none.' },
       },
       required: ['eventId', 'nome', 'data', 'ora', 'persone', 'note'],
       additionalProperties: false,
@@ -1147,52 +1168,39 @@ Use modifica_prenotazione, NOT crea_prenotazione again. Never create a second bo
 
 # Universal Modify Protocol
 
-Whenever the caller wants to change ANY detail of an existing reservation — whether it was created a few seconds ago in this same call, or booked days earlier and they're calling back to change it — the flow is ALWAYS the same:
+Every time the caller wants to change something about a reservation, follow this 2-step pattern EXACTLY:
 
-**Step 1 — Identify the reservation**
+**Step 1**: Call trova_prenotazione(nome, data) to fetch the reservation. Read from its response:
+- eventId
+- current name, date, time, party size, note
 
-You need at least the caller's NAME and the DATE of the reservation to search for it. Rule:
-- Caller already stated name + date → proceed to Step 2 with what you have.
-- Caller stated only the name (no date) → ask: "Per quale data era la prenotazione?" (or equivalent in Active Conversation Language). Then proceed.
-- Caller stated only the date (no name) → ask: "A nome di chi era la prenotazione?". Then proceed.
-- Caller stated neither → ask both: "Mi può dire il nome e la data della prenotazione?". Then proceed.
+**Step 2**: Call modifica_prenotazione, using eventId from Step 1 and passing ALL fields (either the new value if changed, or the current value from Step 1).
 
-If you have JUST created the reservation in this same call, you already know the name and date — proceed directly to Step 2, do NOT ask again.
+Rules:
+- Step 1 is MANDATORY, no exceptions. Even if you created the reservation 5 seconds ago and think you know the eventId — call trova_prenotazione anyway.
+- If the caller has not given both name AND date yet, ask for the missing one before Step 1.
+  - Only name given → "Per quale data era la prenotazione?"
+  - Only date given → "A nome di chi era la prenotazione?"
+  - Neither → "Mi può dire il nome e la data della prenotazione?"
+  - If you have just created the reservation in this call, you already know name+date — go to Step 1 directly.
+- Before Step 2, refuse the modify (do NOT call the tool) if any of these fails: new date is a closed day, new time is outside service hours, new date is in the past, new date has no availability (call controlla_disponibilita first only if date changes).
+- If caller says "cancella e rifai" but intent is to change a detail — this is a modify, use this protocol.
 
-**Step 2 — Call trova_prenotazione**
+**Literal example — imitate this exactly**:
 
-Call trova_prenotazione(nome, data) to fetch the current record. From the response, capture:
-- eventId (mandatory for Step 3)
-- current values of name, date, time, party size, note (needed to preserve fields not being changed)
+Caller: "aspetta, siamo in tre" (right after you booked 2 people for Marino on 2026-07-31 at 21:00)
 
-If trova_prenotazione returns "not_found", tell the caller you can't find the reservation. Do NOT invent an eventId. Do NOT proceed to Step 3.
+You: "Un attimo, aggiorno la prenotazione."
 
-**Step 3 — Call modifica_prenotazione**
+Step 1 — Tool call:
+    trova_prenotazione(nome="Marino", data="2026-07-31")
+    Response: { found: true, reservation: { eventId: "abc123@google.com", date: "2026-07-31", time: "21:00", people: 2, name: "Marino", notes: "" } }
 
-Call modifica_prenotazione with ALL fields populated:
-- eventId — MANDATORY, from Step 2. Without it the backend rejects the modify.
-- nome — new value if the caller changed it, otherwise the ORIGINAL from Step 2.
-- data — new date if changing, otherwise the original.
-- ora — new time if changing, otherwise the original.
-- persone — new party size if changing, otherwise the original.
-- note — new note if changing, otherwise the original.
+Step 2 — Tool call (copy eventId from Step 1 response VERBATIM):
+    modifica_prenotazione(eventId="abc123@google.com", nome="Marino", data="2026-07-31", ora="21:00", persone=3, note="")
 
-Never call modifica_prenotazione directly, skipping Step 2. The eventId in memory (from a previous crea or trova earlier in the call) is NOT reliable enough — always refetch with trova_prenotazione right before modifying. This is the only pattern that works consistently.
+You: "Fatto, aggiornata a 3 persone. A presto!"
 
-**Multi-field changes**
-
-If the caller changes multiple fields at once ("cambia in ventidue e siamo in tre"), parse ALL the changes before Step 2, then send them all in a SINGLE modifica_prenotazione call. Do not call modifica_prenotazione twice for two fields.
-
-**Pre-modify checks (mandatory)**
-
-Before Step 3, apply these client-side checks and refuse the modify (skipping Step 3 entirely) if any of them fails:
-- Schedule Window Check: if the new date is a closed day (per the schedule in # Context), or the new time is outside service hours (before lunch_start, between lunch_end and dinner_start, after dinner_end), or the new date is in the past → refuse. Explain and propose an alternative.
-- Availability Check (if DATE is changing): call controlla_disponibilita(data=NEW_DATE, ora=NEW_TIME, persone=NEW_OR_CURRENT_PEOPLE) FIRST. If the slot is full or unavailable → refuse the modify. Do not proceed.
-- Party Size Check: if the new party size exceeds MAX PER SINGLE BOOKING → this is a large group, inform the caller that it will be a pending owner reservation before proceeding.
-
-**"Cancella e rifai" semantics**
-
-If the caller says "cancella e rifai" / "annulla e rifammela" but the intent is clearly to CHANGE a detail (date, time, party size), use modifica_prenotazione, NOT cancella_prenotazione. Interpret the semantics, not the literal words.
 
 # Tool Selection Guidance
 
@@ -1200,9 +1208,7 @@ Before calling any tool, verify silently that the caller has EXPLICITLY asked fo
 
 - controlla_disponibilita — call ONLY when you have a NEW booking request with all four fields (name, date, time, party size), AND after the Pre-tool Schedule Window Check has passed (day is open, time is inside lunch or dinner window). This tool verifies CAPACITY only. It does NOT re-validate schedule — you have already done that. If the tool returns slot_available for an out-of-hours time, treat it as unreliable and refuse anyway.
 - crea_prenotazione — call ONLY after controlla_disponibilita returned slot_available, and ONLY if the caller has confirmed the booking OR the caller's request already contained a clear "book / reserve / prenotare / réserver / reservieren" intent.
-- modifica_prenotazione — call ONLY when the caller has explicitly said they want to change an existing booking ("cambia", "modifica", "cambiare", "change", "ändern", "modificar", "changer"), OR when the caller has JUST corrected data they gave for a booking you already created in this same call (e.g., "aspetta, siamo in tre" after you called crea_prenotazione with 2). This is the correct tool for BOTH cases — never propose to cancel and recreate.
-
-  ⚠️ For the mandatory flow of every modifica_prenotazione call, follow the # Universal Modify Protocol section above (Step 1: identify, Step 2: trova_prenotazione, Step 3: modifica_prenotazione with eventId + all fields). All rules apply — do NOT skip Step 2, do NOT call modifica_prenotazione without eventId, apply pre-modify checks (schedule window, availability, party size).
+- modifica_prenotazione — call when the caller wants to change an existing reservation ("cambia", "modifica", "change", "ändern", "modificar", "changer"), or when they correct a detail of a reservation you just created. Follow # Universal Modify Protocol above (2 steps: trova_prenotazione then modifica_prenotazione with eventId). Never propose to cancel and recreate.
 - cancella_prenotazione — call ONLY when the caller has explicitly said they want to cancel ("cancella", "annulla", "cancel", "stornieren", "cancelar", "annuler", "取消", "отменить"). A simple "Sì / Yes / Ja / Oui / Sí / Sim" after a confirmation message IS NOT a cancellation request — it is closing agreement. In this case, close politely without calling any tool.
 - trova_prenotazione — call ONLY as a preparatory step before modifica_prenotazione or cancella_prenotazione, once you already know the caller wants to modify or cancel.
 
