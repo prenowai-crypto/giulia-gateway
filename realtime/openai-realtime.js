@@ -1,5 +1,21 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.5.0 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.5.1 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.5.1 (2026-07-29) — 4 chiarimenti mirati al Modify Flow.
+//
+// Dai test v7.5.0 (50% grezzo, ~80% netto FN):
+//   Bug 1 — modello perde eventId se c'è tool intermedio tra trova e modifica
+//   Bug 2 — trova cerca la data NUOVA invece di quella ORIGINALE
+//   Bug 3 — "cancella e rifai" viene ancora interpretato letteralmente
+//   Bug 4 — modify a gruppo grande non annuncia pending owner al cliente
+//
+// v7.5.1 aggiunge 4 chiarimenti al Modify Flow, senza espansione:
+//   1) "trova_prenotazione usa la data ORIGINALE della prenotazione"
+//   2) "chiama modifica IMMEDIATAMENTE dopo trova, senza tool in mezzo"
+//   3) esempio esplicito per "cancella e rifai per giovedì" → modify
+//   4) frase da dire al cliente quando modify porta a gruppo grande
+//
+// Nessuna altra modifica.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.5.0 (2026-07-29) — MAJOR: riscrittura modify prompt.
 //
@@ -548,7 +564,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.5.0-MT-2026-07-29 caricato (v7.5.0 MAJOR: modify prompt riscritto — 1 sezione unica # Modify Flow al posto di 5 sezioni sparse)');
+console.log('🟢 openai-realtime.js GIULIA-v7.5.1-MT-2026-07-29 caricato (v7.5.1: chiarimenti Modify Flow — data ORIGINALE in trova, no tool intermedi, cancella-e-rifai esempio, pending owner annuncio)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1223,16 +1239,30 @@ AI: "One moment, I'll check availability." → controlla_disponibilita
 
 **How to do it**: 2 tool calls, always in this order.
 
-1. **trova_prenotazione(nome, data)** — this returns the eventId you need. If you don't have both name and date yet, ask the caller for the missing one before calling. If you just created the booking in this call, you already know name+date — go directly.
+1. **trova_prenotazione(nome, data)** — this returns the eventId you need. Pass the ORIGINAL date of the existing reservation, NOT the new date the caller wants to move to. Example: caller booked for venerdì 31/07 and now says "sposta a giovedì" → call trova_prenotazione(nome, "2026-07-31"), not "2026-07-30". If you don't have both name and date yet, ask the caller for the missing one before calling. If you just created the booking in this call, you already know name+date — go directly.
 
 2. **modifica_prenotazione(eventId, nome, data, ora, persone, note)** — use the eventId from step 1, and pass ALL fields (either the new value if changed, or the current value that trova_prenotazione returned).
+
+**Important**: call modifica_prenotazione IMMEDIATELY after trova_prenotazione, with no other tool calls in between. If you need to check availability for a new date, do that FIRST (before trova). Sequence: [availability check if needed] → trova → modifica. If you split trova and modifica across other tool calls, you may lose track of the eventId and fail.
 
 **Before step 2, apply these checks and REFUSE if any fails** (do NOT call any modify tool):
 - New date is a closed day per the schedule in # Context → refuse and propose alternative.
 - New time is outside service hours per the schedule → refuse and propose alternative.
 - New date is in the past → refuse.
-- If the date is changing to a different day, call controlla_disponibilita(new_date, new_time, new_people) FIRST. If slot_available: false → refuse. If true → proceed to steps 1 and 2.
-- If the new party size exceeds MAX PER SINGLE BOOKING → inform the caller the booking will be pending owner confirmation, then proceed.
+- If the date is changing to a different day, call controlla_disponibilita(new_date, new_time, new_people) FIRST, BEFORE trova. If slot_available: false → refuse. If true → proceed to steps 1 and 2.
+- If the new party size exceeds MAX PER SINGLE BOOKING → BEFORE calling any tool, inform the caller: "Per una prenotazione di questa dimensione la modifica sarà in attesa di conferma dal ristorante." Then proceed with trova + modifica normally; the backend will register the change as PENDING_OWNER automatically.
+
+**"Cancella e rifai" is a modify**
+
+If the caller says "cancella e rifai" / "annulla e rifammela" / "cancel and redo" and the intent is to change one detail (date, time, party size), this is a MODIFY, not a cancel. Do NOT call cancella_prenotazione. Use the Modify Flow above. Example:
+
+Caller (after booking for venerdì): "cancella e rifai per giovedì stessa ora"
+You: "Un attimo, controllo la disponibilità per giovedì."
+[controlla_disponibilita for giovedì → slot_available]
+[trova_prenotazione(nome, data=venerdì)]  ← original date!
+[modifica_prenotazione(eventId, nome, data=giovedì, ora=same, persone=same, note=same)]
+You: "Fatto, spostata a giovedì alla stessa ora."
+
 
 **Literal example — successful modify**:
 
