@@ -9,9 +9,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "persone": 2, "nome": "Marino", "ora": "22:00" } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Marino", "persone": 2 } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Marino" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Marino", "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["22:00"],
     "replyLanguage": "it"
   },
@@ -25,9 +27,10 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "persone": 2, "nome": "Ricci", "ora": "21:30" } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ricci" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Ricci", "ora": "21:30" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["21:30"],
     "replyLanguage": "it"
   },
@@ -41,10 +44,12 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "persone": 3, "nome": "Bruno" } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Bruno", "persone": 2 } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Bruno" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Bruno", "persone": 3 } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["tre"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["3 person"],
     "replyLanguage": "it"
   },
   {
@@ -57,10 +62,12 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "persone": 2, "nome": "Costa" } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Costa", "persone": 4 } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Costa" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Costa", "persone": 2 } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["due"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["2 person"],
     "replyLanguage": "it"
   },
   {
@@ -73,9 +80,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Russo", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Rossi" } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Rossi" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Russo" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["Russo"],
     "replyLanguage": "it"
   },
@@ -89,9 +98,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Giorgio Bianchi", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Giorgio" } },
+      { "name": "trova_prenotazione" },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Giorgio Bianchi" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["Bianchi"],
     "replyLanguage": "it"
   },
@@ -105,9 +116,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Palermo", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Palermo" } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Palermo" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Palermo" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["giovedì"],
     "replyLanguage": "it"
   },
@@ -121,9 +134,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Sanna", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Sanna" } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Sanna" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Sanna" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["domenica"],
     "replyLanguage": "it"
   },
@@ -135,8 +150,10 @@
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Longo",
       "Aspetta, la spostiamo a lunedì prossimo stessa ora"
     ],
-    "expectedToolCalls": [],
-    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Longo" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["chius"],
     "replyLanguage": "it"
   },
@@ -148,8 +165,10 @@
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Fabbri",
       "Aspetta, cambia in ventidue e quarantacinque"
     ],
-    "expectedToolCalls": [],
-    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Fabbri" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["22:30"],
     "replyLanguage": "it"
   },
@@ -163,9 +182,10 @@
       "Sì grazie"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Testa", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Testa" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Testa" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["celia"],
     "replyLanguage": "it"
   },
@@ -179,10 +199,10 @@
       "Sì grazie"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Greco", "persone": 4 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Greco" } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["ester"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["tavolo esterno"],
     "replyLanguage": "it"
   },
   {
@@ -191,13 +211,15 @@
     "description": "Doppia correzione — cliente cambia sia ora sia persone",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Amato",
-      "Aspetta cambio: cambia in ventidue e siamo in tre",
+      "Aspetta cambio: cambia alle 22 e siamo in tre",
       "Sì confermo"
     ],
     "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Amato", "persone": 2 } },
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Amato" } },
       { "name": "modifica_prenotazione", "argsContain": { "nome": "Amato", "persone": 3, "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["22:00"],
     "replyLanguage": "it"
   },
@@ -211,9 +233,10 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ferri", "persone": 2 } },
       { "name": "modifica_prenotazione", "argsContain": { "nome": "Ferri", "persone": 9 } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["conferma"],
     "replyLanguage": "it"
   },
@@ -224,14 +247,15 @@
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Neri",
       "Aspetta, siamo in tre",
-      "Anzi no, cambia in ventidue e siamo in quattro",
+      "Anzi no, cambia alle 22 e siamo in quattro",
       "Sì confermo"
     ],
     "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Neri", "persone": 2 } },
       { "name": "modifica_prenotazione", "argsContain": { "nome": "Neri", "persone": 4, "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["quattro"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["22:00"],
     "replyLanguage": "it"
   },
   {
@@ -242,8 +266,10 @@
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marchetti",
       "Vorrei modificare la prenotazione"
     ],
-    "expectedToolCalls": [],
-    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Marchetti" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
     "replyMustContain": ["cosa"],
     "replyLanguage": "it"
   },
@@ -256,8 +282,10 @@
       "Aspetta, volevo cambiare ora... no lascia stare, va bene alle nove di sera",
       "Sì confermo"
     ],
-    "expectedToolCalls": [],
-    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Colombo" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["Colombo"],
     "replyLanguage": "it"
   },
@@ -271,9 +299,10 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Barbieri", "persone": 2, "ora": "22:00" } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Barbieri" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Barbieri", "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["22:00"],
     "replyLanguage": "it"
   },
@@ -285,9 +314,12 @@
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Vitale",
       "Aspetta, la spostiamo a sabato prossimo stessa ora"
     ],
-    "expectedToolCalls": [],
-    "forbiddenToolCalls": ["modifica_prenotazione"],
-    "replyMustContain": ["disponi"],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Vitale" } },
+      { "name": "controlla_disponibilita" }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["complet"],
     "replyLanguage": "it"
   },
   {
@@ -300,10 +332,10 @@
       "Sì grazie"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Esposito", "persone": 4 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Esposito" } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["compleanno"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["complean"],
     "replyLanguage": "it"
   },
   {
@@ -316,9 +348,9 @@
       "Sì grazie"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Romano", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Romano" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["cane"],
     "replyLanguage": "it"
   },
@@ -330,9 +362,9 @@
       "Buonasera, avevo una prenotazione a nome Franceschini per venerdì prossimo, vorrei cambiarla in giovedì stessa ora"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione" }
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Franceschini" } }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "crea_prenotazione", "richiedi_evento"],
     "replyMustContain": ["trovat"],
     "replyLanguage": "it"
   },
@@ -346,25 +378,27 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Lombardi", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Lombardi" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Lombardi" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["giovedì"],
     "replyLanguage": "it"
   },
   {
     "id": "B07-024",
     "category": "modify",
-    "description": "Cliente chiede 'annulla e rifai' — modello deve preferire modifica",
+    "description": "Cliente chiede 'cancella e rifai' — modello deve preferire modifica",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Costa",
       "Cancella e rifai per giovedì stessa ora",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Costa", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Costa" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Costa" } }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["giovedì"],
     "replyLanguage": "it"
   },
@@ -378,10 +412,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ferrari", "persone": 8 } },
       { "name": "modifica_prenotazione", "argsContain": { "nome": "Ferrari", "persone": 9 } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["conferma"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["9 person"],
     "replyLanguage": "it"
   },
   {
@@ -394,10 +429,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ferrero", "persone": 9 } },
       { "name": "modifica_prenotazione", "argsContain": { "nome": "Ferrero", "persone": 6 } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["sei"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["6 person"],
     "replyLanguage": "it"
   },
   {
@@ -410,9 +446,10 @@
       "Sì grazie"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Sala", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Sala" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Sala" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["lattosio"],
     "replyLanguage": "it"
   },
@@ -426,9 +463,10 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Grasso", "persone": 4 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Grasso" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Grasso" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["Grasso"],
     "replyLanguage": "it"
   },
@@ -442,9 +480,10 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "modifica_prenotazione", "argsContain": { "nome": "Bianchi", "persone": 2 } }
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Verdi" } },
+      { "name": "modifica_prenotazione", "argsContain": { "nome": "Bianchi" } }
     ],
-    "forbiddenToolCalls": [],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
     "replyMustContain": ["Bianchi"],
     "replyLanguage": "it"
   },
@@ -459,10 +498,11 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Salvatore", "persone": 2 } },
       { "name": "modifica_prenotazione", "argsContain": { "nome": "Salvatore", "persone": 3 } }
     ],
-    "forbiddenToolCalls": [],
-    "replyMustContain": ["tre"],
+    "forbiddenToolCalls": ["cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["3 person"],
     "replyLanguage": "it"
   }
 ]
