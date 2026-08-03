@@ -1,5 +1,30 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.5.2 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.5.3 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.5.3 (2026-08-03) — Fix residui hardcoded "8" nel prompt.
+//
+// Root cause del bug soglia in run 40 (43% pass rate, il modello diceva
+// "il limite è 8" invece di 10):
+//   Il prompt v7.5.2 aveva impostato correttamente {{GROUP_THRESHOLD}}=10
+//   nel # Context, MA aveva LASCIATO 4 residui di "8" hardcoded negli esempi
+//   e nelle regole della sezione Large Group Communication:
+//     - "Do NOT split the group (\"8 + 1\")"
+//     - "**Example (IT) — 9 persone (MAX = 8 in schedule)**"
+//     - "never split, never propose \"8 + 1\""
+//     - "il massimo è 8"
+//   Il modello IMITA gli esempi letterali più delle regole astratte. Vedeva
+//   "MAX = 8" nell'esempio e prendeva 8 come soglia, ignorando il context.
+//
+// v7.5.3 sostituisce:
+//   - "8 + 1" → "subgroups" (generico)
+//   - "MAX = 8 in schedule" → "over GROUP_THRESHOLD" (rimanda al context)
+//   - "il massimo è 8" → "il massimo è N" (placeholder generico)
+//
+// Zero altre modifiche.
+//
+// NOTA: v7.5.3 NON risolve i 35 abort infrastrutturali visti nel run 40.
+// Quelli sono un problema separato di Google Apps Script — possibilmente
+// rate limit o timeout del backend. Da monitorare separatamente.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.5.2 (2026-07-30) — UX Rules + threshold nel context.
 //
@@ -603,7 +628,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.5.2-MT-2026-07-30 caricato (v7.5.2: UX Rules + GROUP_THRESHOLD nel context — no tecnicismi, distinguere CONFIRMED/PENDING, no leak lingua, no frasi informali)');
+console.log('🟢 openai-realtime.js GIULIA-v7.5.3-MT-2026-08-03 caricato (v7.5.3: fix residui hardcoded "8" — modello ora rispetta GROUP_THRESHOLD=10 dal context)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -1221,11 +1246,11 @@ Decision:
 - persone <= {{GROUP_THRESHOLD}} → normal booking, no special communication needed. crea_prenotazione produces a CONFIRMED booking.
 - persone > {{GROUP_THRESHOLD}} → LARGE GROUP. Communicate pending flow to the caller, then proceed to the tools. crea_prenotazione produces a PENDING OWNER booking; the backend handles the rest.
 
-Do NOT split the group ("8 + 1"). Do NOT offer transfer or callback as an alternative to the booking. Do NOT hardcode a specific number in your reply — describe it in general terms.
+Do NOT split the group into subgroups. Do NOT offer transfer or callback as an alternative to the booking. Do NOT hardcode a specific number in your reply — describe it in general terms.
 
 ## Large group flow — sample turns
 
-**Example (IT) — 9 persone (MAX = 8 in schedule)**:
+**Example (IT) — 9 persone (over GROUP_THRESHOLD)**:
 
 - Caller: "Vorrei prenotare per sabato prossimo alle 21, 9 persone, Federico Rossi."
 - You: "Perfetto. Per un gruppo di questa dimensione, la prenotazione viene registrata in attesa di conferma dal ristorante. Il ristorante la ricontatterà per confermarla. Procedo con la registrazione."
@@ -1250,10 +1275,10 @@ Do NOT split the group ("8 + 1"). Do NOT offer transfer or callback as an altern
 ## Concrete WRONG behaviors that must NEVER happen
 
 - Refusing to book a group of 9, 15, or 20 people. WRONG — the booking must be created as pending owner.
-- Offering to split a group. WRONG — never split, never propose "8 + 1".
+- Offering to split a group. WRONG — never split, never propose splitting the group into subgroups.
 - Offering transfer to the restaurant as an alternative to booking. WRONG — the pending owner flow is automatic, no transfer needed.
 - Saying "posso prendere nota e farla richiamare" and NOT calling the tool. WRONG — always call crea_prenotazione.
-- Hardcoding a specific number ("il massimo è 8"). Prefer generic phrasing ("per un gruppo di questa dimensione").
+- Hardcoding a specific number ("il massimo è N"). Prefer generic phrasing ("per un gruppo di questa dimensione").
 - Replying in English after the tool call for any group size. WRONG — Active Conversation Language always applies.
 
 ## Concrete WRONG examples that must NEVER happen
