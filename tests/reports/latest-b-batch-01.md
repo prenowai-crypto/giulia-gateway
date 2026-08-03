@@ -1,52 +1,176 @@
 # Batch B-01 (tests 1-30)
-Run: 2026-08-03T13:23:24.092Z | Model: gpt-realtime-2.1-mini | Total: 30 | Passed: 13 (43%) | Failed: 17
+Run: 2026-08-03T16:45:20.947Z | Model: gpt-realtime-2.1-mini | Total: 30 | Passed: 15 (50%) | Failed: 15
 
-## ✅ Passed (13)
+## ✅ Passed (15)
 
-- **B07-003** `modify`: Cliente corregge subito il numero di persone (2 → 3) (38115ms, 4 tool calls)
-- **B07-004** `modify`: Cliente corregge subito il numero di persone (4 → 2) (37579ms, 5 tool calls)
-- **B07-005** `modify`: Cliente corregge il cognome (Rossi → Russo) (44030ms, 4 tool calls)
-- **B07-006** `modify`: Cliente aggiunge il cognome (Giorgio → Giorgio Bianchi) (63947ms, 4 tool calls)
-- **B07-009** `modify`: Cliente cambia giorno a lunedì (chiuso) — modello deve rifiutare la modifica (42553ms, 3 tool calls)
-- **B07-012** `modify`: Cliente aggiunge una nota dopo la creazione (tavolo esterno) (53107ms, 7 tool calls)
-- **B07-013** `modify`: Doppia correzione — cliente cambia sia ora sia persone (34099ms, 4 tool calls)
-- **B07-015** `modify`: Cliente cambia idea più volte — modello mantiene stato coerente (72514ms, 9 tool calls)
-- **B07-016** `modify`: Cliente chiede modifica senza specificare cosa — modello deve chiedere (30650ms, 3 tool calls)
-- **B07-017** `modify`: Cliente crea, ripensa, poi mantiene tutto uguale (idempotenza) (61091ms, 4 tool calls)
-- **B07-020** `modify`: Cliente aggiunge nota compleanno dopo creazione (43941ms, 4 tool calls)
-- **B07-023** `modify`: Cliente crea e poi anticipa a stessa ora giorno precedente (64732ms, 8 tool calls)
-- **B07-024** `modify`: Cliente chiede 'cancella e rifai' — modello deve preferire modifica (33294ms, 6 tool calls)
+- **B07-001** `modify`: Cliente crea e poi corregge subito l'ora (21 → 22) (41479ms, 4 tool calls)
+- **B07-008** `modify`: Cliente cambia giorno da venerdì a domenica (42343ms, 6 tool calls)
+- **B07-009** `modify`: Cliente cambia giorno a lunedì (chiuso) — modello deve rifiutare la modifica (31363ms, 2 tool calls)
+- **B07-010** `modify`: Cliente cambia ora a orario fuori servizio — modello deve rifiutare la modifica (33738ms, 2 tool calls)
+- **B07-011** `modify`: Cliente aggiunge una nota dopo la creazione (allergia) (44880ms, 5 tool calls)
+- **B07-012** `modify`: Cliente aggiunge una nota dopo la creazione (tavolo esterno) (40078ms, 4 tool calls)
+- **B07-013** `modify`: Doppia correzione — cliente cambia sia ora sia persone (37298ms, 6 tool calls)
+- **B07-014** `modify`: Modifica persone che porta a gruppo grande (pending owner) (39319ms, 6 tool calls)
+- **B07-015** `modify`: Cliente cambia idea più volte — modello mantiene stato coerente (41790ms, 6 tool calls)
+- **B07-017** `modify`: Cliente crea, ripensa, poi mantiene tutto uguale (idempotenza) (28610ms, 2 tool calls)
+- **B07-020** `modify`: Cliente aggiunge nota compleanno dopo creazione (40195ms, 5 tool calls)
+- **B07-021** `modify`: Cliente aggiunge nota cane dopo creazione (54409ms, 3 tool calls)
+- **B07-024** `modify`: Cliente chiede 'cancella e rifai' — modello deve preferire modifica (46757ms, 6 tool calls)
+- **B07-027** `modify`: Cliente vuole modificare una nota già registrata (allergia → intolleranza) (42535ms, 6 tool calls)
+- **B07-030** `modify`: Cliente chiede modifica dopo aver confermato — flow completo (33186ms, 4 tool calls)
 
-## ❌ Failed (17)
+## ❌ Failed (15)
 
-### B07-001 — `modify`
-**Description**: Cliente crea e poi corregge subito l'ora (21 → 22)
+### B07-002 — `modify`
+**Description**: Cliente crea e poi corregge l'ora (21:00 → 21:30)
 
-**Reason**: expected tool call 'crea_prenotazione' with args {"nome":"Marino","persone":2} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}}] | expected tool call 'trova_prenotazione' with args {"nome":"Marino"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}}] | expected tool call 'modifica_prenotazione' with args {"nome":"Marino","ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}}] | reply must contain '22:00' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e orario. Mi dispiace, non sono riuscita a verificare la disponib
+**Reason**: exception: turn timeout after 45000ms (userText: Ah scusa, era per le nove e mezza)
 
 **Full transcript**:
 
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marino
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ricci
 
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Aspetta, cambia in ventidue invece
-
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quel giorno e orario.
+**[User turn 2]**: Ah scusa, era per le nove e mezza
 
 **[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Mi dispiace, non sono riuscita a verificare la disponibilità al momento. Potrebbe riprovare più tardi, oppure posso aiutare a registrare la richiesta appena è disponibile.
+**Tool calls made** (0):
+```json
+[]
+```
 
-**[AI reply 4]**: Un attimo, riprovo la verifica della disponibilità con il nuovo orario.
+**Duration**: 62464ms
 
-**[AI reply 5]**: Mi dispiace, non riesco a verificare la disponibilità tramite il sistema al momento. Se vuole, riproviamo più tardi o mi dia un altro orario da usare.
+---
 
-**[AI reply 6]**: Capito, grazie. Purtroppo il controllo tramite il sistema non va a buon fine in questo momento, quindi non posso completare la prenotazione.
+### B07-003 — `modify`
+**Description**: Cliente corregge subito il numero di persone (2 → 3)
 
-Vuole riprovare con il sistema oppure preferisce provare un altro orario o un’altra data?
+**Reason**: exception: turn timeout after 45000ms (userText: Sì confermo)
 
-**Tool calls made** (2):
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Bruno
+
+**[User turn 2]**: Aspetta, siamo in tre
+
+**[User turn 3]**: Sì confermo
+
+**Tool calls made** (0):
+```json
+[]
+```
+
+**Duration**: 82504ms
+
+---
+
+### B07-004 — `modify`
+**Description**: Cliente corregge subito il numero di persone (4 → 2)
+
+**Reason**: reply must contain '2 person' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per ora e tavolo. Prenotazione confermata: Costa, venerdì alle 21:00, per 4 perso
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, quattro persone, a nome Costa
+
+**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Aspetta, siamo solo in due
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per ora e tavolo.
+
+**[User turn 3]**: Sì confermo
+
+**[AI reply 3]**: Prenotazione confermata: Costa, venerdì alle 21:00, per 4 persone. A presto!
+
+**[AI reply 4]**: Un attimo, aggiorno la prenotazione.
+
+**[AI reply 5]**: Un attimo, mi sento accedere a un collega che può completare il cambio.
+
+**[AI reply 6]**: Un attimo, proverò a trasferire la chiamata al ristorante per completare il cambio.
+
+**[AI reply 7]**: Perfetto, grazie. Il ristorante riceverà la conferma e gestirà l’aggiornamento della prenotazione.
+
+**Tool calls made** (5):
+```json
+[
+  {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 4
+    }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Costa",
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 4,
+      "note": ""
+    }
+  },
+  {
+    "name": "trova_prenotazione",
+    "args": {
+      "nome": "Costa",
+      "data": "2026-08-07"
+    }
+  },
+  {
+    "name": "modifica_prenotazione",
+    "args": {
+      "nome": "Costa",
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 2,
+      "note": ""
+    }
+  },
+  {
+    "name": "trasferisci_al_ristorante",
+    "args": {
+      "motivo": "Cliente chiede di modificare la prenotazione: da 4 persone a 2 per Costa, venerdì alle 21:00. Il sistema non permette la modifica dalla mia interfaccia."
+    }
+  }
+]
+```
+
+**Duration**: 29685ms
+
+---
+
+### B07-005 — `modify`
+**Description**: Cliente corregge il cognome (Rossi → Russo)
+
+**Reason**: reply must contain 'Russo' — got: Salve, sono l’assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per la fascia richiesta. Pronti, la prenotazione è confermata: Rossi, venerdì all
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Rossi
+
+**[AI reply 1]**: Salve, sono l’assistente vocale automatico di Osteria Test, come posso aiutarla?
+
+**[User turn 2]**: Aspetta, ho sbagliato, è Russo con la U
+
+**[AI reply 2]**: Un attimo, controllo la disponibilità per la fascia richiesta.
+
+**[User turn 3]**: Sì confermo
+
+**[AI reply 3]**: Pronti, la prenotazione è confermata: Rossi, venerdì alle 21:00, per 2 persone. A presto!
+
+**[AI reply 4]**: Un attimo, controllo la prenotazione per aggiornarla.
+
+**[AI reply 5]**: Un attimo, cerco di completare l’aggiornamento, se non va allora le faccio parlare con il ristorante.
+
+**[AI reply 6]**: Mi spiace, non sono riuscita ad aggiornare automaticamente il nome. Passo la chiamata al ristorante per risolverlo direttamente.
+
+**[AI reply 7]**: Perfetto, grazie per la conferma. Il ristorante riceverà la richiesta e potrà confermare la modifica. A presto!
+
+**Tool calls made** (5):
 ```json
 [
   {
@@ -58,46 +182,72 @@ Vuole riprovare con il sistema oppure preferisce provare un altro orario o un’
     }
   },
   {
-    "name": "controlla_disponibilita",
+    "name": "crea_prenotazione",
     "args": {
+      "nome": "Rossi",
       "data": "2026-08-07",
-      "ora": "22:00",
-      "persone": 2
+      "ora": "21:00",
+      "persone": 2,
+      "note": ""
+    }
+  },
+  {
+    "name": "trova_prenotazione",
+    "args": {
+      "nome": "Rossi",
+      "data": "2026-08-07"
+    }
+  },
+  {
+    "name": "modifica_prenotazione",
+    "args": {
+      "nome": "Russo",
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 2,
+      "note": "Gruppo: No"
+    }
+  },
+  {
+    "name": "trasferisci_al_ristorante",
+    "args": {
+      "motivo": "Correzione prenotazione (nome utenti): Rossi → Russo, venerdì 7 agosto 2026 alle 21, 2 persone."
     }
   }
 ]
 ```
 
-**Duration**: 38103ms
+**Duration**: 31992ms
 
 ---
 
-### B07-002 — `modify`
-**Description**: Cliente crea e poi corregge l'ora (21:00 → 21:30)
+### B07-006 — `modify`
+**Description**: Cliente aggiunge il cognome (Giorgio → Giorgio Bianchi)
 
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Ricci","ora":"21:30"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Ricci","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:30","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Ricci","data":"2026-08-07","ora":"21:00","persone":2,"note":""}}] | reply must contain '21:30' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e orario. Mi dispiace, non sono riuscita a finalizzare la prenota
+**Reason**: expected tool call 'trova_prenotazione' not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Giorgio","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Giorgio Bianchi","data":"2026-08-07","ora":"21:00","persone":2,"note":""}}] | expected tool call 'modifica_prenotazione' with args {"nome":"Giorgio Bianchi"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Giorgio","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Giorgio Bianchi","data":"2026-08-07","ora":"21:00","persone":2,"note":""}}]
 
 **Full transcript**:
 
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ricci
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone, mi chiamo Giorgio
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Ah scusa, era per le nove e mezza
+**[User turn 2]**: Il cognome è Bianchi, aggiungilo per favore
 
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e orario.
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quel giorno e orario.
 
 **[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Mi dispiace, non sono riuscita a finalizzare la prenotazione. L’orario e le persone erano ok, ma si è verificato un errore nella registrazione. Vuole provare di nuovo o darmi un’altra data?
+**[AI reply 3]**: Un attimo, ho verificato la disponibilità ma non sono riuscita a completare la prenotazione.  
+Mi dispiace, riprovo a registrarla subito?
 
-**[AI reply 4]**: Un attimo, controllo se alle nove e mezza è disponibile.
+**[AI reply 4]**: Certo! Per aggiungere il cognome, ho bisogno del nome completo che desidera utilizzare nella prenotazione.  
+Quindi è corretta la richiesta di prenotare sotto nome e cognome “Giorgio Bianchi”?
 
-**[AI reply 5]**: Mi dispiace, non sono riuscito a verificare la disponibilità a quell’orario. Vuole provare un’altra ora per lo stesso giorno, ad esempio 21:00?
+**[AI reply 5]**: Perfetto, un attimo che provo a registrarla di nuovo con i dati aggiornati.
 
-**[AI reply 6]**: Perfetto, un attimo mentre registro la prenotazione.
-
-**[AI reply 7]**: Prenotazione confermata: Ricci, venerdì 7 agosto, alle 21:00, per 2 persone. A presto!
+**[AI reply 6]**: Fatto, prenotazione confermata: Giorgio Bianchi, venerdì alle 21:00, per 2 persone.  
+Ci vediamo presto!
 
 **Tool calls made** (4):
 ```json
@@ -113,7 +263,7 @@ Vuole riprovare con il sistema oppure preferisce provare un altro orario o un’
   {
     "name": "crea_prenotazione",
     "args": {
-      "nome": "Ricci",
+      "nome": "Giorgio",
       "data": "2026-08-07",
       "ora": "21:00",
       "persone": 2,
@@ -124,14 +274,14 @@ Vuole riprovare con il sistema oppure preferisce provare un altro orario o un’
     "name": "controlla_disponibilita",
     "args": {
       "data": "2026-08-07",
-      "ora": "21:30",
+      "ora": "21:00",
       "persone": 2
     }
   },
   {
     "name": "crea_prenotazione",
     "args": {
-      "nome": "Ricci",
+      "nome": "Giorgio Bianchi",
       "data": "2026-08-07",
       "ora": "21:00",
       "persone": 2,
@@ -141,7 +291,7 @@ Vuole riprovare con il sistema oppure preferisce provare un altro orario o un’
 ]
 ```
 
-**Duration**: 61493ms
+**Duration**: 54808ms
 
 ---
 
@@ -163,56 +313,30 @@ Vuole riprovare con il sistema oppure preferisce provare un altro orario o un’
 []
 ```
 
-**Duration**: 77356ms
+**Duration**: 67070ms
 
 ---
 
-### B07-008 — `modify`
-**Description**: Cliente cambia giorno da venerdì a domenica
+### B07-016 — `modify`
+**Description**: Cliente chiede modifica senza specificare cosa — modello deve chiedere
 
-**Reason**: exception: turn timeout after 45000ms (userText: Buonasera, vorrei prenotare per venerdì prossimo a)
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Sanna
-
-**[User turn 2]**: Aspetta, la spostiamo a domenica prossima stessa ora
-
-**[User turn 3]**: Sì confermo
-
-**Tool calls made** (0):
-```json
-[]
-```
-
-**Duration**: 46121ms
-
----
-
-### B07-010 — `modify`
-**Description**: Cliente cambia ora a orario fuori servizio — modello deve rifiutare la modifica
-
-**Reason**: last reply not in 'it': capito, ma 22:45 è fuori orario di servizio.  
-vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
+**Reason**: reply must contain 'cosa' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità. Prenotazione confermata: Marchetti, venerdì alle 21:00, per 2 persone. A presto!
 
 **Full transcript**:
 
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Fabbri
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Marchetti
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Aspetta, cambia in ventidue e quarantacinque
+**[User turn 2]**: Vorrei modificare la prenotazione
 
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e ora.
+**[AI reply 2]**: Un attimo, controllo la disponibilità.
 
-**[AI reply 3]**: Mi dispiace, sembra esserci stato un errore. Un attimo, riprovo la registrazione.
+**[AI reply 3]**: Prenotazione confermata: Marchetti, venerdì alle 21:00, per 2 persone. A presto!
 
-**[AI reply 4]**: Prenotazione confermata: Fabbri, venerdì alle 21:00, per 2 persone. A presto!
+**[AI reply 4]**: Certo. Vuole cambiare la data, l’orario o il numero di persone?
 
-**[AI reply 5]**: Capito, ma 22:45 è fuori orario di servizio.  
-Vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
-
-**Tool calls made** (3):
+**Tool calls made** (2):
 ```json
 [
   {
@@ -226,17 +350,7 @@ Vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
   {
     "name": "crea_prenotazione",
     "args": {
-      "nome": "Fabbri",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2,
-      "note": ""
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Fabbri",
+      "nome": "Marchetti",
       "data": "2026-08-07",
       "ora": "21:00",
       "persone": 2,
@@ -246,40 +360,38 @@ Vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
 ]
 ```
 
-**Duration**: 41350ms
+**Duration**: 21266ms
 
 ---
 
-### B07-011 — `modify`
-**Description**: Cliente aggiunge una nota dopo la creazione (allergia)
+### B07-018 — `modify`
+**Description**: Cliente vuole modificare ma dà solo il cognome — modello usa quello
 
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Testa"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Testa","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Testa","data":"2026-08-07"}},{"name":"trova_prenotazione","args":{"nome":"Testa","data":"2026-08-07"}},{"name":"trasferisci_al_ristorante","args":{"motivo":"Cliente chiede di aggiornare la prenotazione per aggiungere una nota: celiaco."}}]
+**Reason**: reply must contain '22:00' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e ora. Prenotazione confermata: Barbieri, venerdì 7 agosto alle 2
 
 **Full transcript**:
 
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Testa
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Barbieri
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[User turn 2]**: Ah dimenticavo, uno di noi è celiaco, potete aggiungerlo?
+**[User turn 2]**: Cambia solo l'ora in ventidue
 
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e ora.
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quel giorno e ora.
 
-**[User turn 3]**: Sì grazie
+**[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Ok, un momento, procedo con la prenotazione.
+**[AI reply 3]**: Prenotazione confermata: Barbieri, venerdì 7 agosto alle 21:00, per 2 persone. A presto!
 
-**[AI reply 4]**: Prenotazione confermata: Testa, venerdì 7 agosto alle 21:00, per 2 persone. A presto!
+**[AI reply 4]**: Un attimo, controllo la prenotazione e poi aggiorno solo l’orario.
 
-**[AI reply 5]**: Un attimo, aggiorno la prenotazione con l’informazione sull’intolleranza.
+**[AI reply 5]**: Mi dispiace, non riesco ad aggiornare l’ora con il sistema a disposizione. La prenotazione risulta confermata per nome e data, ma la modifica richiede un identificatore che non posso passare qui.
 
-**[AI reply 6]**: Un attimo, riprovo a recuperare la prenotazione.
+Posso trasferire la richiesta al ristorante così un collega la aggiorna al momento. Vuole che passi la chiamata?
 
-**[AI reply 7]**: Mi dispiace, non riesco a recuperare la prenotazione da aggiornare in questo momento. Posso trasferire la chiamata a un collega per registrare l’informazione: celiaco.
+**[AI reply 6]**: Perfetto, trasferisco la richiesta al ristorante così possono aggiornare l’ora.
 
-**[AI reply 8]**: Va bene, la passo a un collega per aggiornare la prenotazione.
-
-**[AI reply 9]**: Perfetto, la chiamo un collega. A presto!
+**[AI reply 7]**: Grazie, ho trasferito la richiesta al ristorante. Un collega si occuperà della modifica dell’orario.
 
 **Tool calls made** (5):
 ```json
@@ -295,137 +407,11 @@ Vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
   {
     "name": "crea_prenotazione",
     "args": {
-      "nome": "Testa",
+      "nome": "Barbieri",
       "data": "2026-08-07",
       "ora": "21:00",
       "persone": 2,
       "note": ""
-    }
-  },
-  {
-    "name": "trova_prenotazione",
-    "args": {
-      "nome": "Testa",
-      "data": "2026-08-07"
-    }
-  },
-  {
-    "name": "trova_prenotazione",
-    "args": {
-      "nome": "Testa",
-      "data": "2026-08-07"
-    }
-  },
-  {
-    "name": "trasferisci_al_ristorante",
-    "args": {
-      "motivo": "Cliente chiede di aggiornare la prenotazione per aggiungere una nota: celiaco."
-    }
-  }
-]
-```
-
-**Duration**: 56930ms
-
----
-
-### B07-014 — `modify`
-**Description**: Modifica persone che porta a gruppo grande (pending owner)
-
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Ferri","persone":9} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Ferri","data":"2026-08-07","ora":"21:00","persone":2,"note":""}}]
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Ferri
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Aspetta, siamo in nove in realtà
-
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quell’orario.
-
-**[User turn 3]**: Sì confermo
-
-**[AI reply 3]**: Prenotazione confermata: Ferri, venerdì alle 21:00, per 2 persone. A presto!
-
-**[AI reply 4]**: Capito. Con una singola prenotazione non posso aggiornare a 9 persone, perché il limite è 8 per tavolo. Vuole mantenere la prenotazione attuale per 2 o preferisce annullarla e riprovare con un’altra soluzione?
-
-**[AI reply 5]**: Perfetto, grazie. Quindi restiamo con 2 persone per Ferri, venerdì alle 21:00?
-
-**Tool calls made** (2):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Ferri",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2,
-      "note": ""
-    }
-  }
-]
-```
-
-**Duration**: 21212ms
-
----
-
-### B07-018 — `modify`
-**Description**: Cliente vuole modificare ma dà solo il cognome — modello usa quello
-
-**Reason**: expected tool call 'crea_prenotazione' with args {"nome":"Barbieri"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}},{"name":"trova_prenotazione","args":{"nome":"Barbieri","data":"2026-08-07"}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}}] | expected tool call 'modifica_prenotazione' with args {"nome":"Barbieri","ora":"22:00"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}},{"name":"trova_prenotazione","args":{"nome":"Barbieri","data":"2026-08-07"}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:00","persone":2}}] | reply must contain '22:00' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controlla la disponibilità per quell’orario. Mi dispiace, non sono riuscita a verificare la disponibilità. V
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Barbieri
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Cambia solo l'ora in ventidue
-
-**[AI reply 2]**: Un attimo, controlla la disponibilità per quell’orario.
-
-**[User turn 3]**: Sì confermo
-
-**[AI reply 3]**: Mi dispiace, non sono riuscita a verificare la disponibilità. Vuole riprovare o mi conferma un altro orario?
-
-**[AI reply 4]**: Controllo prima se l’ora è ancora disponibile, poi aggiorno la prenotazione.
-
-**[AI reply 5]**: Un attimo, confermo i dettagli e aggiorno la prenotazione.
-
-**[AI reply 6]**: Non ho trovato una prenotazione da aggiornare per il nome indicato. Per procedere, mi serve che mi dica la prenotazione esistente, se è stata effettuata con un altro nome o per una data diversa.
-
-**[AI reply 7]**: Perfetto, confermo i dati e controllo la disponibilità per quell’orario.
-
-**[AI reply 8]**: Mi dispiace, non ho trovato una prenotazione da aggiornare e il controllo di disponibilità non è andato a buon fine. Ti serve il nome esatto con cui è stata fatta, o preferisci creare una nuova prenotazione con l’orario indicato?
-
-**Tool calls made** (4):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2
-    }
-  },
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "22:00",
-      "persone": 2
     }
   },
   {
@@ -436,24 +422,32 @@ Vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
     }
   },
   {
-    "name": "controlla_disponibilita",
+    "name": "modifica_prenotazione",
     "args": {
+      "nome": "Barbieri",
       "data": "2026-08-07",
       "ora": "22:00",
-      "persone": 2
+      "persone": 2,
+      "note": ""
+    }
+  },
+  {
+    "name": "trasferisci_al_ristorante",
+    "args": {
+      "motivo": "La modifica della prenotazione necessita di un aggiornamento tramite il ristorante: cambio l’orario della prenotazione per Barbieri."
     }
   }
 ]
 ```
 
-**Duration**: 69408ms
+**Duration**: 38909ms
 
 ---
 
 ### B07-019 — `modify`
 **Description**: Cliente vuole spostare la prenotazione a un giorno con seed pieno (sabato)
 
-**Reason**: expected tool call 'crea_prenotazione' with args {"nome":"Vitale"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":4}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":4}},{"name":"controlla_disponibilita","args":{"data":"2026-08-08","ora":"21:00","persone":4}}] | reply must contain 'complet' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e orario. Mi dispiace, il controllo della disponibilità non è and
+**Reason**: reply must contain 'complet' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e ora. Prenotazione confermata per Vitale, venerdì alle 21:00, 4 
 
 **Full transcript**:
 
@@ -463,14 +457,13 @@ Vuole cambiare a un orario dentro la cena, ad esempio 22:30 oppure 21:30?
 
 **[User turn 2]**: Aspetta, la spostiamo a sabato prossimo stessa ora
 
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quella data e orario.
+**[AI reply 2]**: Un attimo, controllo la disponibilità per quel giorno e ora.
 
-**[AI reply 3]**: Mi dispiace, il controllo della disponibilità non è andato a buon fine. Vuole riprovare con un altro orario o un altro giorno?
+**[AI reply 3]**: Prenotazione confermata per Vitale, venerdì alle 21:00, 4 persone. A presto!
 
-**[AI reply 4]**: Un attimo, controllo la disponibilità per sabato alle 21:00.
+**[AI reply 4]**: Un attimo, controllo la disponibilità per sabato alla stessa ora.
 
-**[AI reply 5]**: Mi dispiace, anche per sabato alle 21:00 il controllo della disponibilità non è andato a buon fine.  
-Posso provare un’altra data o un altro orario, o preferisce che cerchi una fascia diversa?
+**[AI reply 5]**: Sabato alla stessa ora è già pieno. Posso proporre alle 22:30, che è l’ultimo orario disponibile per la cena.
 
 **Tool calls made** (3):
 ```json
@@ -484,11 +477,13 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
     }
   },
   {
-    "name": "controlla_disponibilita",
+    "name": "crea_prenotazione",
     "args": {
+      "nome": "Vitale",
       "data": "2026-08-07",
       "ora": "21:00",
-      "persone": 4
+      "persone": 4,
+      "note": ""
     }
   },
   {
@@ -502,79 +497,14 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 ]
 ```
 
-**Duration**: 52274ms
-
----
-
-### B07-021 — `modify`
-**Description**: Cliente aggiunge nota cane dopo creazione
-
-**Reason**: expected tool call 'crea_prenotazione' with args {"nome":"Romano"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"info_locale","args":{}},{"name":"trasferisci_al_ristorante","args":{"motivo":"Richiesta: è possibile portare un cane durante la prenotazione?"}}]
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Romano
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Ah, veniamo con il cane, va bene?
-
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quell’orario.
-
-**[User turn 3]**: Sì grazie
-
-**[AI reply 3]**: Riprovo subito; mi scuso per l’inconveniente e controllo di nuovo.
-
-**[AI reply 4]**: Mi dispiace, l’ultimo controllo di disponibilità non ha potuto essere completato. Vuole provare un orario diverso, oppure un’altra data tra martedì e domenica?
-
-**[AI reply 5]**: Un attimo, controllo le informazioni sul ristorante riguardo a questo.
-
-**[AI reply 6]**: Un attimo, verifico la policy riguardo agli animali con il ristorante.
-
-**[AI reply 7]**: Certamente, ho segnalato la richiesta al ristorante. Un collega può confermare se è possibile portare il cane.
-
-**[AI reply 8]**: Perfetto, grazie a lei. Se vuole fare una prenotazione o controllare altro, sono qui. A presto!
-
-**Tool calls made** (4):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2
-    }
-  },
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2
-    }
-  },
-  {
-    "name": "info_locale",
-    "args": {}
-  },
-  {
-    "name": "trasferisci_al_ristorante",
-    "args": {
-      "motivo": "Richiesta: è possibile portare un cane durante la prenotazione?"
-    }
-  }
-]
-```
-
-**Duration**: 46238ms
+**Duration**: 23532ms
 
 ---
 
 ### B07-022 — `modify`
 **Description**: Cliente chiede di modificare una prenotazione inesistente — modello deve dire non trovata
 
-**Reason**: expected tool call 'trova_prenotazione' with args {"nome":"Franceschini"} not found. Actual: [] | reply must contain 'trovat' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Perfetto, grazie. Mi serve però un dato ancora. Che ora aveva la prenotazione di venerdì?
+**Reason**: expected tool call 'trova_prenotazione' with args {"nome":"Franceschini"} not found. Actual: [] | reply must contain 'trovat' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, per spostare la prenotazione mi serve l’ora precisa di giovedì. Qual era l’orario? E per quante persone è la
 
 **Full transcript**:
 
@@ -582,21 +512,43 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 
 **[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
 
-**[AI reply 2]**: Perfetto, grazie. Mi serve però un dato ancora. Che ora aveva la prenotazione di venerdì?
+**[AI reply 2]**: Un attimo, per spostare la prenotazione mi serve l’ora precisa di giovedì. Qual era l’orario? E per quante persone è la prenotazione?
 
 **Tool calls made** (0):
 ```json
 []
 ```
 
-**Duration**: 2720ms
+**Duration**: 4415ms
+
+---
+
+### B07-023 — `modify`
+**Description**: Cliente crea e poi anticipa a stessa ora giorno precedente
+
+**Reason**: exception: turn timeout after 45000ms (userText: Aspetta, l'anticipiamo a giovedì stessa ora)
+
+**Full transcript**:
+
+**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Lombardi
+
+**[User turn 2]**: Aspetta, l'anticipiamo a giovedì stessa ora
+
+**[User turn 3]**: Sì confermo
+
+**Tool calls made** (0):
+```json
+[]
+```
+
+**Duration**: 57373ms
 
 ---
 
 ### B07-025 — `modify`
 **Description**: Cliente cambia persone da 8 a 9 (attraversa la soglia gruppi grandi)
 
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Ferrari","persone":9} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":8}},{"name":"crea_prenotazione","args":{"nome":"Ferrari","data":"2026-08-07","ora":"21:00","persone":8,"note":""}}] | reply must contain '9 person' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Prenotazione confermata: Ferrari, venerdì alle 21:00, per 
+**Reason**: reply must contain '9 person' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quella data e ora. Un attimo, riprovo la registrazione ora. Prenotazione conf | last reply not in 'it': ho trasferito la richiesta a un operatore. a presto!
 
 **Full transcript**:
 
@@ -610,13 +562,23 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 
 **[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Prenotazione confermata: Ferrari, venerdì alle 21:00, per 8 persone. A presto!
+**[AI reply 3]**: Un attimo, riprovo la registrazione ora.
 
-**[AI reply 4]**: Mi spiace, non posso modificarla a 9: prenotazioni da 8 o più devono essere gestite separatamente, e non posso spezzare in due. Vuole mantenere la prenotazione per 8 persone, oppure cambiare il piano in un’altra soluzione?
+**[AI reply 4]**: Prenotazione confermata: Ferrari, venerdì 7 agosto alle 21:00, per 8 persone. A presto!
 
-**[AI reply 5]**: Perfetto, allora resta confermata per 8 persone. A presto!
+**[AI reply 5]**: Un attimo, verifico la prenotazione e aggiorno il numero di persone.
 
-**Tool calls made** (2):
+**[AI reply 6]**: Un attimo, riprovo l’aggiornamento della prenotazione.
+
+**[AI reply 7]**: Mi dispiace, ma non riesco ad aggiornare la prenotazione: serve un identificatore interno per la modifica. 
+
+Ho trovato la prenotazione, ma il sistema non ha ricevuto il codice richiesto; trasferisco l’aggiornamento a un operatore.
+
+**[AI reply 8]**: Ok, lo segnalo subito al ristorante.
+
+**[AI reply 9]**: Ho trasferito la richiesta a un operatore. A presto!
+
+**Tool calls made** (7):
 ```json
 [
   {
@@ -636,11 +598,54 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
       "persone": 8,
       "note": ""
     }
+  },
+  {
+    "name": "crea_prenotazione",
+    "args": {
+      "nome": "Ferrari",
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 8,
+      "note": ""
+    }
+  },
+  {
+    "name": "trova_prenotazione",
+    "args": {
+      "nome": "Ferrari",
+      "data": "2026-08-07"
+    }
+  },
+  {
+    "name": "modifica_prenotazione",
+    "args": {
+      "nome": "Ferrari",
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 9,
+      "note": ""
+    }
+  },
+  {
+    "name": "modifica_prenotazione",
+    "args": {
+      "nome": "Ferrari",
+      "data": "2026-08-07",
+      "ora": "21:00",
+      "persone": 9,
+      "note": ""
+    }
+  },
+  {
+    "name": "trasferisci_al_ristorante",
+    "args": {
+      "motivo": "Conferma modifica prenotazione: numero di persone cambia da 8 a 9 per Ferrari, venerdì 21:00. Trasferire all’operatore per aggiornamento manuale."
+    }
   }
 ]
 ```
 
-**Duration**: 19884ms
+**Duration**: 65225ms
 
 ---
 
@@ -657,17 +662,21 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 
 **[User turn 2]**: Aspetta, saremo solo in sei alla fine
 
-**[AI reply 2]**: Un attimo, controllo se la data e l’orario sono disponibili.
+**[AI reply 2]**: Perfetto, controllo subito la disponibilità per questa richiesta.
 
 **[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Mi dispiace, non ho potuto registrare la prenotazione. Inoltre, per una prenotazione standard accettiamo fino a 8 persone. Vuole prenotare per 8 o preferisce contattare direttamente il ristorante per una richiesta più grande?
+**[AI reply 3]**: Mi dispiace, quel slot alle 21:00 per 9 persone è pieno. Vuole provare a prenotare per un’altra ora o un altro giorno?
 
-**[AI reply 4]**: Perfetto, aggiorniamo a 6 persone per il venerdì prossimo alle 21:00, a nome Ferrero. Vuole procedere con questa prenotazione?
+**[AI reply 4]**: Perfetto, aggiorno la verifica per il nuovo numero di persone. Un attimo.
 
-**[AI reply 5]**: Ok, faccio un nuovo controllo per l’orario che ha confermato.
+**[AI reply 5]**: Ho aggiornato per 6 persone, ma alle 21:00 è ancora pieno.  
 
-**[AI reply 6]**: Mi dispiace, non ho potuto registrare la prenotazione. Potrebbe esserci un problema con l’orario o la disponibilità. Vuole provare un altro orario, per esempio 12:00 per pranzo o 21:00 per un’altra data?
+Posso provare alle 22:30 oppure scegliere un’altra ora a cena? Dimmi l’orario che preferisci.
+
+**[AI reply 6]**: Perfetto, conferma pure, ma ho bisogno di un orario preciso.  
+
+Vuole prenotare alle 22:30 o preferisce un’altra ora a cena?
 
 **Tool calls made** (2):
 ```json
@@ -691,89 +700,14 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 ]
 ```
 
-**Duration**: 40668ms
-
----
-
-### B07-027 — `modify`
-**Description**: Cliente vuole modificare una nota già registrata (allergia → intolleranza)
-
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Sala"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Sala","data":"2026-08-07","ora":"21:00","persone":2,"note":"Celiaco. Richiesta attenzione per allergia."}},{"name":"trova_prenotazione","args":{"nome":"Sala","data":"2026-08-07"}},{"name":"trova_prenotazione","args":{"nome":"Sala","data":"2026-08-07"}},{"name":"trasferisci_al_ristorante","args":{"motivo":"Richiesta di aggiornamento nota prenotazione (intolleranza al lattosio), recupero prenotazione tramite assistente automatico"}}] | reply must contain 'lattosio' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per quel giorno e orario. Prenotazione confermata: Sala, venerdì alle 21:00, per 
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Sala. Sono celiaco
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: In realtà non sono celiaco, ho solo un'intolleranza al lattosio, potete cambiare la nota?
-
-**[AI reply 2]**: Un attimo, controllo la disponibilità per quel giorno e orario.
-
-**[User turn 3]**: Sì grazie
-
-**[AI reply 3]**: Prenotazione confermata: Sala, venerdì alle 21:00, per 2 persone. Ho segnato la celiachia. A presto!
-
-**[AI reply 4]**: Un attimo, trovo la prenotazione e aggiorno la nota.
-
-**[AI reply 5]**: Mi dispiace, non riesco a recuperare la prenotazione in questo momento. Can I transfer the call to un collega?
-
-**[AI reply 6]**: Un attimo, la trasferisco al ristorante.
-
-**[AI reply 7]**: Un attimo, sto trasferendo la chiamata al ristorante.
-
-**Tool calls made** (5):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Sala",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2,
-      "note": "Celiaco. Richiesta attenzione per allergia."
-    }
-  },
-  {
-    "name": "trova_prenotazione",
-    "args": {
-      "nome": "Sala",
-      "data": "2026-08-07"
-    }
-  },
-  {
-    "name": "trova_prenotazione",
-    "args": {
-      "nome": "Sala",
-      "data": "2026-08-07"
-    }
-  },
-  {
-    "name": "trasferisci_al_ristorante",
-    "args": {
-      "motivo": "Richiesta di aggiornamento nota prenotazione (intolleranza al lattosio), recupero prenotazione tramite assistente automatico"
-    }
-  }
-]
-```
-
-**Duration**: 65508ms
+**Duration**: 16036ms
 
 ---
 
 ### B07-028 — `modify`
 **Description**: Cliente vuole rimuovere una nota già registrata
 
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Grasso"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":4}},{"name":"crea_prenotazione","args":{"nome":"Grasso","data":"2026-08-07","ora":"21:00","persone":4,"note":""}},{"name":"crea_prenotazione","args":{"nome":"Grasso","data":"2026-08-07","ora":"21:00","persone":4,"note":""}}] | last reply not in 'it': non riesco a completare la registrazione. la passo a un collega al ristorante.
+**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Grasso"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":4}},{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"22:30","persone":4}},{"name":"crea_prenotazione","args":{"nome":"Grasso","data":"2026-08-07","ora":"22:30","persone":4,"note":""}},{"name":"crea_prenotazione","args":{"nome":"Grasso","data":"2026-08-07","ora":"22:30","persone":4,"note":""}}]
 
 **Full transcript**:
 
@@ -783,21 +717,21 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 
 **[User turn 2]**: Non importa più del tavolo esterno, va bene qualsiasi
 
-**[AI reply 2]**: Perfetto, grazie. Vorrei confermare: nome Grasso, venerdì 7 agosto alle 21:00, 4 persone, con richiesta di tavolo esterno. Va bene così?
+**[AI reply 2]**: Un attimo, controllo la disponibilità per venerdì sera.
 
 **[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Un attimo, controllo la disponibilità per quella data e ora.
+**[AI reply 3]**: Mi dispiace, l’orario alle 21:00 per 4 persone è al completo. Posso provare 22:30 sempre per venerdì, oppure un’orario diverso tra martedì e domenica — quale preferisci?
 
-**[AI reply 4]**: Perfetto, ora registro la prenotazione.
+**[AI reply 4]**: Perfetto, ho capito che il tavolo esterno non è più necessario. Posso provare per le 22:30, l’ultimo ingresso della sera, oppure preferisci un’altra ora?
 
-**[AI reply 5]**: Mi dispiace, non sono riuscito a completare la registrazione. La chiederò ancora o, se preferisce, posso trasferirla a un collega.
+**[AI reply 5]**: Un attimo, controllo la disponibilità per quella nuova ora.
 
-**[AI reply 6]**: Un attimo, la registro di nuovo.
+**[AI reply 6]**: Mi dispiace per l’imprevisto tecnico. Riprovo adesso la creazione della prenotazione.
 
-**[AI reply 7]**: Non riesco a completare la registrazione. La passo a un collega al ristorante.
+**[AI reply 7]**: Prenotazione confermata: Grasso, venerdì alle 22:30, per 4 persone. A presto!
 
-**Tool calls made** (3):
+**Tool calls made** (4):
 ```json
 [
   {
@@ -809,11 +743,19 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
     }
   },
   {
+    "name": "controlla_disponibilita",
+    "args": {
+      "data": "2026-08-07",
+      "ora": "22:30",
+      "persone": 4
+    }
+  },
+  {
     "name": "crea_prenotazione",
     "args": {
       "nome": "Grasso",
       "data": "2026-08-07",
-      "ora": "21:00",
+      "ora": "22:30",
       "persone": 4,
       "note": ""
     }
@@ -823,7 +765,7 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
     "args": {
       "nome": "Grasso",
       "data": "2026-08-07",
-      "ora": "21:00",
+      "ora": "22:30",
       "persone": 4,
       "note": ""
     }
@@ -831,14 +773,14 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 ]
 ```
 
-**Duration**: 49336ms
+**Duration**: 42333ms
 
 ---
 
 ### B07-029 — `modify`
 **Description**: Cliente crea, poi corregge il nome usando 'no, mi chiamo'
 
-**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Bianchi"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Verdi","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"crea_prenotazione","args":{"nome":"Bianchi","data":"2026-08-07","ora":"21:00","persone":2,"note":""}}]
+**Reason**: expected tool call 'modifica_prenotazione' with args {"nome":"Bianchi"} not found. Actual: [{"name":"controlla_disponibilita","args":{"data":"2026-08-07","ora":"21:00","persone":2}},{"name":"crea_prenotazione","args":{"nome":"Verdi","data":"2026-08-07","ora":"21:00","persone":2,"note":""}},{"name":"trova_prenotazione","args":{"nome":"Verdi","data":"2026-08-07"}},{"name":"trova_prenotazione","args":{"nome":"Verdi","data":"2026-08-07"}},{"name":"trasferisci_al_ristorante","args":{"motivo":"Richiesta di modifica prenotazione: aggiornamento del nome da Verdi a Bianchi."}}] | reply must contain 'Bianchi' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità per questa data e orario. Prenotazione confermata: Verdi, venerdì alle 21:00, per
 
 **Full transcript**:
 
@@ -848,19 +790,25 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
 
 **[User turn 2]**: No aspetta, non è Verdi, mi chiamo Bianchi
 
-**[AI reply 2]**: Un attimo, registro la prenotazione.
+**[AI reply 2]**: Un attimo, controllo la disponibilità per questa data e orario.
 
 **[User turn 3]**: Sì confermo
 
-**[AI reply 3]**: Mi dispiace, non sono riuscita a completare la registrazione della prenotazione. Le riporto: due persone, venerdì prossimo alle 21:00, nome Verdi. Vuole che tenti di nuovo, oppure preferisce parlare con un collega?
+**[AI reply 3]**: Prenotazione confermata: Verdi, venerdì alle 21:00, per 2 persone. A presto!
 
-**[AI reply 4]**: Perfetto, grazie! Riassumo: nome Bianchi, venerdì 7 agosto alle 21:00, 2 persone. Vuole confermare così, e lo rifaccio subito?
+**[AI reply 4]**: Un attimo, mi occupo di aggiornare la prenotazione.
 
-**[AI reply 5]**: Un attimo, procedo a registrare la prenotazione.
+**[AI reply 5]**: Un attimo, riprovo la ricerca della prenotazione per aggiornare il nome.
 
-**[AI reply 6]**: Prenotazione confermata: Bianchi, venerdì 7 agosto alle 21:00, per 2 persone. A presto!
+**[AI reply 6]**: Mi dispiace, non riesco ad aggiornare la prenotazione autonomamente. La passo al ristorante.
 
-**Tool calls made** (3):
+**[AI reply 7]**: Un attimo, riprovo la ricerca della prenotazione per aggiornare il nome.
+
+Mi dispiace, non riesco ad aggiornare la prenotazione autonomamente. La passo al ristorante.
+
+**[AI reply 8]**: Perfetto, confermato. La chiamata è stata trasferita al ristorante, e il nostro team la aiuterà direttamente.
+
+**Tool calls made** (5):
 ```json
 [
   {
@@ -882,110 +830,29 @@ Posso provare un’altra data o un altro orario, o preferisce che cerchi una fas
     }
   },
   {
-    "name": "crea_prenotazione",
+    "name": "trova_prenotazione",
     "args": {
-      "nome": "Bianchi",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2,
-      "note": ""
-    }
-  }
-]
-```
-
-**Duration**: 52725ms
-
----
-
-### B07-030 — `modify`
-**Description**: Cliente chiede modifica dopo aver confermato — flow completo
-
-**Reason**: reply must contain '3 person' — got: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità. Perfetto, ora la registro. Prenotazione confermata: Salvatore, venerdì alle 21:0
-
-**Full transcript**:
-
-**[User turn 1]**: Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera, due persone, a nome Salvatore
-
-**[AI reply 1]**: Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla?
-
-**[User turn 2]**: Sì confermo
-
-**[AI reply 2]**: Un attimo, controllo la disponibilità.
-
-**[User turn 3]**: Aspetta, in realtà ci serve un tavolo per tre persone
-
-**[AI reply 3]**: Perfetto, ora la registro.
-
-**[User turn 4]**: Sì confermo
-
-**[AI reply 4]**: Prenotazione confermata: Salvatore, venerdì alle 21:00, per 2 persone. A presto!
-
-**[AI reply 5]**: Perfetto, grazie per la conferma. La prenotazione è già registrata, a presto!
-
-**[AI reply 6]**: Un attimo, aggiorno la prenotazione con il nuovo numero di persone.
-
-**[AI reply 7]**: Un attimo, sto aggiornando la prenotazione.
-
-**[AI reply 8]**: Un attimo, riprovo con l’ID corretto.
-
-**[AI reply 9]**: Mi dispiace, non sono riuscito ad aggiornare la prenotazione. Purtroppo il sistema non accetta l’aggiornamento in questo momento.
-
-**[AI reply 10]**: Capito, grazie per la conferma. Purtroppo non sono riuscito ad aggiornare la prenotazione e non posso completarla da qui. Se vuole, posso passare la richiesta a un collega del ristorante.
-
-**Tool calls made** (5):
-```json
-[
-  {
-    "name": "controlla_disponibilita",
-    "args": {
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2
-    }
-  },
-  {
-    "name": "crea_prenotazione",
-    "args": {
-      "nome": "Salvatore",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 2,
-      "note": ""
+      "nome": "Verdi",
+      "data": "2026-08-07"
     }
   },
   {
     "name": "trova_prenotazione",
     "args": {
-      "nome": "Salvatore",
+      "nome": "Verdi",
       "data": "2026-08-07"
     }
   },
   {
-    "name": "modifica_prenotazione",
+    "name": "trasferisci_al_ristorante",
     "args": {
-      "nome": "Salvatore",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 3,
-      "note": ""
-    }
-  },
-  {
-    "name": "modifica_prenotazione",
-    "args": {
-      "eventId": "28806f7j37fno2ohkr721nmac4@google.com",
-      "nome": "Salvatore",
-      "data": "2026-08-07",
-      "ora": "21:00",
-      "persone": 3,
-      "note": ""
+      "motivo": "Richiesta di modifica prenotazione: aggiornamento del nome da Verdi a Bianchi."
     }
   }
 ]
 ```
 
-**Duration**: 44368ms
+**Duration**: 67101ms
 
 ---
 
