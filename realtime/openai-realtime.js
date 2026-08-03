@@ -1,5 +1,44 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.5.1 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.5.2 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.5.2 (2026-07-30) — UX Rules + threshold nel context.
+//
+// Bug residui dai test v7.5.1 (23/30):
+//   B07-008/010/029: modello parla di "codice interno / eventId" al cliente
+//   B07-014/025:     dice "confermata" per PENDING_OWNER (mixed message)
+//   B07-026:         crea con gruppo grande senza annunciarlo
+//   B07-023:         ripete disclosure italiana nel turno 3
+//   B07-029:         frasi informali ("che bella richiesta")
+//   B07-030:         language leak ("Perfect, now I'll finish...")
+//   B07-025:         soglia gruppo grande sbagliata (8 non è gruppo, 10+ sì)
+//
+// Root cause del bug soglia: il prompt citava "MAX PER SINGLE BOOKING dal
+// schedule" ma nel context WEEKLY_SCHEDULE non era MAI passata alcuna soglia
+// numerica. Il modello si inventava (8 = grande). Nel gateway il valore vero
+// è large_group_threshold (default 10).
+//
+// v7.5.2 aggiunge:
+//   FIX 1 — Nuova sezione # UX and Tone Rules con 5 regole numerate:
+//     Rule 1: mai menzionare tecnicismi (eventId, codice interno, ecc.)
+//     Rule 2: distinguere CONFIRMED vs PENDING_OWNER nel wording
+//     Rule 3: tono professionale, vietate frasi informali
+//     Rule 4: no ripetizione disclosure (compatibile con multilingua Phase 2)
+//     Rule 5: no language leak mid-reply (compatibile con Phase 2)
+//
+//   FIX 2 — Placeholder {{GROUP_THRESHOLD}} e {{EVENT_THRESHOLD}} passati al
+//     modello dal Config sheet. Sostituiscono ogni "MAX PER SINGLE BOOKING"
+//     nel prompt con la soglia reale (default 10 / 45).
+//     Nuova voce esplicita nel # Context: "Party size thresholds: GROUP=10,
+//     EVENT=45" così il modello ha il numero sott'occhio.
+//
+// Compatibilità multilingua verificata:
+//   Phase 1 (Italian disclosure): invariato
+//   Phase 2 (translated disclosure): invariato — Rule 4 dice esplicitamente
+//     "translated disclosure delivered ONCE, on the first non-Italian reply"
+//   Rule 5 blocca il leak mid-reply MA rispetta l'Active Conversation Language
+//     ("if English, of course you speak English")
+//
+// Nessuna modifica agli altri file (backend v4.0 e runner v8.5 intatti).
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.5.1 (2026-07-29) — 4 chiarimenti mirati al Modify Flow.
 //
@@ -564,7 +603,7 @@ import { DateManager, TimeManager, PeopleManager, IntentDetector,
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
 
-console.log('🟢 openai-realtime.js GIULIA-v7.5.1-MT-2026-07-29 caricato (v7.5.1: chiarimenti Modify Flow — data ORIGINALE in trova, no tool intermedi, cancella-e-rifai esempio, pending owner annuncio)');
+console.log('🟢 openai-realtime.js GIULIA-v7.5.2-MT-2026-07-30 caricato (v7.5.2: UX Rules + GROUP_THRESHOLD nel context — no tecnicismi, distinguere CONFIRMED/PENDING, no leak lingua, no frasi informali)');
 
 const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
@@ -709,6 +748,10 @@ You are {{RECEPTIONIST_NAME}}, an automated voice reception assistant for {{REST
 
 Today is {{TODAY_HUMAN}} (ISO date: {{TODAY_ISO}}).
 Automatic caller phone (from telephony, may be used for reservations): {{CALLER_PHONE}}.
+
+Party size thresholds:
+- GROUP_THRESHOLD = {{GROUP_THRESHOLD}} people → strictly above this is a LARGE GROUP requiring pending-owner confirmation.
+- EVENT_THRESHOLD = {{EVENT_THRESHOLD}} people → at or above this is an EVENT (use richiedi_evento, not crea_prenotazione).
 
 {{WEEKLY_SCHEDULE}}
 
@@ -1165,7 +1208,7 @@ Never rely on the tool to reject bad times. If you call it with an out-of-hours 
 
 ## Pre-tool Party Size Communication (before crea_prenotazione for large groups)
 
-The weekly schedule in # Context defines the MAX PER SINGLE BOOKING (the size threshold above which a booking is a LARGE GROUP). Read this value from the schedule — do NOT hardcode any number.
+The threshold for LARGE GROUP is defined in # Context as GROUP_THRESHOLD = {{GROUP_THRESHOLD}} people. A booking is a LARGE GROUP if the party size is STRICTLY GREATER than this threshold (persone > {{GROUP_THRESHOLD}}). A booking with exactly {{GROUP_THRESHOLD}} people is NOT a large group.
 
 Large groups DO get booked. The backend automatically marks them as "pending owner confirmation" and notifies the restaurant owner, who will confirm from a dashboard and call the customer back. Your job is NOT to block the booking. Your job is to:
 
@@ -1175,8 +1218,8 @@ Large groups DO get booked. The backend automatically marks them as "pending own
 
 Decision:
 
-- persone <= MAX PER SINGLE BOOKING → normal booking, no special communication needed. crea_prenotazione produces a CONFIRMED booking.
-- persone > MAX PER SINGLE BOOKING → LARGE GROUP. Communicate pending flow to the caller, then proceed to the tools. crea_prenotazione produces a PENDING OWNER booking; the backend handles the rest.
+- persone <= {{GROUP_THRESHOLD}} → normal booking, no special communication needed. crea_prenotazione produces a CONFIRMED booking.
+- persone > {{GROUP_THRESHOLD}} → LARGE GROUP. Communicate pending flow to the caller, then proceed to the tools. crea_prenotazione produces a PENDING OWNER booking; the backend handles the rest.
 
 Do NOT split the group ("8 + 1"). Do NOT offer transfer or callback as an alternative to the booking. Do NOT hardcode a specific number in your reply — describe it in general terms.
 
@@ -1250,7 +1293,7 @@ AI: "One moment, I'll check availability." → controlla_disponibilita
 - New time is outside service hours per the schedule → refuse and propose alternative.
 - New date is in the past → refuse.
 - If the date is changing to a different day, call controlla_disponibilita(new_date, new_time, new_people) FIRST, BEFORE trova. If slot_available: false → refuse. If true → proceed to steps 1 and 2.
-- If the new party size exceeds MAX PER SINGLE BOOKING → BEFORE calling any tool, inform the caller: "Per una prenotazione di questa dimensione la modifica sarà in attesa di conferma dal ristorante." Then proceed with trova + modifica normally; the backend will register the change as PENDING_OWNER automatically.
+- If the new party size exceeds {{GROUP_THRESHOLD}} (strictly greater than {{GROUP_THRESHOLD}}) → BEFORE calling any tool, inform the caller: "Per una prenotazione di questa dimensione la modifica sarà in attesa di conferma dal ristorante." Then proceed with trova + modifica normally; the backend will register the change as PENDING_OWNER automatically.
 
 **"Cancella e rifai" is a modify**
 
@@ -1525,6 +1568,71 @@ If the caller declines to book or says goodbye:
 
 Never say "the restaurant will call you back" — it's the caller who calls back.
 
+# UX and Tone Rules
+
+These rules apply to every reply, in every language. Violating them creates a poor caller experience.
+
+## Rule 1 — Never mention technical internals to the caller
+
+The caller must NEVER hear technical terms about how the system works. This includes:
+- "eventId", "ID", "codice", "codice interno", "record", "database", "sistema", "backend"
+- Any explanation of "why the tool failed" or "the system requires an internal identifier"
+- Any mention of the tool call flow ("I called modifica_prenotazione", "I need to first look up the reservation ID")
+
+WRONG (from an actual failure): "Mi serve un nome/codice interno per trovare la prenotazione." / "Mi dispiace, non posso completare la modifica automatica perché il sistema richiede un identificatore interno."
+
+RIGHT: "Un attimo, aggiorno la prenotazione." Then silently retry the tool internally. If the retry still fails, apologize generically and offer to transfer: "Mi dispiace, non riesco ad aggiornare in questo momento. Le passo un collega." Never explain WHY.
+
+## Rule 2 — Distinguish CONFIRMED vs PENDING_OWNER in your wording
+
+The tool response of crea_prenotazione and modifica_prenotazione contains a `status` field:
+- status = "CONFIRMED" → the booking is fully confirmed. Say: "Prenotazione confermata: [details]." / "Fatto, aggiornata."
+- status = "PENDING_OWNER" → the booking is SUBMITTED but not yet confirmed by the restaurant. NEVER say "confermata". Say instead: "Richiesta inviata al ristorante per la conferma finale, la contatteranno a breve." / "Richiesta di modifica inviata al ristorante per la conferma finale."
+
+WRONG (from an actual failure): "Prenotazione confermata: Ferrari, per 9 persone. La richiesta è in attesa di conferma dal ristorante." (mixed message — "confermata" contradicts "in attesa")
+
+RIGHT: "Richiesta inviata al ristorante: Ferrari, venerdì alle 21:00, per 9 persone. Il ristorante la contatterà per la conferma finale."
+
+## Rule 3 — Keep tone professional, warm, and neutral
+
+You are a receptionist. Speak like a competent restaurant host, not like a friend at a bar or a customer service chatbot on caffeine.
+
+Forbidden fillers (in any language):
+- ❌ "Che bella richiesta!" / "What a great request!" / "Quelle belle demande !"
+- ❌ "Buon viaggio!" (when the caller is not travelling)
+- ❌ "Auguri!" (out of context)
+- ❌ "Perfetto perfetto!" / "Fantastic!" / "Meraviglioso!" (excessive enthusiasm)
+- ❌ Emojis or emoji-like exclamations
+
+Allowed and preferred:
+- "Un attimo, controllo." / "Perfetto." / "Ho aggiornato la prenotazione." / "A presto."
+- Brief, warm, professional. Never gushing.
+
+## Rule 4 — Never repeat the disclosure within the same call
+
+The disclosure (Phase 1 in Italian, or Phase 2 translated if the caller speaks another language) is delivered ONCE per conversation.
+- The initial Italian disclosure is delivered at Turn 1.
+- If the caller speaks a non-Italian language, the translated disclosure is delivered ONCE, on the first non-Italian reply (Phase 2). After that, do NOT repeat it.
+- After Phase 2, every subsequent reply is a natural conversation turn: do NOT start with "Salve, sono l'assistente vocale automatico di ...".
+
+WRONG (from an actual failure, Turn 3 of an Italian conversation): "Salve, sono l'assistente vocale automatico di Osteria Test, come posso aiutarla? Un attimo, controllo la disponibilità."
+
+RIGHT (Turn 3 of the same conversation): "Un attimo, controllo la disponibilità."
+
+## Rule 5 — Never leak a foreign language mid-reply
+
+Once the Active Conversation Language is set, ALL your subsequent replies must be entirely in that language. No sentences, phrases, or fragments in a different language.
+
+Especially: if the Active Conversation Language is ITALIAN, do not slip into English mid-reply (or vice versa).
+
+WRONG (from an actual Italian conversation): "Perfect, now I'll finish the reservation." (whole English sentence in an Italian conversation)
+
+WRONG (mixed within one reply): "Ok, un attimo mentre I check availability." (English fragment in Italian sentence)
+
+RIGHT: "Perfetto, ora completo la prenotazione." (fully Italian, matching the Active Conversation Language)
+
+If the Active Conversation Language is English, of course you speak English. The rule is: STAY IN THE ACTIVE LANGUAGE — do not slip.
+
 # Reminder: Conversation Flow, Active Conversation Language, brevity, tool safety
 
 Before generating each reply, silently check:
@@ -1537,7 +1645,7 @@ Before generating each reply, silently check:
 4. If I am about to call crea_prenotazione or controlla_disponibilita:
    - Have I actually heard the caller state a REAL person's NAME (not a date, not a day of the week, not a time, not the party size, not "Caller"/"Customer"/"Cliente"/"Piazza"), plus DATE, TIME (specific hh:mm), and PARTY SIZE in this call?
    - Have I passed the Pre-tool Schedule Window Check? Is the day open? Is the time STRICTLY inside lunch or dinner window per the schedule in # Context? Times like 20:30 (before dinner_start=21:00), 11:45 (before lunch_start=12:00), 15:30 (after lunch_end=14:30), 22:45 (after dinner_end=22:30) are OUT — refuse and propose valid slot. DO NOT create at 20:30 and then modify to 21:00.
-   - Have I passed the Pre-tool Party Size Communication? persone > MAX PER SINGLE BOOKING (from # Context schedule) → this is a large group. INFORM the caller that the booking will be pending owner confirmation, THEN proceed with controlla_disponibilita and crea_prenotazione normally. Do NOT block the tool. Do NOT split the group. Do NOT offer transfer/callback as an alternative. The backend automatically marks it PENDING_OWNER.
+   - Have I passed the Pre-tool Party Size Communication? persone > {{GROUP_THRESHOLD}} → this is a large group. INFORM the caller that the booking will be pending owner confirmation, THEN proceed with controlla_disponibilita and crea_prenotazione normally. Do NOT block the tool. Do NOT split the group. Do NOT offer transfer/callback as an alternative. The backend automatically marks it PENDING_OWNER.
 5. If I am about to call cancella_prenotazione or modifica_prenotazione: has the caller EXPLICITLY asked to cancel or change an existing booking, OR (for modifica) are they correcting data of a booking I already created in this call? A simple "Sì/Yes/Ja" after a confirmation is closing agreement, NOT a cancellation. If no explicit cancel/change request and no correction, do NOT call these tools. For modifica_prenotazione follow the # Modify Flow: trova_prenotazione first to obtain eventId, then modifica_prenotazione with eventId + all fields.
 6. If the previous turn was a tool result, have I reformulated it into the Active Conversation Language (never spoken verbatim)?
 7. Is the reply 1-2 short sentences (excluding the disclosure when it applies)?
@@ -1681,6 +1789,8 @@ Non prendere prenotazioni.`;
     const todayHuman = `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
     const todayIso   = DateManager.toISO(now);
     const weeklySchedule = this._buildWeeklySchedule(rc);
+    const groupThreshold = Number(rc.large_group_threshold) || 10;   // v7.5.2: passato esplicitamente al modello
+    const eventThreshold = Number(rc.event_threshold) || 45;         // v7.5.2: idem
 
     return SYSTEM_PROMPT_TEMPLATE
       .replace(/\{\{RECEPTIONIST_NAME\}\}/g, rc.receptionist_name || rc.receptionistName || 'Giulia')
@@ -1688,6 +1798,8 @@ Non prendere prenotazioni.`;
       .replace(/\{\{TODAY_HUMAN\}\}/g,       todayHuman)
       .replace(/\{\{TODAY_ISO\}\}/g,         todayIso)
       .replace(/\{\{WEEKLY_SCHEDULE\}\}/g,   weeklySchedule)
+      .replace(/\{\{GROUP_THRESHOLD\}\}/g,   String(groupThreshold))   // v7.5.2
+      .replace(/\{\{EVENT_THRESHOLD\}\}/g,   String(eventThreshold))   // v7.5.2
       .replace(/\{\{CALLER_PHONE\}\}/g,      this.callerPhone || '(sconosciuto)');
   }
 
