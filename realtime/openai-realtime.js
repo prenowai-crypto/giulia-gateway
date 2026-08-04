@@ -2352,7 +2352,13 @@ Non prendere prenotazioni.`;
     const rn = this.restaurantConfig?.restaurant_name || this.restaurantConfig?.restaurantName || '?';
     console.log(`🌐 [${this.connId}] → Apps Script (${rn}): ${JSON.stringify(payload).substring(0, 250)}`);
     const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), 25000);
+    // v7.5.5 (2026-08-04): timeout 25s → 60s.
+    //   Motivo: chiamate reali Telnyx mostravano check_availability = 12s e
+    //   crea_prenotazione = 16s. Con timeout 25s, sotto pressione (log grande
+    //   o rate limit) scattava l'abort MA l'App Script aveva già scritto la
+    //   prenotazione → modello ritentava → duplicato (bug Costa in run 43).
+    //   60s è margine di sicurezza sufficiente per ogni operazione realistica.
+    const to = setTimeout(() => controller.abort(), 60000);
     try {
       const resp = await fetch(url, {
         method: 'POST', signal: controller.signal,
