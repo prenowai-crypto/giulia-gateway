@@ -17,7 +17,7 @@
 
 import 'dotenv/config';
 import { closePool, query } from '../db.js';
-import { getTenantByPhone } from '../services/tenants.js';
+import { getTenantByPhone, invalidateTenantCache } from '../services/tenants.js';
 import { creaPrenotazioneTool } from '../tools/crea-prenotazione.js';
 
 const OSTERIA_TEST_PHONE = '+390299223311';
@@ -65,13 +65,27 @@ async function runTests() {
   console.log('║  🧪 TEST — crea_prenotazione                                     ║');
   console.log('╚══════════════════════════════════════════════════════════════════╝\n');
 
+  // 🐛 FIX: invalido la cache tenant PRIMA del lookup.
+  //   Serve dopo modifiche al mapping (mapDbRowToRestaurantConfig) perché la
+  //   cache Redis potrebbe avere ancora un tenant con lo schema vecchio.
+  //   In produzione questo problema non esiste (cache TTL 5min si autoscade),
+  //   ma nei test iterativi ci scoccia aspettare.
+  console.log('▶ Invalidazione cache tenant per assicurare schema aggiornato...');
+  await invalidateTenantCache(OSTERIA_TEST_PHONE);
+
   const tenant = await getTenantByPhone(OSTERIA_TEST_PHONE);
   if (!tenant) {
     console.error('❌ Tenant Osteria Test non trovato. Aborting.');
     await closePool();
     process.exit(1);
   }
+  if (!tenant.id) {
+    console.error('❌ tenant.id è undefined! Verifica che mapDbRowToRestaurantConfig includa "id: row.id".');
+    await closePool();
+    process.exit(1);
+  }
   console.log(`Tenant: "${tenant.restaurantName}" (id=${String(tenant.id).substring(0, 8)}...)\n`);
+
   const friday = nextFriday();
   const monday = nextMonday();
   const pastDate = yesterday();
