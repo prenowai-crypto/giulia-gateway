@@ -31,20 +31,55 @@
 import { getTenantByPhone } from '../services/tenants.js';
 import { createReservation } from '../services/reservations.js';
 
-// Formattazione data italiana: "2026-08-07" → "venerdì 7 agosto"
-function formatDateItalian(dateStr, timezone = 'Europe/Rome') {
-  const d = new Date(`${dateStr}T12:00:00Z`);
+// 🐛 FIX: Postgres restituisce il campo DATE come oggetto Date JS, non stringa.
+//   Devo gestire entrambi i casi in modo robusto.
+//
+// Formattazione data italiana:
+//   Input:  Date object (da Postgres)   → "venerdì 7 agosto"
+//   Input:  "2026-08-07" (string)       → "venerdì 7 agosto"
+//   Input:  invalido                     → ritorna la rappresentazione grezza
+function formatDateItalian(dateInput, timezone = 'Europe/Rome') {
+  let d;
+
+  if (dateInput instanceof Date) {
+    // Già un Date object (caso Postgres). Uso mezzogiorno UTC per stabilità timezone.
+    // Prendo la data ISO YYYY-MM-DD del Date object e la ricreo con T12:00:00Z
+    // per evitare che il fuso locale sposti il giorno.
+    const iso = dateInput.toISOString().substring(0, 10);
+    d = new Date(`${iso}T12:00:00Z`);
+  } else if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}/)) {
+    // Stringa YYYY-MM-DD (con eventuale suffisso)
+    d = new Date(`${dateInput.substring(0, 10)}T12:00:00Z`);
+  } else {
+    // Fallback: prova a parsare direttamente
+    d = new Date(dateInput);
+  }
+
+  if (isNaN(d.getTime())) {
+    // Data non parsabile — ritorna la stringa raw
+    return String(dateInput);
+  }
+
   return new Intl.DateTimeFormat('it-IT', {
     weekday: 'long',
-    day: 'numeric',
-    month: 'long',
+    day:     'numeric',
+    month:   'long',
     timeZone: timezone,
   }).format(d);
 }
 
-// Normalizza "21:00:00" → "21:00" per l'output al modello
-function shortTime(timeStr) {
-  const s = String(timeStr).trim();
+// Normalizza "21:00:00" → "21:00" per l'output al modello.
+// Postgres TIME restituisce di solito una stringa "HH:MM:SS", ma per sicurezza
+// gestiamo anche Date object o altri formati.
+function shortTime(timeInput) {
+  if (!timeInput) return '';
+  if (timeInput instanceof Date) {
+    // Improbabile, ma gestiamo il caso
+    const h = String(timeInput.getUTCHours()).padStart(2, '0');
+    const m = String(timeInput.getUTCMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  }
+  const s = String(timeInput).trim();
   return s.length >= 5 ? s.substring(0, 5) : s;
 }
 
