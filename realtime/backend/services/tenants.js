@@ -31,6 +31,9 @@ function normalizePhone(phone) {
 // (deve essere compatibile con `restaurantConfig` esistente!)
 function mapDbRowToRestaurantConfig(row) {
   return {
+    // 🐛 FIX: UUID tenant per usarlo come tenant_id nelle query reservations
+    id:              row.id,   // ← MANCAVA. Serve per INSERT/UPDATE reservations.
+
     // Campi identità
     restaurant_id:   row.restaurant_id,
     restaurantName:  row.restaurant_name,
