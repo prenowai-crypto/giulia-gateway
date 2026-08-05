@@ -4,8 +4,8 @@
 // Funzioni implementate:
 //   ✅ createReservation()  — crea nuova
 //   ✅ findReservations()   — cerca per nome/data/telefono (fuzzy name match)
-//   ✅ updateReservation()  — partial update (aggiorna solo campi passati)
-//   ⏳ cancelReservation()  — [prossimo]
+//   ✅ updateReservation()  — partial update
+//   ✅ cancelReservation()  — soft delete (status=CANCELLED)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { query, withTransaction } from '../db.js';
@@ -44,15 +44,12 @@ function nameSimilarity(a, b) {
   return 0;
 }
 
-// Normalizza il campo `date` (che da Postgres arriva come Date object)
-// in stringa YYYY-MM-DD per confronti e output
 function dateToIsoString(d) {
   if (!d) return null;
   if (d instanceof Date) return d.toISOString().substring(0, 10);
   return String(d).substring(0, 10);
 }
 
-// Normalizza il campo `time` (da Postgres arriva come stringa "HH:MM:SS")
 function timeToHHMM(t) {
   if (!t) return null;
   if (t instanceof Date) {
@@ -219,27 +216,6 @@ export async function findReservations(tenant, params) {
 
 // ─── updateReservation ─────────────────────────────────────────────────────────
 
-/**
- * updateReservation(tenant, reservationId, params)
- *
- * Aggiorna una prenotazione esistente con PARTIAL UPDATE:
- * - Solo i campi passati in `params` vengono aggiornati.
- * - Se `params.notes === ""` (stringa vuota esplicita), la nota viene rimossa.
- * - Se `params.notes === undefined/null`, la nota corrente resta.
- *
- * Flusso:
- *   1. SELECT prenotazione esistente (LOCK FOR UPDATE)
- *   2. Merge dei campi: se params.X è definito, usa quello; altrimenti tieni il corrente
- *   3. Se cambia date/time/people: chiama checkAvailability escludendo self
- *   4. Ricalcola status (potrebbe cambiare CONFIRMED ↔ PENDING_OWNER)
- *   5. UPDATE + audit log + enqueue email se cambiato in modo rilevante
- *
- * @param {object} tenant
- * @param {string} reservationId  - UUID Postgres della prenotazione
- * @param {object} params         - campi da aggiornare (parziali)
- * @param {object} meta           - { callId, callerPhone, source }
- * @returns {Promise<{success, reservation?, esito?, message?}>}
- */
 export async function updateReservation(tenant, reservationId, params, meta = {}) {
   if (!tenant) throw new Error('updateReservation: tenant mancante');
   if (!reservationId) {
@@ -250,9 +226,6 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
   const callId = meta.callId || null;
   const callerPhone = meta.callerPhone || null;
 
-  // ─── Step 1: leggi la prenotazione esistente ───────────────────────────────
-  // NB: uso SELECT semplice fuori dalla transazione perché in Postgres è veloce
-  // e riduce il tempo del lock. Il LOCK vero è dentro la transazione poi.
   const existingResult = await query(
     `SELECT id, tenant_id, date, time, people, name, phone, email, notes,
             area_preferita, status, is_group, source, created_at
@@ -264,8 +237,7 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
 
   if (existingResult.rows.length === 0) {
     return {
-      success: false,
-      esito: 'not_found',
+      success: false, esito: 'not_found',
       message: `Prenotazione ${reservationId.substring(0, 8)}... non trovata o cancellata`
     };
   }
@@ -275,10 +247,6 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
   const existingTime = timeToHHMM(existing.time);
   const existingPeople = Number(existing.people);
 
-  // ─── Step 2: merge campi ───────────────────────────────────────────────────
-  // Partial update: se il campo è passato (non undefined/null) uso quello, altrimenti tengo il corrente.
-  // Eccezione: params.notes = "" è considerato ESPLICITO (rimozione nota), diverso da undefined.
-
   const merged = {
     date:            (params.date !== undefined && params.date !== null && params.date !== '') ? params.date : existingDate,
     time:            (params.time !== undefined && params.time !== null && params.time !== '') ? params.time : existingTime,
@@ -286,50 +254,38 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
     name:            (params.name !== undefined && params.name !== null && String(params.name).trim() !== '') ? String(params.name).trim() : existing.name,
     phone:           (params.phone !== undefined) ? params.phone : existing.phone,
     email:           (params.email !== undefined) ? params.email : existing.email,
-    // Note ha logica speciale: "" (stringa vuota) è rimozione esplicita
     notes:           (params.notes !== undefined && params.notes !== null) ? String(params.notes) : (existing.notes || ''),
     area_preferita:  (params.area_preferita !== undefined) ? params.area_preferita : existing.area_preferita,
   };
 
-  // ─── Step 3: se cambia date/time/people, ricontrolla disponibilità ─────────
   const changingSlot = (merged.date !== existingDate) || (merged.time !== existingTime) || (merged.people !== existingPeople);
 
   if (changingSlot) {
     const avail = await checkAvailability(tenant, {
-      date: merged.date,
-      time: merged.time,
-      people: merged.people,
-      excludeReservationId: reservationId,   // ← escludi self!
+      date: merged.date, time: merged.time, people: merged.people,
+      excludeReservationId: reservationId,
     });
 
     if (avail.esito !== 'libero' && avail.esito !== 'gruppo_grande') {
       return {
-        success: false,
-        esito: avail.esito,
+        success: false, esito: avail.esito,
         message: avail.message || `Modifica non possibile: ${avail.esito}`,
         details: avail,
       };
     }
   }
 
-  // ─── Step 4: ricalcola status ──────────────────────────────────────────────
   const largeGroupThreshold = Number(tenant.largeGroupThreshold) || 10;
   const newIsGroup = merged.people > largeGroupThreshold;
   const newStatus = determineStatus(merged.people, largeGroupThreshold);
   const normalizedTime = normalizeTime(merged.time);
 
-  // ─── Step 5: UPDATE in transazione ─────────────────────────────────────────
   const updatedRow = await withTransaction(async (client) => {
-    // Prendo il lock su questa riga (evita race condition)
-    const lockResult = await client.query(
-      `SELECT id FROM reservations WHERE id = $1 FOR UPDATE`,
-      [reservationId]
-    );
+    const lockResult = await client.query(`SELECT id FROM reservations WHERE id = $1 FOR UPDATE`, [reservationId]);
     if (lockResult.rows.length === 0) {
       throw new Error(`Reservation ${reservationId} vanished during update`);
     }
 
-    // UPDATE
     const updateResult = await client.query(
       `UPDATE reservations
           SET date = $1, time = $2, people = $3, name = $4,
@@ -347,7 +303,6 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
     );
     const updated = updateResult.rows[0];
 
-    // Audit log
     await client.query(
       `INSERT INTO reservation_audit_log (
          tenant_id, reservation_id, action, source, before_data, after_data,
@@ -370,8 +325,6 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
       ]
     );
 
-    // Enqueue email di aggiornamento se ha email e ci sono cambi significativi
-    // (data, ora o persone). Cambi solo di note NON generano email.
     if (merged.email && changingSlot) {
       await client.query(
         `INSERT INTO sync_jobs (tenant_id, reservation_id, job_type, payload)
@@ -391,11 +344,130 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
   });
 
   return {
+    success: true, esito: 'aggiornata', reservation: updatedRow,
+    status: newStatus, is_group: newIsGroup, changed_slot: changingSlot,
+  };
+}
+
+// ─── cancelReservation ─────────────────────────────────────────────────────────
+
+/**
+ * cancelReservation(tenant, reservationId, meta)
+ *
+ * Cancella una prenotazione (soft delete).
+ * - Status → 'CANCELLED'
+ * - cancelled_at → NOW()
+ * - Scrive audit log
+ * - Enqueue email di cancellazione (se ha email)
+ *
+ * @param {object} tenant
+ * @param {string} reservationId  - UUID Postgres
+ * @param {object} meta           - { callId, callerPhone, source, reason? }
+ * @returns {Promise<{success, reservation?, esito?, message?}>}
+ */
+export async function cancelReservation(tenant, reservationId, meta = {}) {
+  if (!tenant) throw new Error('cancelReservation: tenant mancante');
+  if (!reservationId) {
+    return { success: false, esito: 'missing_id', message: 'reservation_id richiesto' };
+  }
+
+  const source = meta.source || 'telnyx_cancel';
+  const callId = meta.callId || null;
+  const callerPhone = meta.callerPhone || null;
+  const reason = meta.reason || 'customer_request';
+
+  // Leggo la prenotazione esistente per verifica + snapshot audit
+  const existingResult = await query(
+    `SELECT id, tenant_id, date, time, people, name, phone, email, notes,
+            status, is_group, source, created_at
+       FROM reservations
+      WHERE id = $1 AND tenant_id = $2
+      LIMIT 1`,
+    [reservationId, tenant.id]
+  );
+
+  if (existingResult.rows.length === 0) {
+    return {
+      success: false, esito: 'not_found',
+      message: `Prenotazione ${reservationId.substring(0, 8)}... non trovata`
+    };
+  }
+
+  const existing = existingResult.rows[0];
+
+  // Se già cancellata, ritorna idempotente (success ma segnala)
+  if (existing.status === 'CANCELLED') {
+    return {
+      success: true, esito: 'already_cancelled',
+      reservation: existing,
+      message: 'Prenotazione già cancellata',
+    };
+  }
+
+  // Soft delete + audit in transazione
+  const cancelledRow = await withTransaction(async (client) => {
+    // Lock
+    await client.query(`SELECT id FROM reservations WHERE id = $1 FOR UPDATE`, [reservationId]);
+
+    // Soft delete
+    const updateResult = await client.query(
+      `UPDATE reservations
+          SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING id, tenant_id, date, time, people, name, phone, email, notes,
+                  status, is_group, source, created_at, cancelled_at`,
+      [reservationId, tenant.id]
+    );
+    const cancelled = updateResult.rows[0];
+
+    // Audit log
+    await client.query(
+      `INSERT INTO reservation_audit_log (
+         tenant_id, reservation_id, action, source, before_data, after_data,
+         caller_phone, call_id
+       ) VALUES ($1, $2, 'cancel', $3, $4, $5, $6, $7)`,
+      [
+        tenant.id, reservationId, source,
+        JSON.stringify({
+          date: dateToIsoString(existing.date),
+          time: timeToHHMM(existing.time),
+          people: Number(existing.people),
+          name: existing.name,
+          status: existing.status,
+        }),
+        JSON.stringify({
+          status: 'CANCELLED',
+          cancelled_at: new Date().toISOString(),
+          reason,
+        }),
+        callerPhone || existing.phone || null,
+        callId,
+      ]
+    );
+
+    // Enqueue email cancellazione se ha email
+    if (existing.email) {
+      await client.query(
+        `INSERT INTO sync_jobs (tenant_id, reservation_id, job_type, payload)
+         VALUES ($1, $2, 'email_cancellation', $3)`,
+        [
+          tenant.id, reservationId,
+          JSON.stringify({
+            to: existing.email,
+            name: existing.name,
+            date: dateToIsoString(existing.date),
+            time: timeToHHMM(existing.time),
+          }),
+        ]
+      );
+    }
+
+    return cancelled;
+  });
+
+  return {
     success: true,
-    esito: 'aggiornata',
-    reservation: updatedRow,
-    status: newStatus,
-    is_group: newIsGroup,
-    changed_slot: changingSlot,
+    esito: 'cancellata',
+    reservation: cancelledRow,
   };
 }
