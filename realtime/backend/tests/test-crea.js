@@ -71,8 +71,7 @@ async function runTests() {
     await closePool();
     process.exit(1);
   }
-  console.log(`Tenant: "${tenant.restaurantName}" (id=${tenant.id.substring(0, 8)}...)\n`);
-
+  console.log(`Tenant: "${tenant.restaurantName}" (id=${String(tenant.id).substring(0, 8)}...)\n`);
   const friday = nextFriday();
   const monday = nextMonday();
   const pastDate = yesterday();
