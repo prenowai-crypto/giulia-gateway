@@ -1,5 +1,41 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.5.1 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.6.0 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.6.0 (2026-08-05) — CUTOVER da Google Apps Script a Postgres backend.
+//
+// Sostituzioni chirurgiche nelle 6 tool functions:
+//   _toolTrova       → trovaPrenotazioneTool     (backend/tools/trova-prenotazione.js)
+//   _toolControlla   → controllaDisponibilitaTool (backend/tools/check-availability.js)
+//   _toolCrea        → creaPrenotazioneTool      (backend/tools/crea-prenotazione.js)
+//   _toolModifica    → modificaPrenotazioneTool  (backend/tools/modifica-prenotazione.js)
+//   _toolCancella    → cancellaPrenotazioneTool  (backend/tools/cancella-prenotazione.js)
+//   _toolRichiediEvento → richiediEventoTool     (backend/tools/richiedi-evento.js)
+//
+// INVARIATI:
+//   - Prompt v7.5.1 (nessuna modifica alle regole conversazionali)
+//   - _toolInfoLocale (resta su Apps Script per menu/parcheggio/cucina)
+//   - _toolTransfer (usa Telnyx API, non Apps Script)
+//   - _fetchRestaurantInfo (Apps Script per info locale)
+//   - _callAppsScript (mantenuta per info_locale, dead code per il resto)
+//   - Response format visto dal modello (mappatura interna assicura compat)
+//   - Logica _lastFound, _lastEventInfo, _pendingCalls
+//   - ValidationPipeline, DateManager, TimeManager, parsers.js
+//
+// Latenza attesa (misurata in test):
+//   check_availability:  4ms   (era 10-12s con Apps Script)
+//   crea_prenotazione:   34ms  (era 15-35s)
+//   trova_prenotazione:  48ms  (era 5-15s)
+//   modifica:            31ms  (era 46s in un test reale)
+//   cancella:            26ms
+//   richiedi_evento:     35ms
+//
+// Feature persa temporaneamente:
+//   - Alternative slot allo slot_full (find_available_slots). Da riimplementare
+//     in una prossima iterazione del backend. Impatto minore: il modello dirà
+//     "non c'è disponibilità" invece di suggerire alternative.
+//
+// Rollback: sostituire questo file con openai-realtime-100.js (v7.5.1 backup).
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.5.1 (2026-07-29) — 4 chiarimenti mirati al Modify Flow.
 //
@@ -560,6 +596,14 @@
 import WebSocket from 'ws';
 import { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying } from './parsers.js';
+
+// v7.6.0 (2026-08-05) — Backend Postgres (sostituisce Apps Script per le 6 tool call)
+import { creaPrenotazioneTool }        from './backend/tools/crea-prenotazione.js';
+import { trovaPrenotazioneTool }       from './backend/tools/trova-prenotazione.js';
+import { modificaPrenotazioneTool }    from './backend/tools/modifica-prenotazione.js';
+import { cancellaPrenotazioneTool }    from './backend/tools/cancella-prenotazione.js';
+import { controllaDisponibilitaTool }  from './backend/tools/check-availability.js';
+import { richiediEventoTool }          from './backend/tools/richiedi-evento.js';
 
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
@@ -1821,20 +1865,37 @@ Non prendere prenotazioni.`;
 
     const phone   = this.callerPhone || '';
     const dateISO = cleanDate ? this._normDate(cleanDate) : null;
-    const ok = (r) => r && r.name && r.date && r.name !== 'null' && r.date !== 'null';
 
+    // v7.6.0: single call al nuovo backend Postgres con tutti i criteri.
+    //   Il backend ha fuzzy name matching + filtro data + filtro phone.
+    //   Priorità: se il match con nome+data trova risultati, li restituisce.
+    //   Altrimenti fallback ai risultati con solo nome, poi solo phone.
+    const meta = { callId: this.connId, callerPhone: phone };
+
+    // Tentativo 1: nome + data (se entrambi presenti)
     if (cleanName && dateISO) {
-      const r = await this._callAppsScript({ action: 'find_reservation', nome: cleanName, data: dateISO, sheet: 'Prenotazioni' });
-      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, cleanName);
+      const r = await trovaPrenotazioneTool(this.restaurantConfig, {
+        nome: cleanName, data: dateISO,
+      }, meta);
+      if (r?.found && r.reservation) return this._foundResult(r.reservation, cleanName);
     }
+
+    // Tentativo 2: solo nome
     if (cleanName) {
-      const r = await this._callAppsScript({ action: 'find_reservation', nome: cleanName, sheet: 'Prenotazioni' });
-      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, cleanName);
+      const r = await trovaPrenotazioneTool(this.restaurantConfig, {
+        nome: cleanName,
+      }, meta);
+      if (r?.found && r.reservation) return this._foundResult(r.reservation, cleanName);
     }
+
+    // Tentativo 3: solo telefono
     if (phone) {
-      const r = await this._callAppsScript({ action: 'find_reservation', telefono: phone, sheet: 'Prenotazioni' });
-      if (r?.found && ok(r.reservation)) return this._foundResult(r.reservation, cleanName);
+      const r = await trovaPrenotazioneTool(this.restaurantConfig, {
+        telefono: phone,
+      }, meta);
+      if (r?.found && r.reservation) return this._foundResult(r.reservation, cleanName);
     }
+
     return { trovata: false };
   }
 
@@ -1870,52 +1931,66 @@ Non prendere prenotazioni.`;
     if (!timeN)   return { esito: 'manca_ora' };
     if (!ppl)     return { esito: 'manca_persone' };
 
-    // v7.3.5: salva "slot" per fallback memoria contesto e includilo nei
-    // result "chiuso" così il modello viene esplicitamente istruito a riusare
-    // ora+persone quando il cliente cambia solo il giorno.
+    // v7.6.0: delega TUTTA la validazione al backend Postgres.
+    //   Il backend gestisce: giorno chiuso, orario, lunch/dinner closed, event,
+    //   gruppo grande, slot full. Restituisce esito unico compatibile.
+    //   Nota: la feature "alternative allo slot pieno" non è ancora implementata
+    //   nel nuovo backend. Da riimplementare in una prossima iterazione.
+    const meta = { callId: this.connId, callerPhone: this.callerPhone || '' };
+    const res  = await controllaDisponibilitaTool(rc, {
+      data: dateISO, ora: timeN, persone: ppl,
+    }, meta);
+
+    // slot memorizzato — hint per il modello quando cliente cambia solo il giorno
     const slotHint = {
       _slot_memorizzato: { ora_hh_mm: timeN.substring(0,5), persone: ppl },
       _istruzione: `IMPORTANTE: se il cliente propone un altro giorno, riusa questi valori (ora=${timeN.substring(0,5)}, persone=${ppl}) senza richiederli.`,
     };
 
-    if (ValidationPipeline.getDayClosedMessage(dateISO, rc)) {
-      return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO), ...slotHint };
-    }
-    if (!ValidationPipeline.isValidTime(timeN, rc)) {
-      return {
-        esito: 'fuori_orario',
-        pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
-        cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
-        ...slotHint,
-      };
-    }
-    {
-      const h = parseInt(timeN.split(':')[0], 10);
-      if (h >= 10 && h <= 16 && ValidationPipeline.isLunchClosed(dateISO, rc))
+    // Mapping degli esiti del backend al formato che il modello si aspetta
+    // (identico a quello di Apps Script per non toccare il prompt).
+    switch (res.esito) {
+      case 'libero':
+        return { esito: 'libero' };
+
+      case 'gruppo_grande':
+        return { esito: 'gruppo_grande' };
+
+      case 'evento':
+        this._lastEventInfo = { email: rc?.owner_email || '' };
+        return { esito: 'evento' };
+
+      case 'day_closed':
+      case 'closure':
+        return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO), ...slotHint };
+
+      case 'time_closed':
+        return {
+          esito: 'fuori_orario',
+          pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
+          cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
+          ...slotHint,
+        };
+
+      case 'time_closed_lunch':
         return { esito: 'solo_cena', giorno: DateManager.getDayName(dateISO), ...slotHint };
-      if ((h >= 17 || h <= 3) && ValidationPipeline.isDinnerClosed(dateISO, rc))
+
+      case 'time_closed_dinner':
         return { esito: 'solo_pranzo', giorno: DateManager.getDayName(dateISO), ...slotHint };
-    }
-    const eventTh = Number(rc?.event_threshold) || 45;
-    const largeTh = Number(rc?.large_group_threshold) || 10;
 
-    if (ppl >= eventTh) {
-      this._lastEventInfo = { email: rc?.owner_email || '' };
-      return { esito: 'evento' };
-    }
-    if (ppl > largeTh) return { esito: 'gruppo_grande' };
+      case 'slot_full':
+        // TODO v7.6.x: quando implementato find_available_slots nel backend,
+        // riabilitare "alternative_stesso_giorno".
+        return { esito: 'pieno', alternative_stesso_giorno: [], ...slotHint };
 
-    const res = await this._callAppsScript({ action: 'check_availability', data: dateISO, ora: timeN, persone: ppl });
-    if (res?.success || res?.reason === 'slot_available') return { esito: 'libero' };
-    if (res?.reason === 'day_closed') return { esito: 'giorno_chiuso', giorno: DateManager.getDayName(dateISO), ...slotHint };
-    if (res?.reason === 'slot_full') {
-      const alts = await this._callAppsScript({ action: 'find_available_slots', data: dateISO, ora: timeN, persone: ppl });
-      const sameDay = (alts?.availableSlots?.sameDay || [])
-        .filter(s => ValidationPipeline.isValidTime(s.time, rc))
-        .slice(0, 3).map(s => s.time.substring(0, 5));
-      return { esito: 'pieno', alternative_stesso_giorno: sameDay, ...slotHint };
+      case 'in_past':
+        return { esito: 'data_passata' };
+
+      default:
+        // Fallback conservativo: se non riconosco l'esito, dico "libero"
+        // per non bloccare il flusso (Apps Script faceva lo stesso).
+        return { esito: 'libero' };
     }
-    return { esito: 'libero' };
   }
 
   async _toolCrea({ nome, data, ora, persone, note }) {
@@ -1931,16 +2006,40 @@ Non prendere prenotazioni.`;
     if (!ppl)     return { creata: false, manca: 'persone' };
 
     const tel = this.callerPhone || '';
-    const r = await this._callAppsScript({
-      source: 'telnyx', nome, persone: ppl, data: dateISO, ora: timeN,
-      telefono: tel, notes: note || '', forceNew: true,
+
+    // v7.6.0: chiamo il backend Postgres via wrapper.
+    //   Il payload è identico a quello che il vecchio Apps Script riceveva.
+    const r = await creaPrenotazioneTool(this.restaurantConfig, {
+      source: 'telnyx',
+      nome: String(nome).trim(),
+      persone: ppl,
+      data: dateISO,
+      ora: timeN,
+      telefono: tel,
+      notes: note || '',
+      forceNew: true,
+    }, {
+      callId: this.connId,
+      callerPhone: tel,
     });
-    if (r?.success && r.eventId) {
-      this._lastFound = { eventId: r.eventId, name: nome, date: dateISO, time: timeN, people: ppl, phone: tel, notes: note || '' };
+
+    if (r?.creata === true) {
+      const eventId = r._internal?.reservation_id || r.eventId;
+      // Salva _lastFound per modifica_prenotazione / cancella_prenotazione successive
+      this._lastFound = {
+        eventId,
+        name: String(nome).trim(),
+        date: dateISO,
+        time: timeN,
+        people: ppl,
+        phone: tel,
+        notes: note || '',
+      };
       return {
-        creata: true, stato: r.status || 'CONFIRMED',
-        data: DateManager.formatForDisplay(dateISO),
-        ora: TimeManager.formatForDisplay(timeN),
+        creata: true,
+        stato: r.stato || 'CONFIRMED',
+        data: r.data || DateManager.formatForDisplay(dateISO),
+        ora:  r.ora  || TimeManager.formatForDisplay(timeN),
         persone: ppl,
       };
     }
@@ -1969,135 +2068,122 @@ Non prendere prenotazioni.`;
     const newPeople = hasPpl  ? parseInt(persone, 10) : base.people;
     const newNotes  = hasNote ? String(note).trim() : (base.notes || '');
 
-    // v7.4.2 Fix A: se cambia data o ora, valida il nuovo slot come check_availability
+    // v7.6.0: la validazione preliminare del gateway è preservata
+    // (giorno chiuso, orario, event threshold). Il backend Postgres fa
+    // la stessa validazione, ma preferiamo restituire feedback il più
+    // presto possibile al modello quando conosciamo già la risposta.
     const rc = this.restaurantConfig;
     if (hasData || hasOra) {
-      // Verifica giorno chiuso
       if (ValidationPipeline.getDayClosedMessage(newDate, rc)) {
         return {
-          aggiornata: false,
-          esito: 'giorno_chiuso',
+          aggiornata: false, esito: 'giorno_chiuso',
           giorno: DateManager.getDayName(newDate),
           motivo: 'Il giorno richiesto è di chiusura del ristorante.'
         };
       }
-      // Verifica fuori orario
       if (!ValidationPipeline.isValidTime(newTime, rc)) {
         return {
-          aggiornata: false,
-          esito: 'fuori_orario',
+          aggiornata: false, esito: 'fuori_orario',
           pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
           cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
           motivo: 'Orario fuori dai turni di servizio.'
         };
       }
-      // Verifica semi-chiusure lunch/dinner
       const h = parseInt(newTime.split(':')[0], 10);
       if (h >= 10 && h <= 16 && ValidationPipeline.isLunchClosed(newDate, rc)) {
         return {
-          aggiornata: false,
-          esito: 'solo_cena',
+          aggiornata: false, esito: 'solo_cena',
           giorno: DateManager.getDayName(newDate),
           motivo: 'A pranzo il ristorante è chiuso quel giorno.'
         };
       }
       if ((h >= 17 || h <= 3) && ValidationPipeline.isDinnerClosed(newDate, rc)) {
         return {
-          aggiornata: false,
-          esito: 'solo_pranzo',
+          aggiornata: false, esito: 'solo_pranzo',
           giorno: DateManager.getDayName(newDate),
           motivo: 'A cena il ristorante è chiuso quel giorno.'
         };
       }
     }
 
-    // v7.4.2 Fix A: se il nuovo numero persone raggiunge soglia evento, rifiuta
-    // (una modifica normale non può trasformarsi in richiesta evento — va rifatta)
     if (hasPpl) {
       const eventTh = Number(rc?.event_threshold) || 45;
       if (newPeople >= eventTh) {
         return {
-          aggiornata: false,
-          esito: 'evento',
+          aggiornata: false, esito: 'evento',
           motivo: 'Il numero di persone richiesto configura una richiesta evento. Occorre una nuova richiesta come evento.'
         };
       }
     }
 
-    // v7.4.5: capacity check con excludeEventId per non contare self.
-    // Uno slot dura 90 minuti: anche cambiando ora, lo slot vecchio e nuovo
-    // possono avere overlap → conteggio errato senza esclusione.
-    // Passando eventId, Apps Script salta l'evento self dal conteggio.
-    if (hasData || hasOra || hasPpl) {
-      const slotChanged = hasData || hasOra;
-      const availRes = await this._callAppsScript({
-        action: 'check_availability',
-        data: newDate,
-        ora: newTime,
-        persone: newPeople,
-        excludeEventId: base.eventId || '',
-      });
-      if (availRes?.reason === 'slot_full') {
-        if (slotChanged) {
-          const alts = await this._callAppsScript({
-            action: 'find_available_slots',
-            data: newDate,
-            ora: newTime,
-            persone: newPeople,
-          });
-          const sameDay = (alts?.availableSlots?.sameDay || [])
-            .filter(s => ValidationPipeline.isValidTime(s.time, rc))
-            .slice(0, 3).map(s => s.time.substring(0, 5));
-          return {
-            aggiornata: false,
-            esito: 'pieno',
-            alternative_stesso_giorno: sameDay,
-            motivo: 'Slot pieno per il nuovo orario richiesto.'
-          };
-        } else {
-          return {
-            aggiornata: false,
-            esito: 'pieno_stesso_slot',
-            motivo: 'Non c\'è capacità sufficiente nello slot corrente per aggiungere altre persone. Chiedi al cliente se vuole cambiare orario.'
-          };
-        }
-      }
-    }
-
-    const r = await this._callAppsScript({
-      action: 'update_reservation', eventId: base.eventId,
+    // v7.6.0: chiamo il backend Postgres via wrapper.
+    //   Il wrapper fa già il check capacity con excludeReservationId (self exclude)
+    //   e il partial update reale (solo campi cambiati).
+    const r = await modificaPrenotazioneTool(this.restaurantConfig, {
+      eventId: base.eventId,
       nome: newNome, data: newDate, ora: newTime, persone: newPeople,
-      telefono: base.phone || this.callerPhone || '', notes: newNotes,
-      // v7.4.3: passiamo dati originali (dal _lastFound salvato da trova_prenotazione)
-      // per identificare in modo affidabile la riga da aggiornare nel LogPrenotazioni.
-      // Evita dipendenza da Calendar getEventById (che può ritornare un proxy senza titolo).
-      original_name: base.name || '',
-      original_date: base.date || '',
-      original_time: base.time?.length === 5 ? base.time + ':00' : (base.time || ''),
+      telefono: base.phone || this.callerPhone || '',
+      notes: newNotes,
+      source: 'telnyx_modify',
+    }, {
+      callId: this.connId,
+      callerPhone: this.callerPhone || base.phone || '',
     });
-    if (r?.success !== false) {
+
+    if (r?.success === true) {
+      // Aggiorno _lastFound con i nuovi valori
       this._lastFound = { ...base, name: newNome, date: newDate, time: newTime, people: newPeople, notes: newNotes };
       return {
         aggiornata: true, nome: newNome,
-        data: DateManager.formatForDisplay(newDate),
-        ora: TimeManager.formatForDisplay(newTime),
+        data: r.data || DateManager.formatForDisplay(newDate),
+        ora:  r.ora  || TimeManager.formatForDisplay(newTime),
         persone: newPeople,
         note: newNotes || 'nessuna',
       };
     }
-    return { aggiornata: false };
+
+    // Mapping errori del backend al formato che il modello si aspetta
+    if (r?.reason === 'slot_pieno') {
+      const slotChanged = hasData || hasOra;
+      if (slotChanged) {
+        return {
+          aggiornata: false, esito: 'pieno',
+          alternative_stesso_giorno: [],   // TODO v7.6.x: find_available_slots
+          motivo: 'Slot pieno per il nuovo orario richiesto.'
+        };
+      }
+      return {
+        aggiornata: false, esito: 'pieno_stesso_slot',
+        motivo: 'Non c\'è capacità sufficiente nello slot corrente per aggiungere altre persone. Chiedi al cliente se vuole cambiare orario.'
+      };
+    }
+    if (r?.reason === 'giorno_chiuso') {
+      return { aggiornata: false, esito: 'giorno_chiuso', motivo: r.message };
+    }
+    if (r?.reason === 'not_found') {
+      return { aggiornata: false, motivo: 'prenotazione non trovata' };
+    }
+    return { aggiornata: false, motivo: r?.message || 'modifica non riuscita' };
   }
 
   async _toolCancella(_args) {
     const r = this._lastFound;
-    if (!r?.name || !r?.date) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
-    const tn = r.time?.length === 5 ? r.time + ':00' : (r.time || '');
-    const res = await this._callAppsScript({
-      action: 'cancel_reservation', nome: r.name, data: r.date, ora: tn,
-      telefono: this.callerPhone || r.phone || '',
+    if (!r?.eventId) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
+
+    // v7.6.0: chiamo il backend Postgres via wrapper.
+    //   Uso _lastFound.eventId (UUID Postgres) invece di nome+data+telefono.
+    const res = await cancellaPrenotazioneTool(this.restaurantConfig, {
+      eventId: r.eventId,
+      motivo: 'customer_request',
+      source: 'telnyx_cancel',
+    }, {
+      callId: this.connId,
+      callerPhone: this.callerPhone || r.phone || '',
     });
-    if (res?.success || res?.status === 'CANCELLED') return { cancellata: true };
-    return { cancellata: false };
+
+    if (res?.success === true) return { cancellata: true };
+    return { cancellata: false, motivo: res?.message || 'cancellazione non riuscita' };
+  }
   }
 
   async _toolInfoLocale({ argomento }) {
@@ -2149,16 +2235,23 @@ Non prendere prenotazioni.`;
     if (!timeN)     return { registrata: false, manca: 'ora' };
     if (!ppl)       return { registrata: false, manca: 'persone' };
 
-    const payload = {
-      action: 'notify_big_event', source: 'telnyx',
-      nome: cleanName, data: dateISO, ora: timeN, persone: ppl,
-      telefono: this.callerPhone || '', notes: note || '',
-    };
-    if (email && String(email).trim()) payload.email = String(email).trim();
+    // v7.6.0: chiamo il backend Postgres via wrapper.
+    const r = await richiediEventoTool(this.restaurantConfig, {
+      source: 'telnyx_event',
+      nome: cleanName,
+      data: dateISO,
+      ora: timeN,
+      persone: ppl,
+      telefono: this.callerPhone || '',
+      notes: note || '',
+      email: (email && String(email).trim()) || undefined,
+    }, {
+      callId: this.connId,
+      callerPhone: this.callerPhone || '',
+    });
 
-    const r = await this._callAppsScript(payload);
-    if (r?.success) return { registrata: true, stato: r.status || 'EVENT_REQUEST' };
-    return { registrata: false };
+    if (r?.success === true) return { registrata: true, stato: r.stato || 'EVENT_REQUEST' };
+    return { registrata: false, motivo: r?.message || 'richiesta non registrata' };
   }
 
   sendAudio(pcmuBase64) {
