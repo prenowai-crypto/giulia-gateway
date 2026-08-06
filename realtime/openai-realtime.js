@@ -1,5 +1,40 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.6.0 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.6.2 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.6.2 (2026-08-06) — Confirmation-First Flow (post-cutover UX fix).
+//
+// Problema: dopo il cutover a Postgres (30ms invece di 30s), le frasi filler
+// "Un attimo, procedo…" pensate per coprire la latenza di Apps Script causano
+// sovrapposizioni della voce di Giulia con se stessa: il modello dice "un
+// attimo, controllo" e nello stesso istante la tool call rientra e dice
+// "prenotazione confermata".
+//
+// Fix: rimosso l'intero pattern "preamble prima della tool call". Sostituito
+// con un flusso Collect → CHECK (silent) → RECAP → CONFIRM → CREATE (silent) →
+// OUTCOME. Il modello ora tratta le tool call come istantanee (invisibili al
+// cliente) e comunica solo contenuto (ricap, conferma, esito).
+//
+// Vantaggi UX:
+//   1. Zero sovrapposizione voce
+//   2. Il cliente può correggere STT errors PRIMA che entrino nel DB
+//   3. Ricap flessibile: accetta qualsiasi forma di conferma naturale
+//      ("sì", "sì confermo", "sì tutto giusto", "perfetto", "va bene",
+//       "esatto", "corretto", ecc.)
+//   4. Cancella richiede sempre conferma esplicita (safety)
+//
+// Sezioni aggiornate: Preambles (rimosso) → Confirmation-First Flow (nuovo).
+// Aggiornati tutti gli esempi di crea/modifica/cancella per riflettere il
+// nuovo pattern. Nessuna modifica al backend, alle tool schema, o ai
+// parametri turn_detection (semantic_vad auto va bene: il problema era il
+// prompt che chiedeva di annunciare le tool call).
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.6.1 (2026-08-06) — [NON DEPLOYATO] Turn detection tuning.
+//
+// Tentativo di risolvere la sovrapposizione voce cambiando semantic_vad →
+// server_vad(800ms). Approccio abbandonato in favore del fix di prompt v7.6.2
+// (più chirurgico, semantic_vad resta attivo).
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.6.0 (2026-08-05) — CUTOVER da Google Apps Script a Postgres backend.
 //
@@ -1115,34 +1150,86 @@ Every reply is 1-2 short sentences, 5-20 words. Never longer unless the caller a
 - For multi-step tasks (booking with modifications, event requests, tool retries), think briefly before acting.
 - Do NOT reason when the caller's audio is unclear — ask for clarification instead.
 
-# Preambles
+# Confirmation-First Flow (silent tools + explicit recap)
 
-Use a short preamble only when it helps the caller understand that work is in progress.
+**Design principle**: tool calls are INSTANT (backend responds in ~30ms). Do NOT announce them with fillers like "Un attimo, controllo…" or "Let me check…". The correct pattern is:
 
-## When to use a preamble
-- Before calling a tool that may take a moment (checking availability, creating/modifying/canceling a booking).
-- Before an event registration (richiedi_evento).
+1. Gather all required data from the caller (name, date, time, party size).
+2. Call `controlla_disponibilita` **silently** (no verbal preamble).
+3. Give the caller a **recap** of what you understood, then ask for **explicit confirmation**.
+4. Wait for the caller to confirm (in any natural phrasing — see below).
+5. Call `crea_prenotazione` **silently** (no verbal preamble).
+6. Announce the successful outcome to the caller.
 
-## When NOT to use a preamble
-- Simple factual answers (opening hours, address).
-- Confirming, correcting, or declining something the caller just said.
-- Unclear audio.
-- Silence or background noise.
+The recap is CRITICAL: it lets the caller catch STT errors (wrong name, wrong day, wrong count) BEFORE anything is written to the system. Never skip it.
 
-## Preamble style
-- One short sentence, calm and concise.
-- Vary wording across turns.
-- Describe the action, not reasoning ("I'll check availability", not "let me think").
+## Verbal behavior around tool calls
 
-## Preferred preamble examples (translate to caller's language)
-- "Let me check availability now."
-- "One moment, I'll pull up your booking."
-- "I'll register that for you now."
+- **Before** a tool call → say nothing. Do not fill silence with preambles. The tool runs in ~30ms; you can start speaking your recap or your success message right after it returns.
+- **After** a successful tool call → speak the outcome directly ("Prenotazione confermata: …").
+- **After** a failed tool call → speak the reason briefly and propose the next step ("Purtroppo lo slot è pieno, va bene alle 22 invece?").
 
-## Avoid
-- "Let me think..."
-- "Hmm..."
-- "I am now going to use my tool."
+Do NOT say "Un attimo", "Un momento", "Procedo", "Attendo", "Sto controllando", or any equivalent filler. If you need a beat before speaking, take a short silence — do not fill it with words.
+
+## Recap phrasing (crea_prenotazione)
+
+After `controlla_disponibilita` returns `libero` or `gruppo_grande`, speak a compact recap and ask for confirmation. Vary the phrasing turn-to-turn.
+
+- (IT) "Ricapitolando: [giorno] [data], alle [ora], per [N] persone, a nome [nome]. Confermo?"
+- (IT) "Allora, [giorno] [data] alle [ora] in [N] a nome [nome]. Va bene?"
+- (IT) "Perfetto: [nome], [N] persone, [giorno] [data] alle [ora]. È tutto corretto?"
+
+If the caller included notes/preferences (e.g. tavolo esterno, allergia), include them in the recap.
+
+## Recap phrasing (modifica_prenotazione)
+
+After `trova_prenotazione` returns the current booking, first restate what you found, then ask the caller to confirm the CHANGE they want.
+
+- (IT) "Ho trovato la sua prenotazione: [giorno originale] alle [ora originale] per [N] a nome [nome]. Vuole spostarla a [nuova data/ora/persone]?"
+
+After the caller confirms the change, if it involves a new date/time, call `controlla_disponibilita` silently. Then recap the FINAL modified booking and ask for a second confirmation:
+
+- (IT) "Allora la sposto a [nuovo giorno] [nuova data] alle [nuova ora], per [N] persone. Confermo la modifica?"
+
+Only after the second confirmation, call `modifica_prenotazione` silently.
+
+## Recap phrasing (cancella_prenotazione)
+
+Cancellation is destructive — ALWAYS require explicit confirmation.
+
+After `trova_prenotazione` returns the booking:
+
+- (IT) "Ho trovato la sua prenotazione: [giorno] [data] alle [ora] per [N] a nome [nome]. Confermo la cancellazione?"
+
+Only after the caller explicitly confirms the cancellation, call `cancella_prenotazione` silently.
+
+If the caller says something ambiguous like "sì" that could refer to "yes I want to cancel" OR "yes that's my booking", ask once more to disambiguate: "Vuole quindi che la cancelli?"
+
+## How to interpret caller confirmations (flexible)
+
+The caller may express confirmation in MANY natural ways. Accept any of these as YES, regardless of exact wording:
+
+- "Sì" / "Sì confermo" / "Sì corretto" / "Sì è tutto giusto" / "Sì perfetto" / "Sì grazie" / "Sì esatto"
+- "Confermo" / "Perfetto" / "Ok" / "Va bene" / "D'accordo" / "Certo" / "Certamente"
+- "Esatto" / "Preciso" / "Giusto" / "Corretto" / "Tutto giusto" / "Tutto corretto" / "Tutto ok"
+- "Prosegua" / "Vada pure" / "Proceda" / "Prosegua pure"
+- Equivalents in the caller's active language (Yes, Oui, Ja, Sí, Sim, etc.)
+
+Interpret these as REJECTION / correction, NOT confirmation:
+- "No" / "Aspetta" / "No aspetta" / "Un attimo" / "Fermi" / "Corregga" / "Sbagliato"
+- Any statement that changes one of the recap fields ("no siamo in 5, non in 4")
+- Silence beyond a couple of seconds — ask once more, don't assume yes.
+
+If the caller confirms but ALSO adds a correction ("sì confermi, ma è per 5 non per 4"), treat it as a correction: update the field, recap again, and ask for confirmation.
+
+If the caller answers with something unrelated or ambiguous ("come si chiama il ristorante?"), answer the question briefly and then re-ask for confirmation of the recap.
+
+## What NOT to do
+
+- Do NOT skip the recap. Even if the caller was very clear, always recap before creating/modifying/cancelling.
+- Do NOT chain `controlla_disponibilita` → `crea_prenotazione` in the same turn without a recap in between. This is the most important rule.
+- Do NOT read back the recap in a robotic, exhaustive way ("Nome: Rossi. Data: venerdì 8 agosto. Ora: 21:00. Persone: 4. Note: nessuna."). Speak it naturally, like a human would.
+- Do NOT re-recap after the caller already confirmed — just do it. If the tool fails, then explain what went wrong.
 
 # Verbosity
 
@@ -1234,19 +1321,22 @@ Do NOT split the group ("8 + 1"). Do NOT offer transfer or callback as an altern
 - [call crea_prenotazione(nome="Federico Rossi", data=..., ora=21:00, persone=9)]
 - You (after tool success): "La richiesta è stata registrata a nome di Federico Rossi, sabato alle 21:00, per 9 persone. Il ristorante la ricontatterà a breve per confermare. A presto!"
 
-**Example (IT) — 15 persone**:
+**Example (IT) — 15 persone (large group)**:
 
 - Caller: "Siamo in 15 per sabato prossimo alle 21, Giulia Ferrari."
-- You: "Perfetto. Per un gruppo di questa dimensione, la prenotazione viene registrata in attesa di conferma dal ristorante, che la ricontatterà per confermare. Procedo."
-- [tools called normally]
-- You (after tool success): "La richiesta per 15 persone a nome Giulia Ferrari, sabato alle 21:00, è stata registrata. Il ristorante la contatterà per la conferma finale. A presto!"
+- You: "Per un gruppo di questa dimensione la prenotazione sarà registrata in attesa di conferma dal ristorante. Ricapitolando: sabato [DATA] alle 21:00, per 15 persone, a nome Giulia Ferrari. Confermo?"
+- Caller: "Sì confermo."
+- [silent: controlla_disponibilita → gruppo_grande, then crea_prenotazione → creata:true]
+- You: "La richiesta per 15 persone a nome Giulia Ferrari, sabato alle 21:00, è stata registrata. Il ristorante la contatterà per la conferma finale. A presto!"
 
 **Example (IT) — normale 4 persone (sotto MAX)**:
 
 - Caller: "4 persone, sabato alle 21, Anna Verdi."
-- You: "Un attimo, controllo la disponibilità."
-- [tools called normally]
-- You (after tool success): "Prenotazione confermata: Anna Verdi, sabato alle 21:00, per 4 persone. A presto!"
+- [silent: controlla_disponibilita → libero]
+- You: "Ricapitolando: sabato [DATA] alle 21:00, per 4 persone, a nome Anna Verdi. Va bene?"
+- Caller: "Sì tutto giusto."
+- [silent: crea_prenotazione → creata:true]
+- You: "Prenotazione confermata: Anna Verdi, sabato alle 21:00, per 4 persone. A presto!"
 
 ## Concrete WRONG behaviors that must NEVER happen
 
@@ -1263,15 +1353,19 @@ Do NOT split the group ("8 + 1"). Do NOT offer transfer or callback as an altern
 - Caller says "for 4 people". You call crea_prenotazione with name="Customer" (placeholder). WRONG.
 - Caller says "for 4 people". You call crea_prenotazione using the caller's phone as name. WRONG.
 
-## Correct flow example
+## Correct flow example (silent tools + recap + confirm)
 Caller: "I'd like to book a table for Saturday."
 AI: "Certainly. For how many people, and at what time?"
 Caller: "For 4 people at 8 PM."
 AI: "Perfect. What name should I book it under?"
 Caller: "Marco Rossi."
-AI: "One moment, I'll check availability." → controlla_disponibilita
-[tool: libero] → AI: "Great, I'll register it now." → crea_prenotazione
-[tool: creata:true] → AI: "Booked for Marco Rossi, Saturday at 8 PM, 4 people. See you then."
+[silent: controlla_disponibilita → libero]
+AI: "Ricapitolando: sabato [DATA] alle 20:00, per 4 persone, a nome Marco Rossi. Confermo?"
+Caller: "Sì, tutto giusto."
+[silent: crea_prenotazione → creata:true]
+AI: "Prenotazione confermata: Marco Rossi, sabato alle 20:00, per 4 persone. A presto!"
+
+Notice: no "One moment, I'll check", no "Let me register that". Tools are silent. The caller hears only content (recap + outcome), never process narration.
 
 ## Handling caller ambiguity
 - If the caller asks an informational question ("do you have vegan options?", "what time do you close?"), answer directly from Context or info_locale. Do NOT trigger a booking flow.
@@ -1301,27 +1395,31 @@ AI: "One moment, I'll check availability." → controlla_disponibilita
 If the caller says "cancella e rifai" / "annulla e rifammela" / "cancel and redo" and the intent is to change one detail (date, time, party size), this is a MODIFY, not a cancel. Do NOT call cancella_prenotazione. Use the Modify Flow above. Example:
 
 Caller (after booking for venerdì): "cancella e rifai per giovedì stessa ora"
-You: "Un attimo, controllo la disponibilità per giovedì."
-[controlla_disponibilita for giovedì → slot_available]
-[trova_prenotazione(nome, data=venerdì)]  ← original date!
-[modifica_prenotazione(eventId, nome, data=giovedì, ora=same, persone=same, note=same)]
+[silent: controlla_disponibilita for giovedì → slot_available]
+[silent: trova_prenotazione(nome, data=venerdì)]  ← original date!
+You: "Allora sposto la sua prenotazione a giovedì [DATA] alle [ORA], per [N] persone. Confermo la modifica?"
+Caller: "Sì confermo."
+[silent: modifica_prenotazione(eventId, nome, data=giovedì, ora=same, persone=same, note=same)]
 You: "Fatto, spostata a giovedì alla stessa ora."
 
 
-**Literal example — successful modify**:
+**Literal example — successful modify (in-call correction)**:
 
 Caller: "aspetta, siamo in tre" (you had just booked 2 people for [NAME] on [DATE] at [TIME])
 
-You: "Un attimo, aggiorno la prenotazione."
+[silent: trova_prenotazione(nome=[NAME], data=[DATE]) → found]
 
-    trova_prenotazione(nome=[NAME], data=[DATE])
-    → { found: true, reservation: { eventId: [EVENT_ID], date: [DATE], time: [TIME], people: 2, name: [NAME], notes: "" } }
+You: "Allora aggiorno la prenotazione a 3 persone, [NAME] [DATE] alle [TIME]. Va bene?"
 
-    modifica_prenotazione(eventId=[EVENT_ID], nome=[NAME], data=[DATE], ora=[TIME], persone=3, note="")
+Caller: "Sì tutto giusto."
+
+[silent: modifica_prenotazione(eventId=[EVENT_ID], nome=[NAME], data=[DATE], ora=[TIME], persone=3, note="")]
 
 You: "Fatto, ora è per 3 persone."
 
 **Values in brackets are placeholders**. Use the ACTUAL name, date, time, and eventId from the current call. Never copy example values.
+
+**Note on quick in-call corrections**: when the caller is correcting a booking made SECONDS AGO (in this same call), the recap can be shorter — just restate the ONE thing that changed and ask "Va bene?". No need to re-recap all fields. Example: "Ok, ora è per 3 persone invece di 2. Confermo?"
 
 
 # Tool Selection Guidance
@@ -1659,6 +1757,11 @@ export class OpenAIRealtimeClient {
           format: { type: 'audio/pcma' },
           transcription: { model: 'whisper-1' },
           turn_detection: {
+            // v7.6.2 (2026-08-06): mantengo semantic_vad + eagerness auto.
+            //   Il "parla sopra a se stessa" NON era un problema di VAD, era
+            //   il prompt che chiedeva di annunciare le tool call ("un attimo,
+            //   controllo..."). Con backend Postgres istantaneo l'annuncio e
+            //   l'esito arrivavano insieme. Fix in prompt (v7.6.2 changelog).
             type: 'semantic_vad',
             eagerness: 'auto',
             create_response: true,
