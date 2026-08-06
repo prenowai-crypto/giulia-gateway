@@ -2184,7 +2184,6 @@ Non prendere prenotazioni.`;
     if (res?.success === true) return { cancellata: true };
     return { cancellata: false, motivo: res?.message || 'cancellazione non riuscita' };
   }
-  }
 
   async _toolInfoLocale({ argomento }) {
     if (!this._restaurantInfo) await this._fetchRestaurantInfo();
