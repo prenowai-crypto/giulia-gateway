@@ -2,10 +2,11 @@
 // RESERVATIONS SERVICE — CRUD prenotazioni
 // ═══════════════════════════════════════════════════════════════════════════════
 // Funzioni implementate:
-//   ✅ createReservation()  — crea nuova
-//   ✅ findReservations()   — cerca per nome/data/telefono (fuzzy name match)
-//   ✅ updateReservation()  — partial update
-//   ✅ cancelReservation()  — soft delete (status=CANCELLED)
+//   ✅ createReservation()   — crea nuova
+//   ✅ findReservations()    — cerca per nome/data/telefono (fuzzy name match)
+//   ✅ updateReservation()   — partial update
+//   ✅ cancelReservation()   — soft delete (status=CANCELLED)
+//   ✅ requestBigEvent()     — richiesta per gruppi >= event_threshold
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { query, withTransaction } from '../db.js';
@@ -351,20 +352,6 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
 
 // ─── cancelReservation ─────────────────────────────────────────────────────────
 
-/**
- * cancelReservation(tenant, reservationId, meta)
- *
- * Cancella una prenotazione (soft delete).
- * - Status → 'CANCELLED'
- * - cancelled_at → NOW()
- * - Scrive audit log
- * - Enqueue email di cancellazione (se ha email)
- *
- * @param {object} tenant
- * @param {string} reservationId  - UUID Postgres
- * @param {object} meta           - { callId, callerPhone, source, reason? }
- * @returns {Promise<{success, reservation?, esito?, message?}>}
- */
 export async function cancelReservation(tenant, reservationId, meta = {}) {
   if (!tenant) throw new Error('cancelReservation: tenant mancante');
   if (!reservationId) {
@@ -376,7 +363,6 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
   const callerPhone = meta.callerPhone || null;
   const reason = meta.reason || 'customer_request';
 
-  // Leggo la prenotazione esistente per verifica + snapshot audit
   const existingResult = await query(
     `SELECT id, tenant_id, date, time, people, name, phone, email, notes,
             status, is_group, source, created_at
@@ -395,7 +381,6 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
 
   const existing = existingResult.rows[0];
 
-  // Se già cancellata, ritorna idempotente (success ma segnala)
   if (existing.status === 'CANCELLED') {
     return {
       success: true, esito: 'already_cancelled',
@@ -404,12 +389,9 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
     };
   }
 
-  // Soft delete + audit in transazione
   const cancelledRow = await withTransaction(async (client) => {
-    // Lock
     await client.query(`SELECT id FROM reservations WHERE id = $1 FOR UPDATE`, [reservationId]);
 
-    // Soft delete
     const updateResult = await client.query(
       `UPDATE reservations
           SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
@@ -420,7 +402,6 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
     );
     const cancelled = updateResult.rows[0];
 
-    // Audit log
     await client.query(
       `INSERT INTO reservation_audit_log (
          tenant_id, reservation_id, action, source, before_data, after_data,
@@ -445,7 +426,6 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
       ]
     );
 
-    // Enqueue email cancellazione se ha email
     if (existing.email) {
       await client.query(
         `INSERT INTO sync_jobs (tenant_id, reservation_id, job_type, payload)
@@ -469,5 +449,146 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
     success: true,
     esito: 'cancellata',
     reservation: cancelledRow,
+  };
+}
+
+// ─── requestBigEvent ───────────────────────────────────────────────────────────
+
+/**
+ * requestBigEvent(tenant, params)
+ *
+ * Registra una RICHIESTA di prenotazione per grandi eventi (>= event_threshold).
+ * Non è una vera prenotazione — è un'espressione di interesse che il ristoratore
+ * deve valutare offline (via email).
+ *
+ * Salvato come:
+ *   - status = 'PENDING_OWNER'
+ *   - is_group = true
+ *   - notes = "EVENTO — [dettagli aggiuntivi]"
+ *
+ * NON fa checkAvailability perché gli eventi sono negoziati con il ristoratore.
+ * NON blocca capacità per altre prenotazioni fino a conferma esplicita.
+ *
+ * Enqueue email al proprietario per notificare la richiesta.
+ *
+ * @param {object} tenant
+ * @param {object} params  - { date, time, people, name, phone?, email?, notes? }
+ * @param {object} meta    - { callId, callerPhone, source }
+ * @returns {Promise<{success, reservation?, esito?, message?}>}
+ */
+export async function requestBigEvent(tenant, params, meta = {}) {
+  const {
+    date, time, people, name,
+    phone, email, notes,
+  } = params;
+
+  const source = meta.source || 'telnyx_event';
+  const callId = meta.callId || null;
+  const callerPhone = meta.callerPhone || null;
+
+  if (!tenant) throw new Error('requestBigEvent: tenant mancante');
+  if (!date || !time || !people || !name) {
+    return {
+      success: false, esito: 'invalid_params',
+      message: 'Data, ora, persone e nome sono obbligatori'
+    };
+  }
+  if (people <= 0 || people > 500) {
+    return { success: false, esito: 'invalid_people', message: 'Numero persone non valido' };
+  }
+
+  const eventThreshold = Number(tenant.eventThreshold) || 45;
+  if (Number(people) < eventThreshold) {
+    return {
+      success: false,
+      esito: 'below_event_threshold',
+      message: `Per ${people} persone usa crea_prenotazione, non richiedi_evento. Soglia evento: ${eventThreshold}.`
+    };
+  }
+
+  const normalizedTime = normalizeTime(time);
+  const eventNotes = `EVENTO — ${notes || 'richiesta di grande gruppo'}`;
+
+  const insertedRow = await withTransaction(async (client) => {
+    const insertResult = await client.query(
+      `INSERT INTO reservations (
+         tenant_id, date, time, people, name, phone, email, notes,
+         status, is_group, source, email_status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, tenant_id, date, time, people, name, phone, email, notes,
+                 status, is_group, source, created_at`,
+      [
+        tenant.id, date, normalizedTime, Number(people),
+        String(name).trim(), phone || null, email || null, eventNotes,
+        'PENDING_OWNER',   // sempre pending per eventi
+        true,              // sempre gruppo grande
+        source,
+        email ? 'PENDING' : 'NO_EMAIL',
+      ]
+    );
+    const reservation = insertResult.rows[0];
+
+    // Audit log
+    await client.query(
+      `INSERT INTO reservation_audit_log (
+         tenant_id, reservation_id, action, source, after_data, caller_phone, call_id
+       ) VALUES ($1, $2, 'create', $3, $4, $5, $6)`,
+      [
+        tenant.id, reservation.id, source,
+        JSON.stringify({
+          type: 'event_request',
+          date, time: normalizedTime, people: Number(people), name, phone, email, notes: eventNotes,
+          status: 'PENDING_OWNER',
+        }),
+        callerPhone || phone || null,
+        callId,
+      ]
+    );
+
+    // Enqueue email al PROPRIETARIO (non al cliente)
+    // È il proprietario che deve valutare l'evento
+    if (tenant.owner_email) {
+      await client.query(
+        `INSERT INTO sync_jobs (tenant_id, reservation_id, job_type, payload)
+         VALUES ($1, $2, 'email_owner_notify', $3)`,
+        [
+          tenant.id, reservation.id,
+          JSON.stringify({
+            to: tenant.owner_email,
+            type: 'event_request',
+            customer_name: name,
+            customer_phone: phone,
+            customer_email: email,
+            date, time: normalizedTime, people: Number(people),
+            notes: notes || '',
+          }),
+        ]
+      );
+    }
+
+    // Enqueue email al cliente se ha fornito email
+    if (email) {
+      await client.query(
+        `INSERT INTO sync_jobs (tenant_id, reservation_id, job_type, payload)
+         VALUES ($1, $2, 'email_confirmation', $3)`,
+        [
+          tenant.id, reservation.id,
+          JSON.stringify({
+            to: email, name, date, time: normalizedTime, people: Number(people),
+            type: 'event_request',
+          }),
+        ]
+      );
+    }
+
+    return reservation;
+  });
+
+  return {
+    success: true,
+    esito: 'richiesta_inviata',
+    reservation: insertedRow,
+    status: 'PENDING_OWNER',
   };
 }
