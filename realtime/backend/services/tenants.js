@@ -68,6 +68,11 @@ function mapDbRowToRestaurantConfig(row) {
 
     // Timezone
     timezone:        row.timezone || 'Europe/Rome',
+
+    // v7.7.4: Info locale (menu, parcheggio, wifi, ecc.) — sostituisce
+    // la vecchia chiamata Apps Script get_restaurant_info.
+    // Il JSONB può essere vuoto ({}) o contenere qualsiasi chiave.
+    info_locale:     row.info_locale || {},
   };
 }
 
