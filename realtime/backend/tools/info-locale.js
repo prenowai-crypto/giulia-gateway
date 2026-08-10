@@ -1,29 +1,59 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // TOOL: info_locale
 // ═══════════════════════════════════════════════════════════════════════════════
-// Restituisce info statiche del ristorante (menu, parcheggio, wifi, ecc.).
-// Drop-in replacement per la vecchia chiamata Apps Script `get_restaurant_info`.
+// Restituisce info del ristorante (generali, menu, chiusure).
+// Drop-in replacement per la vecchia chiamata Apps Script get_restaurant_info.
 //
 // Payload input (dal modello):
-//   { argomento?: "menu" | "parcheggio" | "wifi" | ... }
+//   { argomento?: string }
 //
-// Nota: `argomento` è opzionale — se il modello lo passa possiamo filtrare
-// per ridurre il token count, ma per adesso restituiamo tutto (l'oggetto
-// è piccolo, ~500 byte).
+// Il campo `argomento` guida cosa restituire:
+//   - "menu", "piatti", "cosa avete", "primi", "secondi", "antipasti" ecc.
+//                                        → menu strutturato
+//   - "chiusure", "chiuso", "aperto il..." → chiusure straordinarie
+//   - "parcheggio", "wifi", "accessibilità", "cucina", "pagamento", ecc.
+//                                        → info dal JSONB
+//   - vuoto o non riconosciuto           → tutto (info + menu breve)
 //
-// Risposta output (drop-in con Apps Script):
-//   {
-//     success: true,
-//     info: {
-//       menu: "...",
-//       parcheggio: "...",
-//       ...
-//     }
-//   }
+// Risposta output (formato flessibile — il modello estrae ciò che serve):
+//   { success: true, info: {...}, menu?: {...}, chiusure?: [...] }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { getTenantByPhone } from '../services/tenants.js';
-import { getInfoLocale } from '../services/info-locale.js';
+import { getInfoLocale, getMenuGrouped, getClosures } from '../services/info-locale.js';
+
+// Parole chiave per classificare l'argomento del cliente
+const MENU_KEYWORDS = [
+  'menu', 'menù', 'piatti', 'piatto', 'cosa avete', 'cosa fate',
+  'antipasti', 'antipasto', 'primi', 'primo', 'secondi', 'secondo',
+  'contorni', 'contorno', 'dolci', 'dolce', 'dessert',
+  'carbonara', 'pasta', 'pizza', 'pesce', 'carne', 'vegetarian',
+  'specialit', 'cucina',
+];
+
+const CLOSURE_KEYWORDS = [
+  'chiuso', 'chiusure', 'chiudete', 'aperto', 'apert',
+  'evento privato', 'festivo',
+];
+
+const CATEGORY_MAP = {
+  'antipasti': 'ANTIPASTI', 'antipasto': 'ANTIPASTI',
+  'primi':     'PRIMI',     'primo': 'PRIMI',
+  'secondi':   'SECONDI',   'secondo': 'SECONDI',
+  'contorni':  'CONTORNI',  'contorno': 'CONTORNI',
+  'dolci':     'DOLCI',     'dolce': 'DOLCI',   'dessert': 'DOLCI',
+};
+
+function detectCategoria(arg) {
+  for (const [k, v] of Object.entries(CATEGORY_MAP)) {
+    if (arg.includes(k)) return v;
+  }
+  return null;
+}
+
+function containsAny(text, keywords) {
+  return keywords.some(k => text.includes(k));
+}
 
 export async function infoLocaleTool(restaurantConfig, params = {}, meta = {}) {
   let tenant = restaurantConfig;
@@ -38,23 +68,53 @@ export async function infoLocaleTool(restaurantConfig, params = {}, meta = {}) {
     return { success: false, info: {}, message: 'Configurazione ristorante non valida' };
   }
 
-  const result = await getInfoLocale(tenant);
-
-  // Filtro opzionale per argomento (se il modello lo passa)
   const argomento = String(params.argomento || '').toLowerCase().trim();
-  if (argomento && result.success && result.info) {
-    // Se il modello chiede uno specifico argomento e la chiave esiste, ritorno
-    // solo quello + tutte le chiavi correlate (contengono la parola argomento).
-    const relevantKeys = Object.keys(result.info).filter(k =>
+
+  // Se l'argomento riguarda il menu → restituisci menu (filtrato per categoria se dedotta)
+  if (argomento && containsAny(argomento, MENU_KEYWORDS)) {
+    const categoria = detectCategoria(argomento);
+    const menuResult = await getMenuGrouped(tenant, categoria ? { categoria } : {});
+    if (menuResult.success && menuResult.count > 0) {
+      return { success: true, tipo: 'menu', menu: menuResult.menu, count: menuResult.count };
+    }
+    // Se il menu è vuoto, fallback su info generali
+  }
+
+  // Se l'argomento riguarda le chiusure → restituisci chiusure future
+  if (argomento && containsAny(argomento, CLOSURE_KEYWORDS)) {
+    const closuresResult = await getClosures(tenant, { limit: 5 });
+    const infoResult = await getInfoLocale(tenant);
+    return {
+      success: true,
+      tipo: 'chiusure',
+      chiusure: closuresResult.closures,
+      info_generali: infoResult.info,   // includo anche orari generali dal JSONB
+    };
+  }
+
+  // Altrimenti → info generali dal JSONB (filtrata se possibile)
+  const infoResult = await getInfoLocale(tenant);
+  if (!infoResult.success) {
+    return { success: false, info: {}, message: infoResult.message };
+  }
+
+  const info = infoResult.info || {};
+
+  // Se argomento specifico, filtro le chiavi rilevanti
+  if (argomento) {
+    const relevantKeys = Object.keys(info).filter(k =>
       k.toLowerCase().includes(argomento) || argomento.includes(k.toLowerCase())
     );
     if (relevantKeys.length > 0) {
       const filtered = {};
-      for (const k of relevantKeys) filtered[k] = result.info[k];
-      return { success: true, info: filtered };
+      for (const k of relevantKeys) filtered[k] = info[k];
+      return { success: true, tipo: 'info', info: filtered };
     }
-    // Se non c'è match, ritorno tutto (il modello sceglie)
   }
 
-  return result;
+  // Nessun match specifico → info completa (il modello sceglie cosa dire)
+  if (Object.keys(info).length === 0) {
+    return { success: false, info: {}, message: 'informazione non disponibile' };
+  }
+  return { success: true, tipo: 'info', info };
 }
