@@ -1,5 +1,34 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.7.4 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.7.5 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.7.5 (2026-08-10) — info_locale esteso a menu strutturato + chiusure.
+//
+// Estensione della Migrazione 1: oltre a info generali del ristorante (JSONB),
+// ora il backend Postgres serve anche:
+//   - Menu strutturato per categoria/piatto/prezzo/descrizione (tabella tenant_menu)
+//   - Chiusure straordinarie (tabella tenant_closures)
+//
+// _toolInfoLocale ora smista tra 3 tipi di risposta in base all'`argomento`:
+//   - tipo: 'menu'      → il modello riceve piatti raggruppati per categoria
+//   - tipo: 'chiusure'  → il modello riceve le prossime chiusure straordinarie
+//   - tipo: 'info'      → il modello riceve info generali dal JSONB (default)
+//
+// Nuovi backend service methods:
+//   - getMenu(tenant, opts)          → array piatti
+//   - getMenuGrouped(tenant, opts)   → oggetto raggruppato per categoria
+//   - getClosures(tenant, opts)      → array chiusure future
+//   - isSpecialClosureDate(tenant, dateISO) → { closed, reason? }
+//     (utile per checkAvailability se vogliamo rifiutare prenotazioni su chiusure)
+//
+// Prerequisito DB (eseguire migration-1-info-menu-closures.sql su Neon):
+//   - ALTER TABLE tenants ADD COLUMN info_locale JSONB
+//   - CREATE TABLE tenant_menu
+//   - CREATE TABLE tenant_closures
+//   - SEED Osteria Test con i dati Excel
+//
+// Multi-tenant: ogni tabella ha tenant_id UUID con FK verso tenants(id).
+// Isolamento perfetto tra ristoranti — nessuna riga condivisa.
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.7.4 (2026-08-10) — Migrazione 1: info_locale → Postgres JSONB.
 //
@@ -1944,8 +1973,8 @@ Non prendere prenotazioni.`;
   }
 
   async _toolInfoLocale({ argomento }) {
-    // v7.7.4: Migrato da Apps Script a backend Postgres (info_locale JSONB).
-    // Il backend restituisce l'oggetto completo o filtrato per argomento.
+    // v7.7.5: gestisce info generali, menu strutturato e chiusure straordinarie.
+    // Il backend classifica l'argomento e restituisce la risposta più adatta.
     const r = await infoLocaleTool(this.restaurantConfig, { argomento }, {
       callId: this.connId,
       callerPhone: this.callerPhone || '',
@@ -1955,15 +1984,25 @@ Non prendere prenotazioni.`;
       return { informazione_non_disponibile: true };
     }
 
-    const info = r.info || {};
-    if (Object.keys(info).length === 0) {
-      return { informazione_non_disponibile: true };
+    // Il backend restituisce oggetto con `tipo` = 'info' | 'menu' | 'chiusure'.
+    // Passo tutto al modello: sceglie cosa dire al cliente in base al `tipo`
+    // e ai dati inclusi.
+    if (r.tipo === 'menu') {
+      // { success, tipo:'menu', menu: { ANTIPASTI:[...], PRIMI:[...] }, count }
+      return { tipo: 'menu', menu: r.menu, totale_piatti: r.count };
     }
-
-    // Ritorno l'oggetto direttamente al modello. Le chiavi sono libere
-    // (dipendono da come il ristoratore ha popolato tenants.info_locale).
-    // Il modello sceglie cosa dire in base alla domanda del cliente.
-    return info;
+    if (r.tipo === 'chiusure') {
+      // { success, tipo:'chiusure', chiusure:[...], info_generali:{} }
+      return {
+        tipo: 'chiusure',
+        chiusure_straordinarie: r.chiusure || [],
+        info_generali: r.info_generali || {},
+      };
+    }
+    // Default: info generali
+    const info = r.info || {};
+    if (Object.keys(info).length === 0) return { informazione_non_disponibile: true };
+    return { tipo: 'info', ...info };
   }
 
   async _toolRichiediEvento({ nome, data, ora, persone, note, email }) {
