@@ -1,5 +1,34 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.7.3 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.7.4 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.7.4 (2026-08-10) — Migrazione 1: info_locale → Postgres JSONB.
+//
+// Migrazione dell'ULTIMA tool call che ancora usava Apps Script (info_locale)
+// verso il backend Postgres. Dopo questo commit, il gateway NON chiama più
+// Apps Script per NESSUNA tool call.
+//
+// Rimossi dal gateway:
+//   - Funzione _fetchRestaurantInfo (chiamava Apps Script per menu/parcheggio/ecc.)
+//   - Funzione _callAppsScript (era l'HTTP client verso Apps Script)
+//   - Variabile _restaurantInfo (cache in-memory dell'info dal foglio)
+//   - Pre-fetch info al bootstrap della sessione Realtime
+//
+// Aggiunti/modificati:
+//   - Import infoLocaleTool dal nuovo backend
+//   - _toolInfoLocale riscritto per usare backend Postgres
+//   - services/info-locale.js (nuovo — legge info_locale JSONB da tenants)
+//   - tools/info-locale.js (nuovo — thin wrapper, drop-in compatible)
+//   - services/tenants.js — mapDbRowToRestaurantConfig include info_locale
+//
+// Prerequisito DB (eseguito manualmente prima del deploy):
+//   ALTER TABLE tenants ADD COLUMN info_locale JSONB DEFAULT '{}'::jsonb;
+//   UPDATE tenants SET info_locale = '{...}'::jsonb WHERE restaurant_id = 'osteria_test';
+//
+// Dipendenza Apps Script rimanente (sarà eliminata in v7.8.0 = Migrazione 2):
+//   - index.js usa Registry Google Sheet per bootstrap tenant lookup
+//     (twilio_number → tenant config).
+//   - Non usa più il gateway, solo il webhook Telnyx.
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.7.3 (2026-08-07) — Prompt patch UX (in-flight + no re-greet).
 //
@@ -768,6 +797,8 @@ import { modificaPrenotazioneTool }    from './backend/tools/modifica-prenotazio
 import { cancellaPrenotazioneTool }    from './backend/tools/cancella-prenotazione.js';
 import { controllaDisponibilitaTool }  from './backend/tools/check-availability.js';
 import { richiediEventoTool }          from './backend/tools/richiedi-evento.js';
+// v7.7.4 (2026-08-10) — Info locale ora da Postgres JSONB (era Apps Script)
+import { infoLocaleTool }              from './backend/tools/info-locale.js';
 
 export { DateManager, TimeManager, PeopleManager, IntentDetector,
          ValidationPipeline, isConfirming, isDenying };
@@ -1349,7 +1380,8 @@ export class OpenAIRealtimeClient {
     this._sessionReady     = false;
     this._lastFound        = null;
     this._lastEventInfo    = null;
-    this._restaurantInfo   = null;
+    // v7.7.4: _restaurantInfo rimosso — info locale caricata dinamicamente
+    // dal backend Postgres (info_locale JSONB nel tenant).
     this._pendingCalls     = new Map();
 
     this._toolsEnabled = !!(
@@ -1374,7 +1406,8 @@ export class OpenAIRealtimeClient {
         console.log(`🎙️  [${this.connId}] Realtime WS aperta (model: ${REALTIME_MODEL}) — ristorante="${rn}"`);
         console.log(`📞 [${this.connId}] callerPhone=${this.callerPhone || '(unknown)'} to=${this.to || '(unknown)'} toolsEnabled=${this._toolsEnabled}`);
         this._sendSessionUpdate();
-        if (this._toolsEnabled) this._fetchRestaurantInfo();
+        // v7.7.4: rimosso pre-fetch info locale — ora è già dentro restaurantConfig
+        // (viene caricato con getTenantByPhone insieme al resto della config).
         resolve();
       });
 
@@ -1911,39 +1944,26 @@ Non prendere prenotazioni.`;
   }
 
   async _toolInfoLocale({ argomento }) {
-    if (!this._restaurantInfo) await this._fetchRestaurantInfo();
-    const info = this._restaurantInfo || {};
-    const arg = String(argomento || '').toLowerCase().trim();
+    // v7.7.4: Migrato da Apps Script a backend Postgres (info_locale JSONB).
+    // Il backend restituisce l'oggetto completo o filtrato per argomento.
+    const r = await infoLocaleTool(this.restaurantConfig, { argomento }, {
+      callId: this.connId,
+      callerPhone: this.callerPhone || '',
+    });
 
-    const filtered = {};
-    const wants = (keys) => keys.some(k => arg.includes(k));
-
-    if (wants(['menu','piatti','primi','secondi','antipasti','dolci','specialità']))
-      filtered.menu = info.menuDetails || info.menuText || null;
-    if (wants(['vegan','vegetar']))          filtered.vegano        = info.vegan          || null;
-    if (wants(['glutine','celiac','celia'])) filtered.senza_glutine = info.glutenFree     || null;
-    if (wants(['parcheggio','parking']))     filtered.parcheggio    = info.parking        || null;
-    if (wants(['accessib','disab','sedia','rotelle'])) filtered.accessibilita = info.accessibility || null;
-    if (wants(['pag','carta','bancomat','contant']))   filtered.pagamenti     = info.paymentMethods || null;
-    if (wants(['dehor','esterno','fuori','giardino','tavoli fuori'])) filtered.dehors = info.outdoorSeating || null;
-    if (wants(['seggiolone','bambin']))      filtered.seggiolone    = info.highchair     || null;
-    if (wants(['prezz','costo','quanto cost','coperto'])) filtered.prezzi = info.prices || null;
-    if (wants(['cucina','tipo','specialit'])) filtered.cucina       = info.cuisine       || null;
-    if (wants(['indirizz','dove','via']))    filtered.indirizzo    = info.address       || null;
-    if (wants(['telefono','contatt','numero'])) filtered.telefono   = info.phone         || null;
-
-    if (Object.keys(filtered).length === 0) {
-      filtered.cucina     = info.cuisine || null;
-      filtered.parcheggio = info.parking || null;
-      filtered.vegano     = info.vegan   || null;
-      filtered.pagamenti  = info.paymentMethods || null;
+    if (!r?.success) {
+      return { informazione_non_disponibile: true };
     }
 
-    const out = {};
-    for (const k of Object.keys(filtered)) if (filtered[k]) out[k] = filtered[k];
+    const info = r.info || {};
+    if (Object.keys(info).length === 0) {
+      return { informazione_non_disponibile: true };
+    }
 
-    if (Object.keys(out).length === 0) return { informazione_non_disponibile: true };
-    return out;
+    // Ritorno l'oggetto direttamente al modello. Le chiavi sono libere
+    // (dipendono da come il ristoratore ha popolato tenants.info_locale).
+    // Il modello sceglie cosa dire in base alla domanda del cliente.
+    return info;
   }
 
   async _toolRichiediEvento({ nome, data, ora, persone, note, email }) {
@@ -2153,42 +2173,10 @@ Non prendere prenotazioni.`;
     return words.length === 0;
   }
 
-  async _fetchRestaurantInfo() {
-    try {
-      const r = await this._callAppsScript({ action: 'get_restaurant_info' });
-      if (r?.success && r.info) {
-        this._restaurantInfo = r.info;
-        console.log(`📋 [${this.connId}] Info locale caricata`);
-      }
-    } catch (e) { console.log(`⚠️ [${this.connId}] info locale: ${e?.message}`); }
-  }
-
-  async _callAppsScript(payload) {
-    const url = this.restaurantConfig?.apps_script_url || this.restaurantConfig?.appsScriptUrl || process.env.APPS_SCRIPT_URL;
-    if (!url) return null;
-    const rn = this.restaurantConfig?.restaurant_name || this.restaurantConfig?.restaurantName || '?';
-    console.log(`🌐 [${this.connId}] → Apps Script (${rn}): ${JSON.stringify(payload).substring(0, 250)}`);
-    const controller = new AbortController();
-    // v7.5.5 (2026-08-04): timeout 25s → 60s.
-    //   Motivo: chiamate reali Telnyx mostravano check_availability = 12s e
-    //   crea_prenotazione = 16s. Con timeout 25s, sotto pressione (log grande
-    //   o rate limit) scattava l'abort MA l'App Script aveva già scritto la
-    //   prenotazione → modello ritentava → duplicato (bug Costa in run 43).
-    //   60s è margine di sicurezza sufficiente per ogni operazione realistica.
-    const to = setTimeout(() => controller.abort(), 60000);
-    try {
-      const resp = await fetch(url, {
-        method: 'POST', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      clearTimeout(to);
-      const txt = await resp.text();
-      try { return JSON.parse(txt); } catch { return null; }
-    } catch (e) {
-      clearTimeout(to);
-      if (e.name === 'AbortError') { console.error(`❌ [${this.connId}] Apps Script timeout`); return { success: false, reason: 'timeout' }; }
-      throw e;
-    }
-  }
+  // v7.7.4: _fetchRestaurantInfo e _callAppsScript RIMOSSE.
+  //   Info locale ora servita dal backend Postgres (info_locale JSONB in tenants).
+  //   Il gateway non chiama più Apps Script per nessuna tool call.
+  //   Dopo questa versione, la dipendenza Apps Script sopravvive SOLO nel
+  //   Registry Google Sheet (per il tenant lookup in index.js). Sarà eliminata
+  //   in v7.8.0 (Migrazione 2).
 }
