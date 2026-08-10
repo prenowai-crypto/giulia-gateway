@@ -1,5 +1,81 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.7.0 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.7.3 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.7.3 (2026-08-07) — Prompt patch UX (in-flight + no re-greet).
+//
+// Modifica al SYSTEM_PROMPT_TEMPLATE. Nessuna modifica al codice della classe.
+// Contiene già tutti i fix di v7.7.2 (cleanup Blocco 4) non ancora deployati.
+//
+// Bug osservati nei test 07/08 e in chiamata reale, ora fixati:
+//
+// 1. IN-FLIGHT CORRECTION → interpretata come MODIFY (bug osservato).
+//    Sintomi:
+//    - Cliente aggiunge cognome mentre completa la prenotazione → modello
+//      chiama trova_prenotazione (sbagliato — la prenotazione non esiste
+//      ancora).
+//    - Cliente corregge orario prima della conferma → modello chiama
+//      trova_prenotazione.
+//    Test falliti per questa causa: B06-019, B07-001, B07-006, B07-018,
+//    e diversi altri B07-*.
+//    Fix: nuova sezione "# In-flight Corrections vs Modify" posizionata
+//    PRIMA di "# Modify Flow" con esempi espliciti e criterio di
+//    disambiguazione ("hai già chiamato crea_prenotazione in questa call?").
+//
+// 2. SALUTO RIPETUTO DURANTE LA CHIAMATA (bug osservato in chiamata reale).
+//    Sintomi:
+//    - Il modello ripete "Salve, sono l'assistente vocale automatico di..."
+//      in turni successivi al primo (multiple volte per chiamata).
+//    Test che falliscono per questa causa: B02-003, B02-005, B02-007,
+//    B03-020, B04-001, B05-030, e altri.
+//    Fix: nuova sottosezione "## Never re-greet during a call" con divieto
+//    esplicito di ripetere il greeting.
+//
+// NON toccato in v7.7.3:
+//   - Bug "backend risponde slot_available per 16:00" → risolto lato DB
+//     (SQL UPDATE tenants per Osteria Test — eseguito separatamente).
+//   - Bug "modello arabo risponde in inglese" (B03-029) → limite del
+//     modello Realtime GPT-mini, non risolvibile via prompt.
+//   - Falsi positivi test outdated (B05-001..003 date passate, B04-001
+//     forbidden tool call, B07-002..004 test aspettano vecchio comportamento).
+//
+// Riduzione contenuto prompt: 231 righe → ~280 righe (aggiunta netta +49).
+// Nessuna regressione UX attesa.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.7.2 (2026-08-06) — Refactor Fase 2/3 (cleanup Blocco 4).
+//
+// Modifiche al codice della classe (Blocco 4). Nessuna modifica al prompt
+// (Blocco 3) né al backend Postgres.
+//
+// 1. FIX BUG _toolsEnabled (riga 1229 nel v7.7.0, ora ridotta):
+//    Il gateway abilitava le tool call SOLO SE il ristorante aveva un
+//    apps_script_url configurato. Con backend Postgres questo era un bug:
+//    un nuovo ristorante configurato solo in Postgres non poteva usare le
+//    tool call. Rimossa la condizione. Ora _toolsEnabled = active !== false.
+//
+// 2. RIMOSSA funzione _buildWeeklySchedule (28 righe).
+//    Costruiva una tabella settimanale in italiano ("Lunedì CHIUSO...") che
+//    finiva in {{WEEKLY_SCHEDULE}} del prompt v7.5.1. Il prompt v7.7.0 non
+//    contiene più il placeholder — la funzione era dead code.
+//    Rimossa anche la sua chiamata in _buildSystemPrompt.
+//
+// 3. FIX BUG orari nel gateway response (righe 1569-1570 e 1686-1687):
+//    Il codice usava rc?.lunch_start (snake_case) ma il backend Postgres
+//    restituisce rc.lunchStart (camelCase, per compat storica con Registry).
+//    Risultato: quando il modello riceveva esito 'fuori_orario', vedeva
+//    SEMPRE i default hardcoded "12:00-14:30" e "19:00-22:30" invece degli
+//    orari reali del ristorante. Fix: usare camelCase primo, snake_case
+//    fallback ("rc?.lunchStart || rc?.lunch_start || '12:00'").
+//
+// NON toccato:
+//   - Standardizzazione snake_case globale (rimandata: modifiche sincrone
+//     al Registry index.js + backend + gateway sono lavoro di Fase 3+).
+//   - Semplificazione _toolControlla/_toolCrea/_toolModifica per delegare
+//     al backend (Fase 3).
+//   - _callAppsScript e _fetchRestaurantInfo (ancora usati per info_locale).
+//
+// Riduzione file: 2085 → 2068 righe (-17 righe di codice, +commenti).
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.7.0 (2026-08-06) — Refactor prompt Fase 1/3 (backend-first).
 //
@@ -1070,6 +1146,56 @@ If the backend returns esito: gruppo_grande on controlla_disponibilita, do NOT a
 - Use "cliente", "sconosciuto", "n.d." or similar placeholders as the name.
 - Repeat the disclosure on turns after Phase 2.
 
+# In-flight Corrections vs Modify (CRITICAL — read before # Modify Flow)
+
+Two situations LOOK similar but require OPPOSITE handling. You MUST distinguish them.
+
+## Situation A — IN-FLIGHT CORRECTION (during data gathering, before any write)
+
+The caller is completing, correcting, or adjusting information for a booking that HAS NOT YET been written to the system in this call. Signs:
+- You have called controlla_disponibilita but NOT yet crea_prenotazione.
+- You have shown a recap and asked "Confermo?" but the caller is answering with a correction instead of a plain "yes".
+- The caller adds missing information ("il cognome è Bianchi", "aspetta siamo in 3", "no le 22 non le 21").
+
+CORRECT handling:
+1. Update your internal understanding of the booking with the new information.
+2. Recap AGAIN with the corrected data.
+3. Ask for confirmation again.
+4. DO NOT call trova_prenotazione. DO NOT call modifica_prenotazione. The booking does not exist yet — there is nothing to find or modify.
+
+Example (IT):
+- Caller: "prenoto per venerdì alle 21, 2 persone, mi chiamo Giorgio"
+- [silent: controlla_disponibilita → libero]
+- You: "Ricapitolando: venerdì alle 21, 2 persone, a nome Giorgio. Confermo?"
+- Caller: "Il cognome è Bianchi"  ← IN-FLIGHT CORRECTION
+- You: "Perfetto, ricapitolando: venerdì alle 21, 2 persone, a nome Giorgio Bianchi. Confermo?"  ← updated recap
+- Caller: "Sì"
+- [silent: crea_prenotazione]
+- You: "Prenotazione confermata: Giorgio Bianchi, venerdì alle 21, per 2 persone. A presto!"
+
+## Situation B — MODIFY EXISTING BOOKING (after write, or from previous call)
+
+The caller wants to change a booking that has ALREADY been written to the system. Signs:
+- crea_prenotazione has ALREADY been called and returned success in this call, and now the caller wants to change something.
+- The caller references a booking from a previous call ("la mia prenotazione di ieri sera").
+- The caller explicitly says "vorrei modificare la prenotazione" / "vorrei spostare".
+
+CORRECT handling: follow the Modify Flow below (trova_prenotazione → recap → modifica_prenotazione).
+
+## How to tell them apart
+
+Ask yourself: "In THIS call, have I already called crea_prenotazione with success?"
+- NO → it's an in-flight correction. Update recap, ask confirmation again. NO trova_prenotazione.
+- YES (or the caller references a past call) → it's a modify. Use Modify Flow.
+
+If unsure, ask the caller: "Vuole cambiare i dati della prenotazione che stiamo compilando, o modificare una prenotazione già registrata?"
+
+## Never re-greet during a call
+
+Once you have greeted the caller in Phase 1 or Phase 2, you MUST NOT greet them again in the same call. Do NOT start subsequent turns with "Salve, sono l'assistente vocale automatico di...", "Hello, I am the automated voice assistant of...", "Buongiorno...", or any equivalent opening greeting.
+
+Subsequent turns start directly with the substantive content (recap, question, outcome, clarification). The caller has already heard the greeting; repeating it is a bug.
+
 # Modify Flow
 
 To modify an existing booking:
@@ -1228,8 +1354,11 @@ export class OpenAIRealtimeClient {
 
     this._toolsEnabled = !!(
       this.restaurantConfig &&
-      this.restaurantConfig.active !== false &&
-      (this.restaurantConfig.apps_script_url || this.restaurantConfig.appsScriptUrl)
+      this.restaurantConfig.active !== false
+      // v7.7.2: rimossa la condizione apps_script_url. Con backend Postgres
+      // le tool call sono sempre disponibili se il ristorante è attivo.
+      // (Precedente: richiedeva apps_script_url o appsScriptUrl → bug che
+      // impediva di configurare nuovi ristoranti senza Apps Script.)
     );
   }
 
@@ -1291,33 +1420,12 @@ export class OpenAIRealtimeClient {
     this._send({ type: 'session.update', session: sessionConfig });
   }
 
-  // v7.3: tabella settimanale COMPLETAMENTE in italiano
-  _buildWeeklySchedule(rc) {
-    const closedDays = String(rc.closed_days ?? '')
-      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-    const lunchClosedDays = String(rc.lunch_closed_days ?? '')
-      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-    const dinnerClosedDays = String(rc.dinner_closed_days ?? '')
-      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-
-    const ls = rc.lunch_start  || rc.lunchStart  || '12:00';
-    const le = rc.lunch_end    || rc.lunchEnd    || '14:30';
-    const ds = rc.dinner_start || rc.dinnerStart || '19:00';
-    const de = rc.dinner_end   || rc.dinnerEnd   || '22:30';
-
-    const lines = [];
-    for (let d = 0; d < 7; d++) {
-      const nameCap = DAY_NAMES[d].charAt(0).toUpperCase() + DAY_NAMES[d].slice(1);
-      if (closedDays.includes(d)) { lines.push(`- ${nameCap}: CHIUSO tutto il giorno`); continue; }
-      const lunchClosed  = lunchClosedDays.includes(d);
-      const dinnerClosed = dinnerClosedDays.includes(d);
-      if (lunchClosed && dinnerClosed) lines.push(`- ${nameCap}: CHIUSO tutto il giorno`);
-      else if (lunchClosed)  lines.push(`- ${nameCap}: CHIUSO a pranzo. Aperti SOLO a cena dalle ${ds} alle ${de}`);
-      else if (dinnerClosed) lines.push(`- ${nameCap}: Aperti SOLO a pranzo dalle ${ls} alle ${le}. CHIUSO a cena`);
-      else lines.push(`- ${nameCap}: Aperti a pranzo dalle ${ls} alle ${le} E a cena dalle ${ds} alle ${de}`);
-    }
-    return lines.join('\n');
-  }
+  // v7.7.2: _buildWeeklySchedule RIMOSSA. Prima costruiva una tabella settimanale
+  //   in italiano ("Lunedì CHIUSO, Martedì Aperti...") che finiva in {{WEEKLY_SCHEDULE}}
+  //   del prompt. Era necessaria per far rifiutare gli orari senza chiamare
+  //   Apps Script (lento). Con backend Postgres (30ms) non serve più: il modello
+  //   chiama controlla_disponibilita e riceve subito day_closed/time_closed.
+  //   Bonus: il modello non "sa" più gli orari e non può inventarli.
 
   _buildSystemPrompt() {
     const rc = this.restaurantConfig || {};
@@ -1340,14 +1448,15 @@ Non prendere prenotazioni.`;
     const now = DateManager.getNow();
     const todayHuman = `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
     const todayIso   = DateManager.toISO(now);
-    const weeklySchedule = this._buildWeeklySchedule(rc);
+    // v7.7.2: weeklySchedule rimossa. Il prompt v7.7.0 non contiene più
+    // {{WEEKLY_SCHEDULE}} — il modello chiama controlla_disponibilita per
+    // conoscere gli orari (backend Postgres, ~30ms).
 
     return SYSTEM_PROMPT_TEMPLATE
       .replace(/\{\{RECEPTIONIST_NAME\}\}/g, rc.receptionist_name || rc.receptionistName || 'Giulia')
       .replace(/\{\{RESTAURANT_NAME\}\}/g,   rc.restaurant_name   || rc.restaurantName   || 'il ristorante')
       .replace(/\{\{TODAY_HUMAN\}\}/g,       todayHuman)
       .replace(/\{\{TODAY_ISO\}\}/g,         todayIso)
-      .replace(/\{\{WEEKLY_SCHEDULE\}\}/g,   weeklySchedule)
       .replace(/\{\{CALLER_PHONE\}\}/g,      this.callerPhone || '(sconosciuto)');
   }
 
@@ -1583,8 +1692,8 @@ Non prendere prenotazioni.`;
       case 'time_closed':
         return {
           esito: 'fuori_orario',
-          pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
-          cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
+          pranzo: `${rc?.lunchStart || rc?.lunch_start || "12:00"}-${rc?.lunchEnd || rc?.lunch_end || "14:30"}`,
+          cena:   `${rc?.dinnerStart || rc?.dinner_start || "19:00"}-${rc?.dinnerEnd || rc?.dinner_end || "22:30"}`,
           ...slotHint,
         };
 
@@ -1700,8 +1809,8 @@ Non prendere prenotazioni.`;
       if (!ValidationPipeline.isValidTime(newTime, rc)) {
         return {
           aggiornata: false, esito: 'fuori_orario',
-          pranzo: `${rc?.lunch_start || '12:00'}-${rc?.lunch_end || '14:30'}`,
-          cena:   `${rc?.dinner_start || '19:00'}-${rc?.dinner_end || '22:30'}`,
+          pranzo: `${rc?.lunchStart || rc?.lunch_start || "12:00"}-${rc?.lunchEnd || rc?.lunch_end || "14:30"}`,
+          cena:   `${rc?.dinnerStart || rc?.dinner_start || "19:00"}-${rc?.dinnerEnd || rc?.dinner_end || "22:30"}`,
           motivo: 'Orario fuori dai turni di servizio.'
         };
       }
