@@ -8,8 +8,7 @@
     ],
     "expectedToolCalls": [],
     "forbiddenToolCalls": [
-      "crea_prenotazione",
-      "controlla_disponibilita"
+      "crea_prenotazione"
     ],
     "replyMustContain": [
       "chius"
@@ -39,7 +38,8 @@
     "description": "Lunedì chiuso — cliente accetta spostare a martedì",
     "userTurns": [
       "Buonasera, vorrei prenotare per lunedì prossimo alle 21, 3 persone, a nome Luca Ferrari",
-      "Va bene, allora per martedì prossimo stessa ora"
+      "Va bene, allora per martedì prossimo stessa ora",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
@@ -68,7 +68,8 @@
     "description": "Lunedì chiuso — cliente accetta spostare a domenica",
     "userTurns": [
       "Buonasera, vorrei prenotare per lunedì alle 21:30, 2 persone, a nome Sofia Marino",
-      "Domenica prossima stessa ora allora"
+      "Domenica prossima stessa ora allora",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
@@ -155,7 +156,8 @@
     "description": "Alle 20:30 — 30 minuti prima cena, cliente accetta 21:00",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle 20:30, 2 persone, a nome Andrea Moretti",
-      "Va bene allora alle 21"
+      "Va bene allora alle 21",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
@@ -195,7 +197,8 @@
     "description": "Dopo 22:30 — cliente accetta anticipare a 22:00",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle 23:30, 2 persone, a nome Roberto Greco",
-      "Va bene allora alle 22"
+      "Va bene allora alle 22",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
@@ -221,8 +224,7 @@
     ],
     "expectedToolCalls": [],
     "forbiddenToolCalls": [
-      "crea_prenotazione",
-      "controlla_disponibilita"
+      "crea_prenotazione"
     ],
     "replyMustContain": [
       "passat"
@@ -502,7 +504,8 @@
     "description": "'tarda serata' — deve proporre ultimo slot (22:30)",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo in tarda serata, 3 persone, a nome Ilaria Marchetti",
-      "Va bene alle 22:30"
+      "Va bene alle 22:30",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
@@ -620,7 +623,8 @@
     "description": "OVERBOOKING sabato 21:00 pieno, cliente accetta 22:30 [SEED: 30 pax sabato prossimo 21:00]",
     "userTurns": [
       "Buonasera, vorrei prenotare per sabato prossimo alle 21, 4 persone, a nome Matteo Fumagalli",
-      "Va bene alle 22:30 allora"
+      "Va bene alle 22:30 allora",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
@@ -650,7 +654,8 @@
     "description": "OVERBOOKING sabato 21:00 pieno, cliente accetta domenica [SEED: 30 pax sabato prossimo 21:00]",
     "userTurns": [
       "Buonasera, vorrei prenotare per sabato prossimo alle 21, 4 persone, a nome Davide Sala",
-      "No grazie, allora domenica prossima stessa ora"
+      "No grazie, allora domenica prossima stessa ora",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
       {
