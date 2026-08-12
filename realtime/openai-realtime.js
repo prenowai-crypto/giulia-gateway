@@ -1,5 +1,44 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.7.8 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.7.9 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// ═══════════════════════════════════════════════════════════════════════════════
+// Changelog v7.7.9 (2026-08-12) — Confirmation trigger rafforzato (patch mirata
+// al bug residuo osservato in B02-030 sotto v7.7.8).
+//
+// CONTESTO
+//   v7.7.8 ha ridotto drasticamente il bug "cliente conferma → no tool call"
+//   (dal ~10-15% dei test al ~3%), grazie al Tool Call Preambles pattern.
+//   Ma B02-030 sotto v7.7.8 mostra un pattern residuo: il modello scrive nel
+//   recap frasi al futuro tipo "appena dice sì, procedo con la registrazione"
+//   → cliente dice "sì grazie confermo" → modello NON produce output.
+//
+//   Il modello interpreta la sua propria frase al futuro come "l'azione è
+//   già stata annunciata, l'ho già gestita" — e chiude il turno senza fare
+//   la tool call.
+//
+// COSA CAMBIA v7.7.8 → v7.7.9:
+//
+//   Aggiunta sottosezione "## Confirmation is your trigger" in # Confirmation
+//   Gate, formulazione ATOMICA e POSITIVA:
+//
+//   - "Confirmation word from caller = your NEXT response MUST contain the
+//     write tool call"
+//   - "Preamble + tool call = single atomic action triggered by confirmation"
+//   - "Do NOT close recap with future promises like 'appena dice sì procedo'"
+//   - "Keep recap ending short and neutral: just 'Confermo?' — nothing else"
+//   - "When caller confirms, DO IT, do not say it"
+//
+// PRESERVATO INTEGRALMENTE dalla v7.7.8:
+//   - # Tool Call Preambles (pattern nativo GPT-realtime-2.1-mini)
+//   - Sample preamble phrases variati per read/write tools
+//   - Full sequence in Confirmation Gate
+//   - Tutti gli esempi di flow (booking, in-flight corrections, modify)
+//
+// AGGIUNTA TOTALE: +5 righe al prompt, tutte regole positive, zero WRONG/RIGHT.
+//
+// ATTESO SUI TEST (rispetto a v7.7.8):
+//   B02: da 26/30 (87%) a 28-30/30 — il bug B02-030 dovrebbe sparire
+//   B04/B06/B07: nessun cambio significativo rispetto a v7.7.8 atteso
+//
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.7.8 (2026-08-12) — Tool Call Preambles pattern (allineamento a
 // guida ufficiale OpenAI per Realtime models).
@@ -1203,6 +1242,16 @@ Before calling crea_prenotazione, modifica_prenotazione, cancella_prenotazione, 
 6. Speak the outcome to the caller in the Active Conversation Language.
 
 The caller's confirmation is your green light. Do NOT ask again. Do NOT wait for a second confirmation. Preamble + tool call happen in the same response.
+
+## Confirmation is your trigger — respond with tool call, never with future tense
+
+When your recap ends with "Confermo?" and the caller replies with any confirmation word ("sì", "confermo", "va bene", "ok", "perfetto", "grazie", or combinations like "sì grazie confermo"), the NEXT response you produce MUST contain the write tool call. There is no waiting state after confirmation.
+
+Speak your preamble ("perfetto, procedo", "ok, registro subito", or a variant) and in the SAME response call the write tool. The preamble and the tool call are a single atomic action triggered by the caller's confirmation.
+
+Do NOT close your recap with future promises like "appena dice sì, procedo con la registrazione" or "se va bene la registro". These sentences describe what will happen — they do NOT execute it. When the caller then says "sì", you must actually execute: preamble + tool call in the same turn.
+
+Keep the recap ending short and neutral. End with just "Confermo?" or "Confermo la prenotazione?" — nothing else. Do not describe what you will do next. When the caller confirms, DO IT, do not say it.
 
 ## Recap format
 
