@@ -2,12 +2,12 @@
 // INFO LOCALE SERVICE — Info generali + Menu + Chiusure del ristorante
 // ═══════════════════════════════════════════════════════════════════════════════
 // v7.7.5: aggiunta lettura menu strutturato dalla tabella tenant_menu
-//         e chiusure straordinarie da tenant_closures.
+//         e chiusure straordinarie da closures.
 //
 // Fonti dati:
 //   - tenants.info_locale JSONB    → info generali (parcheggio, wifi, ecc.)
 //   - tenant_menu tabella           → piatti strutturati per categoria
-//   - tenant_closures tabella       → chiusure straordinarie
+//   - closures tabella       → chiusure straordinarie
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { query } from '../db.js';
@@ -130,7 +130,7 @@ export async function getClosures(tenant, options = {}) {
   try {
     const result = await query(
       `SELECT date::text AS date, reason
-         FROM tenant_closures
+         FROM closures
         WHERE tenant_id = $1 AND date >= $2
         ORDER BY date ASC
         LIMIT $3`,
@@ -155,7 +155,7 @@ export async function isSpecialClosureDate(tenant, dateISO) {
 
   try {
     const result = await query(
-      `SELECT reason FROM tenant_closures
+      `SELECT reason FROM closures
         WHERE tenant_id = $1 AND date = $2::date
         LIMIT 1`,
       [tenant.id, dateISO]
