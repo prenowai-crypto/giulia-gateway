@@ -10,7 +10,8 @@
 // Il campo `argomento` guida cosa restituire:
 //   - "menu", "piatti", "cosa avete", "primi", "secondi", "antipasti" ecc.
 //                                        → menu strutturato
-//   - "chiusure", "chiuso", "aperto il..." → chiusure straordinarie
+//   - "chiusure", "chiuso", "festivo"    → chiusure straordinarie
+//   - "orari", "apertura", "quando aprite" → info generali con orari (JSONB)
 //   - "parcheggio", "wifi", "accessibilità", "cucina", "pagamento", ecc.
 //                                        → info dal JSONB
 //   - vuoto o non riconosciuto           → tutto (info + menu breve)
@@ -31,9 +32,20 @@ const MENU_KEYWORDS = [
   'specialit', 'cucina',
 ];
 
+// FIX v7.7.11: rimosse 'aperto' e 'apert' — matchavano 'quando aprite',
+// 'orari di apertura' e triggeravano getClosures invece di getInfoLocale.
+// Le chiusure sono eventi straordinari, non domande sugli orari base.
 const CLOSURE_KEYWORDS = [
-  'chiuso', 'chiusure', 'chiudete', 'aperto', 'apert',
-  'evento privato', 'festivo',
+  'chiuso', 'chiusa', 'chiuse', 'chiusi', 'chiusure', 'chiudete',
+  'evento privato', 'festivo', 'festivi', 'ferie', 'vacanze',
+];
+
+// FIX v7.7.11: nuova categoria per domande sugli orari base di apertura.
+// Match esplicito prima di CLOSURE_KEYWORDS per evitare falsi positivi.
+const OPENING_KEYWORDS = [
+  'orari', 'orario', 'apertura', 'aperture', 'aprite', 'apre', 'aprono',
+  'quando siete aperti', 'quando siete aperte', 'quando aprite',
+  'a che ora', 'che ore', 'che orari',
 ];
 
 const CATEGORY_MAP = {
@@ -78,6 +90,17 @@ export async function infoLocaleTool(restaurantConfig, params = {}, meta = {}) {
       return { success: true, tipo: 'menu', menu: menuResult.menu, count: menuResult.count };
     }
     // Se il menu è vuoto, fallback su info generali
+  }
+
+  // FIX v7.7.11: check OPENING_KEYWORDS PRIMA di CLOSURE_KEYWORDS.
+  // Se l'argomento riguarda gli orari di apertura → restituisci info generali (JSONB)
+  // che contengono gli orari base, NON le chiusure straordinarie.
+  if (argomento && containsAny(argomento, OPENING_KEYWORDS)) {
+    const infoResult = await getInfoLocale(tenant);
+    if (infoResult.success) {
+      return { success: true, tipo: 'info', info: infoResult.info || {} };
+    }
+    // Se info è vuota, fallback sotto
   }
 
   // Se l'argomento riguarda le chiusure → restituisci chiusure future
