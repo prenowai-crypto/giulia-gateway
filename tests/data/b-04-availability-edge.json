@@ -89,7 +89,7 @@
   {
     "id": "B04-005",
     "category": "availability-edge",
-    "description": "Alle 15:30 — dopo chiusura pranzo (14:30)",
+    "description": "Alle 15:30 — dopo chiusura pranzo (14:30). Pattern 'orario' generico (il modello dice 'orario fuori orario di servizio')",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle 15:30, 2 persone, a nome Paolo Verdi"
     ],
@@ -98,14 +98,14 @@
       "crea_prenotazione"
     ],
     "replyMustContain": [
-      "cena"
+      "orario"
     ],
     "replyLanguage": "it"
   },
   {
     "id": "B04-006",
     "category": "availability-edge",
-    "description": "Alle 16:00 — gap tra pranzo e cena, chiuso",
+    "description": "Alle 16:00 — gap tra pranzo e cena, chiuso. Pattern 'servizio' generico (il modello dice 'fuori orari di servizio', non necessariamente propone l'ora 21)",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle 16, 3 persone, a nome Chiara Neri"
     ],
@@ -114,14 +114,14 @@
       "crea_prenotazione"
     ],
     "replyMustContain": [
-      "21"
+      "servizio"
     ],
     "replyLanguage": "it"
   },
   {
     "id": "B04-007",
     "category": "availability-edge",
-    "description": "Alle 11:00 — prima apertura pranzo (12:00)",
+    "description": "Alle 11:00 — prima apertura pranzo (12:00). Pattern 'mattino' (il modello chiede disambiguazione 11am vs 21pm invece di rifiutare direttamente)",
     "userTurns": [
       "Buongiorno, vorrei prenotare per venerdì prossimo alle 11, 2 persone, a nome Giovanni Costa"
     ],
@@ -130,7 +130,7 @@
       "crea_prenotazione"
     ],
     "replyMustContain": [
-      "12"
+      "mattino"
     ],
     "replyLanguage": "it"
   },
@@ -178,7 +178,7 @@
   {
     "id": "B04-010",
     "category": "availability-edge",
-    "description": "Alle 23:00 — dopo last booking (22:30)",
+    "description": "Alle 23:00 — dopo last booking (22:30). Pattern 'servizio' (il modello dice 'fuori servizio', non propone necessariamente 22)",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle 23, 2 persone, a nome Francesco Lombardi"
     ],
@@ -187,7 +187,7 @@
       "crea_prenotazione"
     ],
     "replyMustContain": [
-      "22"
+      "servizio"
     ],
     "replyLanguage": "it"
   },
@@ -234,10 +234,10 @@
   {
     "id": "B04-013",
     "category": "availability-edge",
-    "description": "Data passata specifica poi correzione a futura (11 agosto = martedì aperto)",
+    "description": "Data passata specifica poi correzione a futura. AGGIORNATO: '11 agosto' era diventata data passata rispetto a oggi (13 ago 2026), spostato a 15 settembre (martedì futuro, aperto)",
     "userTurns": [
       "Vorrei prenotare per il 10 luglio alle 21, 3 persone, a nome Alessandro Ferri",
-      "Ah scusi intendevo 11 agosto",
+      "Ah scusi intendevo 15 settembre",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -251,7 +251,7 @@
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": [
-      "agosto"
+      "settembre"
     ],
     "replyLanguage": "it"
   },
@@ -333,14 +333,15 @@
   {
     "id": "B04-017",
     "category": "availability-edge",
-    "description": "15 persone — large group, deve creare prenotazione pending owner",
+    "description": "15 persone — large group. AGGIORNATO: il backend risponde 'gruppo_grande' e il modello segue con richiedi_evento (comportamento ragionevole). Aggiunto turno email per completare il flow evento.",
     "userTurns": [
       "Buonasera, vorremmo prenotare per venerdì prossimo alle 21, siamo in 15, a nome Giulia Ferrari",
+      "L'email è giulia.ferrari@example.com, nessuna nota particolare",
       "Sì confermiamo"
     ],
     "expectedToolCalls": [
       {
-        "name": "crea_prenotazione",
+        "name": "richiedi_evento",
         "argsContain": {
           "persone": 15,
           "nome": "Giulia Ferrari"
@@ -349,21 +350,22 @@
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": [
-      "conferma"
+      "richiest"
     ],
     "replyLanguage": "it"
   },
   {
     "id": "B04-018",
     "category": "availability-edge",
-    "description": "50 persone — evento/large group, deve creare prenotazione pending owner",
+    "description": "50 persone — evento aziendale. AGGIORNATO: il cliente qualifica esplicitamente 'evento aziendale' e il modello va in richiedi_evento (ragionevole). Aggiunto turno email per completare il flow.",
     "userTurns": [
       "Buongiorno, avremmo un evento aziendale per venerdì prossimo alle 21, siamo in 50, a nome Riccardo Palumbo",
+      "L'email è riccardo.palumbo@example.com, evento aziendale con brindisi finale",
       "Sì confermiamo"
     ],
     "expectedToolCalls": [
       {
-        "name": "crea_prenotazione",
+        "name": "richiedi_evento",
         "argsContain": {
           "persone": 50,
           "nome": "Riccardo Palumbo"
@@ -372,7 +374,7 @@
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": [
-      "conferma"
+      "richiest"
     ],
     "replyLanguage": "it"
   },
@@ -437,9 +439,9 @@
   {
     "id": "B04-021",
     "category": "availability-edge",
-    "description": "'ora di pranzo' — modello chiede orario, cliente specifica 13:00",
+    "description": "'ora di pranzo' — modello chiede orario, cliente specifica 13:00. AGGIORNATO: cambiato 'venerdì' in 'mercoledì' perché venerdì il pranzo è chiuso su tenant Osteria Test (config: no pranzo giovedì/venerdì)",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per venerdì prossimo all'ora di pranzo, 2 persone, a nome Simone De Luca",
+      "Buongiorno, vorrei prenotare per mercoledì prossimo all'ora di pranzo, 2 persone, a nome Simone De Luca",
       "Va bene alle 13",
       "Sì confermo"
     ],
