@@ -70,7 +70,7 @@
 // Estensione della Migrazione 1: oltre a info generali del ristorante (JSONB),
 // ora il backend Postgres serve anche:
 //   - Menu strutturato per categoria/piatto/prezzo/descrizione (tabella tenant_menu)
-//   - Chiusure straordinarie (tabella tenant_closures)
+//   - Chiusure straordinarie (tabella closures)
 //
 // _toolInfoLocale ora smista tra 3 tipi di risposta in base all'`argomento`:
 //   - tipo: 'menu'      → il modello riceve piatti raggruppati per categoria
@@ -87,7 +87,7 @@
 // Prerequisito DB (eseguire migration-1-info-menu-closures.sql su Neon):
 //   - ALTER TABLE tenants ADD COLUMN info_locale JSONB
 //   - CREATE TABLE tenant_menu
-//   - CREATE TABLE tenant_closures
+//   - CREATE TABLE closures
 //   - SEED Osteria Test con i dati Excel
 //
 // Multi-tenant: ogni tabella ha tenant_id UUID con FK verso tenants(id).
