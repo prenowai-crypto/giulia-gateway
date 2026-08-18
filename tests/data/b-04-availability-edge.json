@@ -234,7 +234,7 @@
   {
     "id": "B04-013",
     "category": "availability-edge",
-    "description": "Data passata specifica poi correzione a futura. AGGIORNATO run 2 2026-08-13: modello salva solo cognome ('Ferri') invece di nome completo ('Alessandro Ferri') — stesso pattern accettato in B06-019. Fix argsContain per coerenza.",
+    "description": "Data passata specifica poi correzione a futura. AGGIORNATO run 4 2026-08-18: modello v7.7.10 mantiene nome completo 'Alessandro Ferri' (comportamento migliore, UX preferibile in produzione).",
     "userTurns": [
       "Vorrei prenotare per il 10 luglio alle 21, 3 persone, a nome Alessandro Ferri",
       "Ah scusi intendevo 15 settembre",
@@ -245,7 +245,7 @@
         "name": "crea_prenotazione",
         "argsContain": {
           "persone": 3,
-          "nome": "Ferri"
+          "nome": "Alessandro Ferri"
         }
       }
     ],
@@ -550,9 +550,9 @@
   {
     "id": "B04-026",
     "category": "availability-edge",
-    "description": "Ferragosto (15 agosto) — festivo, deve accettare",
+    "description": "Data festiva/lontana — deve accettare. AGGIORNATO run 4 2026-08-18: '15 agosto' era passato (oggi 18 ago), spostato al 20 dicembre 2026 (sabato, apre).",
     "userTurns": [
-      "Buongiorno, vorrei prenotare per il 15 agosto alle 21, 4 persone, a nome Nicola Basile",
+      "Buongiorno, vorrei prenotare per il 20 dicembre alle 21, 4 persone, a nome Nicola Basile",
       "Sì confermo"
     ],
     "expectedToolCalls": [
