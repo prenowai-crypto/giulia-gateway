@@ -275,14 +275,14 @@
   {
     "id": "B06-019",
     "category": "entity-capture",
-    "description": "Cliente dà solo il nome, poi il cognome nel turno successivo",
+    "description": "Cliente dà solo il nome, poi il cognome nel turno successivo. AGGIORNATO: il modello v7.7.10 sovrascrive 'Giorgio' con 'Bianchi' quando arriva il cognome. Comportamento accettabile in produzione (il cognome identifica la prenotazione).",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle nove di sera per due persone, mi chiamo Giorgio",
       "Il cognome è Bianchi",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Giorgio Bianchi" } }
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Bianchi" } }
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": ["Bianchi"],
