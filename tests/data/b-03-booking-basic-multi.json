@@ -26,10 +26,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Smith",
-      "voice assistant"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "voice assistant",
+        "voice AI",
+        "AI voice",
+        "automated voice",
+        "AI assistant"
+      ]
+    },
     "replyLanguage": "en"
   },
   {
@@ -59,10 +64,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Johnson",
-      "voice assistant"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "voice assistant",
+        "voice AI",
+        "AI voice",
+        "automated voice",
+        "AI assistant"
+      ]
+    },
     "replyLanguage": "en"
   },
   {
@@ -92,10 +102,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Brown",
-      "voice assistant"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "voice assistant",
+        "voice AI",
+        "AI voice",
+        "automated voice",
+        "AI assistant"
+      ]
+    },
     "replyLanguage": "en"
   },
   {
@@ -125,10 +140,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Dupont",
-      "assistant vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "assistant vocal",
+        "assistante vocale",
+        "assistant IA",
+        "assistant automatique"
+      ]
+    },
     "replyLanguage": "fr"
   },
   {
@@ -158,10 +177,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Martin",
-      "assistant vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "assistant vocal",
+        "assistante vocale",
+        "assistant IA",
+        "assistant automatique"
+      ]
+    },
     "replyLanguage": "fr"
   },
   {
@@ -191,10 +214,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Bernard",
-      "assistant vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "assistant vocal",
+        "assistante vocale",
+        "assistant IA",
+        "assistant automatique"
+      ]
+    },
     "replyLanguage": "fr"
   },
   {
@@ -224,10 +251,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Müller",
-      "Sprachassistent"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "Sprachassistent",
+        "Sprach-KI",
+        "Sprachassistentin",
+        "KI-Assistent"
+      ]
+    },
     "replyLanguage": "de"
   },
   {
@@ -257,10 +288,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Schmidt",
-      "Sprachassistent"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "Sprachassistent",
+        "Sprach-KI",
+        "Sprachassistentin",
+        "KI-Assistent"
+      ]
+    },
     "replyLanguage": "de"
   },
   {
@@ -290,10 +325,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Weber",
-      "Sprachassistent"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "Sprachassistent",
+        "Sprach-KI",
+        "Sprachassistentin",
+        "KI-Assistent"
+      ]
+    },
     "replyLanguage": "de"
   },
   {
@@ -323,10 +362,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "García",
-      "asistente vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "asistente vocal",
+        "asistente de voz",
+        "asistente virtual",
+        "asistente automático",
+        "asistente automática"
+      ]
+    },
     "replyLanguage": "es"
   },
   {
@@ -356,10 +400,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "López",
-      "asistente vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "asistente vocal",
+        "asistente de voz",
+        "asistente virtual",
+        "asistente automático",
+        "asistente automática"
+      ]
+    },
     "replyLanguage": "es"
   },
   {
@@ -389,10 +438,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Fernández",
-      "asistente vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "asistente vocal",
+        "asistente de voz",
+        "asistente virtual",
+        "asistente automático",
+        "asistente automática"
+      ]
+    },
     "replyLanguage": "es"
   },
   {
@@ -422,10 +476,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Silva",
-      "assistente vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "assistente de voz",
+        "assistente vocal",
+        "assistente virtual",
+        "assistente automático",
+        "assistente automática"
+      ]
+    },
     "replyLanguage": "pt"
   },
   {
@@ -455,10 +514,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Santos",
-      "assistente vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "assistente de voz",
+        "assistente vocal",
+        "assistente virtual",
+        "assistente automático",
+        "assistente automática"
+      ]
+    },
     "replyLanguage": "pt"
   },
   {
@@ -488,10 +552,15 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Pereira",
-      "assistente vocal"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "assistente de voz",
+        "assistente vocal",
+        "assistente virtual",
+        "assistente automático",
+        "assistente automática"
+      ]
+    },
     "replyLanguage": "pt"
   },
   {
@@ -521,10 +590,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Vries",
-      "stemassistent"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "spraakassistent",
+        "stemassistent",
+        "stem-assistent",
+        "voice assistant"
+      ]
+    },
     "replyLanguage": "nl"
   },
   {
@@ -554,10 +627,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Bakker",
-      "stemassistent"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "spraakassistent",
+        "stemassistent",
+        "stem-assistent",
+        "voice assistant"
+      ]
+    },
     "replyLanguage": "nl"
   },
   {
@@ -587,10 +664,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Jansen",
-      "stemassistent"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "spraakassistent",
+        "stemassistent",
+        "stem-assistent",
+        "voice assistant"
+      ]
+    },
     "replyLanguage": "nl"
   },
   {
@@ -620,10 +701,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Nowak",
-      "asystent głosowy"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "asystent głosowy",
+        "asystentem głosowym",
+        "asystent"
+      ]
+    },
+    "replyLanguage": "pl"
   },
   {
     "id": "B03-020",
@@ -652,10 +737,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Kowalska",
-      "asystent głosowy"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "asystent głosowy",
+        "asystentem głosowym",
+        "asystent"
+      ]
+    },
+    "replyLanguage": "pl"
   },
   {
     "id": "B03-021",
@@ -684,10 +773,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "Zieliński",
-      "asystent głosowy"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "asystent głosowy",
+        "asystentem głosowym",
+        "asystent"
+      ]
+    },
+    "replyLanguage": "pl"
   },
   {
     "id": "B03-022",
@@ -716,9 +809,16 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "голосовой"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "голосовой",
+        "голосового",
+        "голосовой ассистент",
+        "AI-ассистент",
+        "ассистент"
+      ]
+    },
+    "replyLanguage": "ru"
   },
   {
     "id": "B03-023",
@@ -747,9 +847,16 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "голосовой"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "голосовой",
+        "голосового",
+        "голосовой ассистент",
+        "AI-ассистент",
+        "ассистент"
+      ]
+    },
+    "replyLanguage": "ru"
   },
   {
     "id": "B03-024",
@@ -778,9 +885,16 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "голосовой"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "голосовой",
+        "голосового",
+        "голосовой ассистент",
+        "AI-ассистент",
+        "ассистент"
+      ]
+    },
+    "replyLanguage": "ru"
   },
   {
     "id": "B03-025",
@@ -809,9 +923,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "アシスタント"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "アシスタント",
+        "ボイス",
+        "音声アシスタント"
+      ]
+    },
+    "replyLanguage": "ja"
   },
   {
     "id": "B03-026",
@@ -840,9 +959,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "アシスタント"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "アシスタント",
+        "ボイス",
+        "音声アシスタント"
+      ]
+    },
+    "replyLanguage": "ja"
   },
   {
     "id": "B03-027",
@@ -871,9 +995,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "语音助手"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "语音助手",
+        "语音助理",
+        "智能助手"
+      ]
+    },
+    "replyLanguage": "zh"
   },
   {
     "id": "B03-028",
@@ -902,9 +1031,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "语音助手"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "语音助手",
+        "语音助理",
+        "智能助手"
+      ]
+    },
+    "replyLanguage": "zh"
   },
   {
     "id": "B03-029",
@@ -933,9 +1067,14 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "المساعد الصوتي"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "المساعد الصوتي",
+        "المساعد",
+        "مساعد صوتي"
+      ]
+    },
+    "replyLanguage": "ar"
   },
   {
     "id": "B03-030",
@@ -964,8 +1103,13 @@
       "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "المساعد الصوتي"
-    ]
+    "replyMustContain": {
+      "any_of": [
+        "المساعد الصوتي",
+        "المساعد",
+        "مساعد صوتي"
+      ]
+    },
+    "replyLanguage": "ar"
   }
 ]
