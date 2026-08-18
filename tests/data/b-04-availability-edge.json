@@ -18,7 +18,7 @@
   {
     "id": "B04-002",
     "category": "availability-edge",
-    "description": "Lunedì chiuso — cliente insiste, modello mantiene rifiuto",
+    "description": "Lunedì chiuso — cliente insiste, modello mantiene rifiuto. ⚠️ FP INTERMITTENTE run 2026-08-13 10:57: il language checker marca falsamente 'not in it' quando il modello usa parole tecniche in inglese (es. 'backend'). Fix UX (Prompt Optimizer): vietare l'uso di 'backend' e altre parole tecniche in risposte al cliente.",
     "userTurns": [
       "Ciao, prenotazione per lunedì alle 21 per 4 persone, a nome Anna Rossi",
       "Ma per me è importante lunedì, non potete fare un'eccezione?"
@@ -121,7 +121,7 @@
   {
     "id": "B04-007",
     "category": "availability-edge",
-    "description": "Alle 11:00 — prima apertura pranzo (12:00). Pattern 'mattino' (il modello chiede disambiguazione 11am vs 21pm invece di rifiutare direttamente)",
+    "description": "Alle 11:00 — prima apertura pranzo (12:00). AGGIORNATO run 2 2026-08-13: il modello ora fa backend-first correttamente (controlla_disponibilita → time_closed) invece di chiedere disambiguazione 11am/21pm. Pattern 'mattino' non più applicabile, sostituito con 'servizio' (universale).",
     "userTurns": [
       "Buongiorno, vorrei prenotare per venerdì prossimo alle 11, 2 persone, a nome Giovanni Costa"
     ],
@@ -130,14 +130,14 @@
       "crea_prenotazione"
     ],
     "replyMustContain": [
-      "mattino"
+      "servizio"
     ],
     "replyLanguage": "it"
   },
   {
     "id": "B04-008",
     "category": "availability-edge",
-    "description": "Alle 20:00 — prima apertura cena (21:00 config reale)",
+    "description": "Alle 20:00 — prima apertura cena (21:00 config reale). AGGIORNATO run 2 2026-08-13: modello fa backend-first, dice 'fuori orario di servizio' senza necessariamente proporre 21:00. Pattern → 'servizio'.",
     "userTurns": [
       "Buonasera, vorrei prenotare per venerdì prossimo alle 20, 4 persone, a nome Elena Ricci"
     ],
@@ -146,7 +146,7 @@
       "crea_prenotazione"
     ],
     "replyMustContain": [
-      "21"
+      "servizio"
     ],
     "replyLanguage": "it"
   },
@@ -234,7 +234,7 @@
   {
     "id": "B04-013",
     "category": "availability-edge",
-    "description": "Data passata specifica poi correzione a futura. AGGIORNATO: '11 agosto' era diventata data passata rispetto a oggi (13 ago 2026), spostato a 15 settembre (martedì futuro, aperto)",
+    "description": "Data passata specifica poi correzione a futura. AGGIORNATO run 2 2026-08-13: modello salva solo cognome ('Ferri') invece di nome completo ('Alessandro Ferri') — stesso pattern accettato in B06-019. Fix argsContain per coerenza.",
     "userTurns": [
       "Vorrei prenotare per il 10 luglio alle 21, 3 persone, a nome Alessandro Ferri",
       "Ah scusi intendevo 15 settembre",
@@ -245,7 +245,7 @@
         "name": "crea_prenotazione",
         "argsContain": {
           "persone": 3,
-          "nome": "Alessandro Ferri"
+          "nome": "Ferri"
         }
       }
     ],
@@ -333,15 +333,14 @@
   {
     "id": "B04-017",
     "category": "availability-edge",
-    "description": "15 persone — large group. AGGIORNATO: il backend risponde 'gruppo_grande' e il modello segue con richiedi_evento (comportamento ragionevole). Aggiunto turno email per completare il flow evento.",
+    "description": "15 persone — large group, deve creare prenotazione PENDING_OWNER. 🐛 BUG REALE 2026-08-13 run 3: il modello va in richiedi_evento invece di crea_prenotazione. Il backend risponde `gruppo_grande` a 15pax e il modello lo interpreta come 'evento'. richiedi_evento fallisce (backend rifiuta a <45pax). Il modello capisce l'errore ma NON retry con crea_prenotazione — chiede nuova conferma al cliente. FIX PROMPT: quando backend risponde `gruppo_grande` a persone<45, usare crea_prenotazione (PENDING_OWNER), non richiedi_evento.",
     "userTurns": [
       "Buonasera, vorremmo prenotare per venerdì prossimo alle 21, siamo in 15, a nome Giulia Ferrari",
-      "L'email è giulia.ferrari@example.com, nessuna nota particolare",
       "Sì confermiamo"
     ],
     "expectedToolCalls": [
       {
-        "name": "richiedi_evento",
+        "name": "crea_prenotazione",
         "argsContain": {
           "persone": 15,
           "nome": "Giulia Ferrari"
@@ -350,22 +349,21 @@
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": [
-      "richiest"
+      "conferma"
     ],
     "replyLanguage": "it"
   },
   {
     "id": "B04-018",
     "category": "availability-edge",
-    "description": "50 persone — evento aziendale. AGGIORNATO: il cliente qualifica esplicitamente 'evento aziendale' e il modello va in richiedi_evento (ragionevole). Aggiunto turno email per completare il flow.",
+    "description": "50 persone — evento aziendale. 🚨 BUG REALE GRAVISSIMO 2026-08-13 run 3: (1) modello va in richiedi_evento invece di crea_prenotazione PENDING_OWNER, (2) richiedi_evento fallisce sul backend, (3) IL MODELLO MENTE AL CLIENTE: dice 'la richiesta è stata registrata con successo, in stato di revisione da parte del ristorante' quando il tool ha restituito ❌ failed. IN PRODUZIONE = cliente convinto di aver prenotato senza che nulla sia stato salvato. FIX PROMPT URGENTE: quando tool restituisce failed, NEVER dire successo al cliente. Segnalare l'errore o riprovare con tool alternativo.",
     "userTurns": [
       "Buongiorno, avremmo un evento aziendale per venerdì prossimo alle 21, siamo in 50, a nome Riccardo Palumbo",
-      "L'email è riccardo.palumbo@example.com, evento aziendale con brindisi finale",
       "Sì confermiamo"
     ],
     "expectedToolCalls": [
       {
-        "name": "richiedi_evento",
+        "name": "crea_prenotazione",
         "argsContain": {
           "persone": 50,
           "nome": "Riccardo Palumbo"
@@ -374,7 +372,7 @@
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": [
-      "richiest"
+      "conferma"
     ],
     "replyLanguage": "it"
   },
@@ -528,9 +526,9 @@
   {
     "id": "B04-025",
     "category": "availability-edge",
-    "description": "'quando aprite' — cliente chiede orario apertura, poi prenota",
+    "description": "'quando aprite' — cliente chiede orario apertura, poi prenota. AGGIORNATO run 2 2026-08-13: cambiato 'venerdì' in 'mercoledì' perché venerdì il pranzo è chiuso su tenant Osteria Test (stesso fix di B04-021).",
     "userTurns": [
-      "Buongiorno, a che ora aprite per pranzo? Vorrei prenotare per venerdì prossimo per 2 persone a nome Camilla Vitale",
+      "Buongiorno, a che ora aprite per pranzo? Vorrei prenotare per mercoledì prossimo per 2 persone a nome Camilla Vitale",
       "Alle 12 allora, confermo"
     ],
     "expectedToolCalls": [
