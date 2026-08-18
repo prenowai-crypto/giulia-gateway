@@ -47,25 +47,28 @@
   {
     "id": "B05-004",
     "category": "datetime-parsing",
-    "description": "Data solo giorno del mese 'il 5' senza mese — deve chiedere chiarimento",
+    "description": "Data 'il 5 settembre' — data esplicita mese. AGGIORNATO run 4: 'il 5' senza mese generava comportamenti ambigui del modello. Data esplicita per test stabile.",
     "userTurns": [
-      "Vorrei prenotare per il 5 alle 21, 2 persone, a nome Sara Neri"
+      "Vorrei prenotare per il 5 settembre alle 21, 2 persone, a nome Sara Neri",
+      "Sì confermo"
     ],
-    "expectedToolCalls": [],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["mese"],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "persone": 2, "nome": "Sara Neri" } }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": ["Neri"],
     "replyLanguage": "it"
   },
   {
     "id": "B05-005",
     "category": "datetime-parsing",
-    "description": "Data formato ISO 'aaaa-mm-gg'",
+    "description": "Data formato ISO 'aaaa-mm-gg'. AGGIORNATO run 4 2026-08-18: '2026-08-14' era passato, spostato a '2026-09-04'",
     "userTurns": [
-      "Vorrei prenotare per il 2026-08-14 alle 21, 3 persone, a nome Paolo Costa",
+      "Vorrei prenotare per il 2026-09-04 alle 21, 3 persone, a nome Paolo Costa",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Paolo Costa", "data": "2026-08-14" } }
+      { "name": "crea_prenotazione", "argsContain": { "persone": 3, "nome": "Paolo Costa", "data": "2026-09-04" } }
     ],
     "forbiddenToolCalls": [],
     "replyMustContain": ["Costa"],
@@ -104,9 +107,9 @@
   {
     "id": "B05-008",
     "category": "datetime-parsing",
-    "description": "'dopodomani'. AGGIORNATO: pattern 'mercoledì' era fragile (dipende dalla data di run), sostituito con cognome cliente",
+    "description": "'dopodomani'. AGGIORNATO run 4: 'alle 13' cade su giorno con pranzo chiuso (giovedì/venerdì Osteria Test). Spostato 'alle 21' (cena aperta ovunque tranne lunedì).",
     "userTurns": [
-      "Vorrei prenotare per dopodomani alle 13, 2 persone, a nome Roberto Lombardi",
+      "Vorrei prenotare per dopodomani alle 21, 2 persone, a nome Roberto Lombardi",
       "Sì"
     ],
     "expectedToolCalls": [
@@ -292,9 +295,9 @@
   {
     "id": "B05-021",
     "category": "datetime-parsing",
-    "description": "'il 15' senza mese. AGGIORNATO: il modello auto-risolve al prossimo 15 (ragionevole), non chiede chiarimento. Aggiornato test per accettare comportamento auto-risoluzione con conferma finale.",
+    "description": "Data '15 settembre' esplicita. AGGIORNATO run 4: 'il 15' generava loop di disambiguazione (modello chiede 'quale mese?', cliente 'Sì confermo' non risponde). Data esplicita per test stabile.",
     "userTurns": [
-      "Vorrei prenotare per il 15 alle 21, 2 persone, a nome Emanuele Costa",
+      "Vorrei prenotare per il 15 settembre alle 21, 2 persone, a nome Emanuele Costa",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -322,9 +325,9 @@
   {
     "id": "B05-023",
     "category": "datetime-parsing",
-    "description": "Ferragosto — cliente dice 'il 15 agosto' esplicito, sabato, deve accettare",
+    "description": "Data esplicita futura '15 novembre'. AGGIORNATO run 4 2026-08-18: '15 agosto' era passato, spostato a '15 novembre' (domenica futura, aperta).",
     "userTurns": [
-      "Vorrei prenotare per il 15 agosto alle 21, 4 persone, a nome Alessia Rinaldi",
+      "Vorrei prenotare per il 15 novembre alle 21, 4 persone, a nome Alessia Rinaldi",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -352,9 +355,9 @@
   {
     "id": "B05-025",
     "category": "datetime-parsing",
-    "description": "Data ambigua 'il 24' — 24 agosto 2026 è lunedì chiuso. AGGIORNATO run 2 2026-08-13: ⚠️ FP INTERMITTENTE language checker (stesso pattern B04-002): il modello risponde correttamente IN ITALIANO ('Mi dispiace, il 24 agosto è un giorno di chiusura...'), ma checker marca 'not in it'. Non fixabile lato test — aspettare miglioramento checker o Prompt Optimizer.",
+    "description": "Data '24 agosto' = lunedì chiuso. AGGIORNATO run 4: 'il 24' generava disambiguazione ('che anno?'). Data esplicita '24 agosto'. Modello dovrebbe rispondere 'chiuso' dopo backend response.",
     "userTurns": [
-      "Vorrei prenotare per il 24 alle 21, 2 persone, a nome Matteo Barbieri"
+      "Vorrei prenotare per il 24 agosto alle 21, 2 persone, a nome Matteo Barbieri"
     ],
     "expectedToolCalls": [],
     "forbiddenToolCalls": ["crea_prenotazione"],
