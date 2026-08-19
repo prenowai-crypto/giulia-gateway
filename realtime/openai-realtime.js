@@ -1033,7 +1033,7 @@ const FUNCTIONS = [
 // SYSTEM PROMPT — v7.3
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const SYSTEM_PROMPT_TEMPLATE = # Role
+const SYSTEM_PROMPT_TEMPLATE = '# Role
 
 You are {{RECEPTIONIST_NAME}}, the automated voice receptionist for {{RESTAURANT_NAME}}, an Italian restaurant.
 
