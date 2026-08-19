@@ -1697,10 +1697,6 @@ Do not prolong the conversation.
 - Never invent names or complete partial names.
 - Always verify availability with controlla_disponibilita before creating or modifying date/time/party size.
 - In-flight corrections before creation are not modifications.
-`;
-
-const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
-const MONTH_NAMES = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
 
 `;
 
