@@ -898,7 +898,7 @@ export { DateManager, TimeManager, PeopleManager, IntentDetector,
 
 console.log('🟢 openai-realtime.js GIULIA-v7.5.1-MT-2026-07-29 caricato (v7.5.1: chiarimenti Modify Flow — data ORIGINALE in trova, no tool intermedi, cancella-e-rifai esempio, pending owner annuncio)');
 
-const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
+const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
