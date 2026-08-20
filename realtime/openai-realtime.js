@@ -1929,9 +1929,19 @@ Non prendere prenotazioni.`;
     //   Nota: la feature "alternative allo slot pieno" non è ancora implementata
     //   nel nuovo backend. Da riimplementare in una prossima iterazione.
     const meta = { callId: this.connId, callerPhone: this.callerPhone || '' };
-    const res  = await controllaDisponibilitaTool(rc, {
-      data: dateISO, ora: timeN, persone: ppl,
-    }, meta);
+    const params = { data: dateISO, ora: timeN, persone: ppl };
+
+    // v7.7.16: FIX flow MODIFY — se c'è una trova_prenotazione recente
+    // riuscita (this._lastFound populato), escludo quella prenotazione dal
+    // conteggio capacità. Previene falsi "slot_full" quando il cliente
+    // modifica una prenotazione senza cambiare slot (o cambia persone in
+    // meno), perché altrimenti il backend contava la stessa prenotazione
+    // due volte (originale + nuova richiesta).
+    if (this._lastFound && this._lastFound.length > 0 && this._lastFound[0]?.id) {
+      params.exclude_reservation_id = this._lastFound[0].id;
+    }
+
+    const res  = await controllaDisponibilitaTool(rc, params, meta);
 
     // slot memorizzato — hint per il modello quando cliente cambia solo il giorno
     const slotHint = {
