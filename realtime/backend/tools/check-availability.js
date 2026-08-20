@@ -9,6 +9,7 @@
 //     data: "2026-08-07",
 //     ora: "21:00",
 //     persone: 4,
+//     exclude_reservation_id: "uuid"  // v7.7.16: opzionale, per flow modify
 //   }
 //
 // Risposta output (identica ad Apps Script):
@@ -16,6 +17,12 @@
 //   Slot pieno:   { esito: "slot_full", slot_available: false }
 //   Giorno chiuso: { esito: "day_closed", giorno }
 //   ...
+//
+// v7.7.16 (2026-08-20): aggiunto exclude_reservation_id per flow MODIFY.
+// Il gateway inietta automaticamente questo parametro quando il caller sta
+// modificando una prenotazione esistente (dopo un trova_prenotazione riuscito),
+// così che controlla_disponibilita NON conti la prenotazione originale
+// come già occupante lo slot. Previene falsi "slot_full" durante modify.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { getTenantByPhone } from '../services/tenants.js';
@@ -34,6 +41,8 @@ export async function controllaDisponibilitaTool(restaurantConfig, params, meta 
     date: params.data,
     time: params.ora,
     people: Number(params.persone),
+    // v7.7.16: pass excludeReservationId if provided (used during MODIFY flow)
+    excludeReservationId: params.exclude_reservation_id || undefined,
   });
 
   // Aggiungo il flag `slot_available` boolean per compatibilità con come il
