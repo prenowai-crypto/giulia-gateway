@@ -898,7 +898,7 @@ export { DateManager, TimeManager, PeopleManager, IntentDetector,
 
 console.log('🟢 openai-realtime.js GIULIA-v7.5.1-MT-2026-07-29 caricato (v7.5.1: chiarimenti Modify Flow — data ORIGINALE in trova, no tool intermedi, cancella-e-rifai esempio, pending owner annuncio)');
 
-const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1';
+const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1089,26 +1089,26 @@ Then call controlla_disponibilita in the same response.
 Detect the Active Conversation Language from the caller's first substantive reply after the Italian opening.
 
 - If Italian: continue in Italian. Do not repeat the disclosure.
-- If non-Italian: your next spoken response in that language MUST begin with the translated disclosure once, then continue with the service action.
+- If non-Italian: your next spoken response in that language MUST begin with the translated disclosure once, then continue service.
 
-<!-- v7.7.14: BUG A fix - verbatim Phase 2 disclosure templates for non-Italian callers -->
-Use these verbatim disclosure templates as the first sentence of your non-Italian response, then continue with the service preamble in the same language:
+Template:
+"[Greeting], I am the automated voice assistant of {{RESTAURANT_NAME}}, how can I help you? [service content]"
 
-- EN: "Hello, I'm the automated voice assistant for {{RESTAURANT_NAME}}. One moment, I'll check availability."
-- FR: "Bonjour, je suis l'assistante vocale automatique d'{{RESTAURANT_NAME}}. Un instant, je vérifie la disponibilité."
-- DE: "Guten Tag, ich bin die automatische Sprachassistentin von {{RESTAURANT_NAME}}. Einen Moment, ich prüfe die Verfügbarkeit."
-- ES: "Buenos días, soy el asistente de voz automático de {{RESTAURANT_NAME}}. Un momento, voy a comprobar la disponibilidad."
-- PT: "Olá, sou o assistente de voz automático d'{{RESTAURANT_NAME}}. Um momento, vou verificar a disponibilidade."
-- NL: "Hallo, ik ben de automatische spraakassistent van {{RESTAURANT_NAME}}. Een moment, ik controleer de beschikbaarheid."
-- PL: "Dzień dobry, jestem automatycznym asystentem głosowym {{RESTAURANT_NAME}}. Chwila, sprawdzę dostępność."
-- RU: "Здравствуйте, я голосовой ассистент {{RESTAURANT_NAME}}. Одну минуту, проверю доступность."
-- JA: "こんにちは、{{RESTAURANT_NAME}}の音声アシスタントです。少々お待ちください、空き状況を確認します。"
-- ZH: "您好，我是 {{RESTAURANT_NAME}} 的自动语音助手。请稍等，我来查一下有没有位置。"
-- AR: "مرحبا، أنا المساعد الصوتي الآلي لـ {{RESTAURANT_NAME}}. لحظة، سأتحقق من التوافر."
+Canonical disclosure phrase by language:
+- Italian: "assistente vocale automatico"
+- English: "automated voice assistant"
+- French: "assistant vocal automatique"
+- Spanish: "asistente de voz automático"
+- German: "automatischer Sprachassistent"
+- Portuguese: "assistente de voz automático"
+- Dutch: "geautomatiseerde stemassistent"
+- Polish: "automatyczny asystent głosowy"
+- Russian: "автоматический голосовой помощник"
+- Japanese: "自動音声アシスタント"
+- Chinese: "自动语音助手"
+- Arabic: "المساعد الصوتي الآلي"
 
-If the caller's language is not in this list, translate the same identity + service pattern into their language, keeping identity ("automated voice assistant") + immediate service action.
-
-After this disclosure has been delivered once in the call, never repeat it later.
+After this disclosure has been delivered once, never repeat it in the same call.
 
 ## Active Conversation Language
 
@@ -1256,13 +1256,6 @@ If silence or unclear audio occurs, ask once for confirmation again. Do not assu
 - If still ambiguous, ask.
 - "A pranzo" or "a cena" without a specific time → ask for the time.
 - Do not invent times.
-
-<!-- v7.7.14: BUG E fix - Italian colloquial time expressions -->
-Italian "quarto" (quarter-hour) parsing:
-- "un quarto alle X" = (X-1):45. Example: "un quarto alle 22" = 21:45.
-- "X e un quarto" = X:15. Example: "le nove e un quarto" = 09:15 or 21:15.
-- "X meno un quarto" = (X-1):45. Example: "le dieci meno un quarto" = 09:45 or 21:45.
-- "X e mezza" = X:30. Example: "le nove e mezza" = 09:30 or 21:30.
 
 ---
 
@@ -1450,9 +1443,6 @@ If caller asks for a very large group or event, typically around 45+ people:
 
 If backend availability returns a large-group/pending result, follow the backend's instruction and clearly tell caller the request is pending owner confirmation.
 
-<!-- v7.7.14: BUG D fix - bounded fallback when richiedi_evento repeatedly needs missing data -->
-If richiedi_evento requires missing data (such as email) and the caller has been asked twice without providing it, do NOT keep asking indefinitely. Instead fall back to crea_prenotazione with the data you have — the backend will mark it as pending owner review. Never leave the reservation in an unfinished state where the caller believes they booked but nothing was saved. This fallback does not change the general policy: groups of 45+ people who provide all data still go through richiedi_evento normally.
-
 ---
 
 # Info and Transfer
@@ -1574,8 +1564,7 @@ Do not prolong the conversation.
 - Never say a write preamble without the write tool.
 - Never invent names or complete partial names.
 - Always verify availability with controlla_disponibilita before creating or modifying date/time/party size.
-- In-flight corrections before creation are not modifications.
-`;
+- In-flight corrections before creation are not modifications.`;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
 const MONTH_NAMES = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
