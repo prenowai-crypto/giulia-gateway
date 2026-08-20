@@ -284,46 +284,51 @@
   {
     "id": "B08-019",
     "category": "modify",
-    "description": "SECURITY: caller da +393385354671 tenta modifica di prenotazione con phone diverso (+393999999999). Deve essere rifiutata.",
+    "description": "Caller da telefono diverso da quello della prenotazione. Deve poter modificare comunque (business decision: no security block).",
     "userTurns": [
       "Salve, vorrei modificare la prenotazione a nome Esposito per sabato sera",
-      "Sposto alle dieci"
+      "Sposto alle dieci",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Esposito" } }
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Esposito" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
-    "replyMustContain": ["privacy"],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["22"],
     "replyLanguage": "it"
   },
   {
     "id": "B08-020",
     "category": "modify",
-    "description": "Prenotazione con phone=NULL. Caller tenta modifica. Comportamento: rifiuto o richiesta identificazione.",
+    "description": "Prenotazione con phone=NULL (creata via canale non-vocale). Caller può modificare normalmente.",
     "userTurns": [
       "Buongiorno, prenotazione a nome Anonimo per sabato sera alle nove, sposto alle dieci",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Anonimo" } }
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Anonimo" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": ["Anonimo"],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["22"],
     "replyLanguage": "it"
   },
   {
     "id": "B08-021",
     "category": "modify",
-    "description": "Caller tenta modifica di prenotazione a nome diverso ma con phone che risulta di altra prenotazione. Security check.",
+    "description": "Caller da telefono diverso da quello della prenotazione (Bruno con phone +393999999999). Deve poter modificare comunque.",
     "userTurns": [
       "Salve, vorrei modificare la prenotazione a nome Bruno per sabato sera",
-      "Sposto alle dieci"
+      "Sposto alle dieci",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Bruno" } }
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Bruno" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
-    "replyMustContain": ["privacy"],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["22"],
     "replyLanguage": "it"
   },
   {
