@@ -1,0 +1,472 @@
+[
+  {
+    "id": "B08-001",
+    "category": "modify",
+    "description": "Modifica ora, stesso giorno. Cliente richiama e chiede spostamento orario.",
+    "userTurns": [
+      "Buongiorno, ho una prenotazione per sabato prossimo alle nove di sera a nome Rossi, vorrei spostarla alle dieci",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Rossi" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["22"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-002",
+    "category": "modify",
+    "description": "Modifica data, stesso orario. Cliente sposta di un giorno.",
+    "userTurns": [
+      "Salve, ho prenotato per sabato alle nove di sera a nome Bianchi, vorrei spostare a domenica stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Bianchi" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["domenica"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-003",
+    "category": "modify",
+    "description": "Aumento persone. Da 4 a 6.",
+    "userTurns": [
+      "Buongiorno, ho una prenotazione a nome Verdi per sabato alle nove di sera per quattro persone, saremo in sei",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Verdi" } },
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 6 } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["sei"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-004",
+    "category": "modify",
+    "description": "Diminuzione persone. Da 5 a 3.",
+    "userTurns": [
+      "Salve, prenotazione a nome Marino per sabato sera alle nove, siamo passati da cinque a tre persone",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Marino" } },
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["tre"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-005",
+    "category": "modify",
+    "description": "Aggiunta nota (allergia) a prenotazione esistente senza note.",
+    "userTurns": [
+      "Buongiorno, ho una prenotazione a nome Ferrari per domenica sera alle nove, aggiungete che sono celiaco",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Ferrari" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["celiac"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-006",
+    "category": "modify",
+    "description": "Cambio ora + persone insieme.",
+    "userTurns": [
+      "Salve, prenotazione a nome Costa per domenica alle nove di sera due persone, cambio in alle dieci e siamo in quattro",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Costa" } },
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 4, "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["quattro"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-007",
+    "category": "modify",
+    "description": "Cambio data + ora insieme.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Ricci per domenica alle nove e mezza di sera, sposto a lunedì stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Ricci" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["chius"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-008",
+    "category": "modify",
+    "description": "Cambio data + persone + nuova nota. Modify multi-campo con nota preesistente.",
+    "userTurns": [
+      "Salve, prenotazione a nome Greco per lunedì all'una del pomeriggio, sposto a martedì stessa ora e siamo in cinque, aggiungete che uno è vegetariano",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Greco" } },
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 5 } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["vegetari"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-009",
+    "category": "modify",
+    "description": "Modifica a orario chiuso (giovedì pranzo). Backend deve rifiutare.",
+    "userTurns": [
+      "Salve, prenotazione a nome Testa per sabato sera alle nove, sposto a giovedì all'una del pomeriggio",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Testa" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["chius"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-010",
+    "category": "modify",
+    "description": "Modifica a data passata. Deve essere rifiutata.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Longo per giovedì prossimo sera alle nove, la sposto a lunedì scorso",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Longo" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["passat"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-011",
+    "category": "modify",
+    "description": "Modifica a lunedì (giorno chiusura totale). Backend rifiuta.",
+    "userTurns": [
+      "Salve, prenotazione a nome Sanna per mercoledì sera alle nove, sposto a lunedì stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Sanna" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["chius"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-012",
+    "category": "modify",
+    "description": "Aumento persone oltre MAX_PAX_PER_SLOT=30. Da 20 a 35.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome De Luca per sabato sera alle nove per venti persone, siamo passati a trentacinque",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "De Luca" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione"],
+    "replyMustContain": ["capacit"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-013",
+    "category": "modify",
+    "description": "Aumento persone da 30 a 50 (soglia evento). Deve triggerare flow richiedi_evento.",
+    "userTurns": [
+      "Salve, prenotazione a nome Gallo per sabato sera alle nove per trenta persone, siamo diventati cinquanta",
+      "Va bene, procedete pure"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Gallo" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": ["event"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-014",
+    "category": "modify",
+    "description": "Cliente dà solo nome, senza data. Trova per nome + telefono deve funzionare.",
+    "userTurns": [
+      "Salve, vorrei modificare la mia prenotazione, mi chiamo Palumbo",
+      "Vorrei spostarla alle dieci di sera stessa data",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Palumbo" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["22"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-015",
+    "category": "modify",
+    "description": "Cliente dà nome + data errata. Trova fallback per solo nome.",
+    "userTurns": [
+      "Salve, prenotazione a nome Barone per venerdì sera alle nove, sposto a sabato stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Barone" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Barone"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-016",
+    "category": "modify",
+    "description": "Cliente ha 2 prenotazioni attive (Colombo sabato 22/8 + Colombo sabato 29/8). Il modello deve chiedere quale.",
+    "userTurns": [
+      "Buongiorno, vorrei modificare la mia prenotazione a nome Colombo",
+      "Quella di sabato prossimo, la sposto alle dieci",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Colombo" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["quale"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-017",
+    "category": "modify",
+    "description": "Cliente cerca prenotazione inesistente. Gestione elegante.",
+    "userTurns": [
+      "Salve, vorrei modificare la mia prenotazione a nome Zambrano per domani sera",
+      "Ah forse mi sbaglio di ristorante, grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Zambrano" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["non"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-018",
+    "category": "modify",
+    "description": "Nome ambiguo Rossi vs Grossi. Fuzzy match backend restituisce Grossi (score alto).",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Grossi per venerdì sera alle nove, sposto alle dieci",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Grossi" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Grossi"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-019",
+    "category": "modify",
+    "description": "SECURITY: caller da +393385354671 tenta modifica di prenotazione con phone diverso (+393999999999). Deve essere rifiutata.",
+    "userTurns": [
+      "Salve, vorrei modificare la prenotazione a nome Esposito per sabato sera",
+      "Sposto alle dieci"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Esposito" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
+    "replyMustContain": ["privacy"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-020",
+    "category": "modify",
+    "description": "Prenotazione con phone=NULL. Caller tenta modifica. Comportamento: rifiuto o richiesta identificazione.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Anonimo per sabato sera alle nove, sposto alle dieci",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Anonimo" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione"],
+    "replyMustContain": ["Anonimo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-021",
+    "category": "modify",
+    "description": "Caller tenta modifica di prenotazione a nome diverso ma con phone che risulta di altra prenotazione. Security check.",
+    "userTurns": [
+      "Salve, vorrei modificare la prenotazione a nome Bruno per sabato sera",
+      "Sposto alle dieci"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Bruno" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
+    "replyMustContain": ["privacy"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-022",
+    "category": "modify",
+    "description": "Sostituzione nota completa. 'compleanno' → 'anniversario'.",
+    "userTurns": [
+      "Salve, prenotazione a nome Amato per sabato sera alle nove con nota compleanno, sostituite con anniversario",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Amato" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["anniversar"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-023",
+    "category": "modify",
+    "description": "Rimozione nota esistente. Cliente dice 'togli la nota tavolo esterno'.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Ferri per sabato sera alle nove con nota tavolo esterno, togliete la nota",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Ferri" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["nota"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-024",
+    "category": "modify",
+    "description": "Aggiunta nota a prenotazione senza note esistenti.",
+    "userTurns": [
+      "Salve, prenotazione a nome Serra per sabato sera alle nove, aggiungete che serve seggiolone per bambino",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Serra" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["seggiolon"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-025",
+    "category": "modify",
+    "description": "Cliente cambia idea prima della conferma. No modifica_prenotazione.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Vitale per sabato sera alle nove, sposto alle dieci",
+      "No aspetta, lascio così com'è grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Vitale" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": ["Vitale"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-026",
+    "category": "modify",
+    "description": "Doppia modifica in stessa chiamata: cambio ora poi cambio persone.",
+    "userTurns": [
+      "Salve, prenotazione a nome Neri per sabato sera alle nove tre persone, sposto alle dieci",
+      "Aspetta, cambio anche in quattro persone",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Neri" } },
+      { "name": "modifica_prenotazione", "argsContain": { "persone": 4, "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["quattro"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-027",
+    "category": "modify",
+    "description": "Cliente inizia modify ma poi vuole cancellare (switch intent).",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Ferretti per sabato sera alle nove, sposto alle dieci",
+      "No aspetta, cancellala del tutto",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Ferretti" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-028",
+    "category": "modify",
+    "description": "trova_prenotazione restituisce array vuoto (nome inesistente). Gestione elegante.",
+    "userTurns": [
+      "Salve, vorrei modificare la prenotazione a nome Xhemajli per sabato sera",
+      "Ah forse mi sbaglio, grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Xhemajli" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["non"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-029",
+    "category": "modify",
+    "description": "Modify normale + recap dettagliato. Verifica che il modello dica esplicitamente i dettagli.",
+    "userTurns": [
+      "Buongiorno, prenotazione a nome Cattaneo per sabato sera alle nove per due persone, sposto alle dieci",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Cattaneo" } },
+      { "name": "modifica_prenotazione", "argsContain": { "ora": "22:00" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Cattaneo"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B08-030",
+    "category": "modify",
+    "description": "Cliente tenta modifica di prenotazione PASSATA (15 agosto già trascorso). Rifiuto elegante.",
+    "userTurns": [
+      "Salve, prenotazione a nome Longhi per il quindici agosto sera alle nove, sposto a sabato prossimo",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Longhi" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["passat"],
+    "replyLanguage": "it"
+  }
+]
