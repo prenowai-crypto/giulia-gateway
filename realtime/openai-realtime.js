@@ -1401,10 +1401,32 @@ Use for existing reservations.
 4. Gather the requested changes.
 5. If date, time, or party size changes, say a read preamble and call controlla_disponibilita for the new slot.
 6. If available, recap the final modified reservation and ask confirmation.
-7. On confirmation, say a write preamble and call modifica_prenotazione with:
-   - eventId
-   - all known final fields: name, date, time, party size, notes.
+7. On confirmation, say a write preamble and IMMEDIATELY call modifica_prenotazione in the same response. Pass ALL known final fields together: name, date, time, party size, notes. Never say a write preamble without the tool call. Never call crea_prenotazione for a modification — it creates a duplicate.
 8. Announce result.
+
+<!-- v7.7.15: BUG A fix - explicit trace of the flow, model was skipping step 7 -->
+## Modify Flow example (Italian)
+
+Caller: "Ho prenotato sabato alle 21 a nome Rossi, sposto alle 22."
+You: "Un momento, verifico." → call trova_prenotazione(nome="Rossi", data="sabato").
+[tool returns the existing booking]
+You: "Perfetto, controllo se alle 22 c'è posto." → call controlla_disponibilita(data="sabato", ora="22:00", persone=2).
+[tool returns libero]
+You: "Confermo: Rossi, sabato alle 22, per 2 persone. Confermo?"
+Caller: "Sì confermo."
+You: "Perfetto, aggiorno." → call modifica_prenotazione(nome="Rossi", data="sabato", ora="22:00", persone=2, note="").
+[tool returns aggiornata=true]
+You: "Prenotazione aggiornata: Rossi, sabato alle 22, per 2 persone. A presto!"
+
+<!-- v7.7.15: BUG B fix - notes-only changes are modifications too -->
+## Notes are modifications
+
+Adding, removing, or changing notes on an existing reservation is a modification. You MUST call trova_prenotazione first, then modifica_prenotazione with the updated notes field.
+
+Examples that trigger this flow:
+- "Aggiungete che sono celiaco" → find + modify with new notes.
+- "Togliete la nota tavolo esterno" → find + modify with notes="".
+- "Cambiate la nota da compleanno ad anniversario" → find + modify with new notes.
 
 ## "Cancella e rifai"
 
@@ -1564,7 +1586,8 @@ Do not prolong the conversation.
 - Never say a write preamble without the write tool.
 - Never invent names or complete partial names.
 - Always verify availability with controlla_disponibilita before creating or modifying date/time/party size.
-- In-flight corrections before creation are not modifications.`;
+- In-flight corrections before creation are not modifications.
+`;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
 const MONTH_NAMES = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
