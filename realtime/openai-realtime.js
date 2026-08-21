@@ -2059,7 +2059,11 @@ Non prendere prenotazioni.`;
 
   async _toolModifica({ nome, data, ora, persone, note }) {
     const base = this._lastFound;
+    // v7.7.20-DEBUG: log tattici per capire perché modifica non aggiorna DB
+    console.log('[_toolModifica DEBUG] args:', JSON.stringify({nome, data, ora, persone, note}));
+    console.log('[_toolModifica DEBUG] _lastFound:', JSON.stringify(base));
     if (!base?.eventId) {
+      console.log('[_toolModifica DEBUG] EARLY RETURN: no eventId in _lastFound');
       return { aggiornata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
     }
 
@@ -2130,6 +2134,9 @@ Non prendere prenotazioni.`;
     // v7.6.0: chiamo il backend Postgres via wrapper.
     //   Il wrapper fa già il check capacity con excludeReservationId (self exclude)
     //   e il partial update reale (solo campi cambiati).
+    console.log('[_toolModifica DEBUG] calling modificaPrenotazioneTool with:', JSON.stringify({
+      eventId: base.eventId, nome: newNome, data: newDate, ora: newTime, persone: newPeople, notes: newNotes
+    }));
     const r = await modificaPrenotazioneTool(this.restaurantConfig, {
       eventId: base.eventId,
       nome: newNome, data: newDate, ora: newTime, persone: newPeople,
@@ -2140,6 +2147,7 @@ Non prendere prenotazioni.`;
       callId: this.connId,
       callerPhone: this.callerPhone || base.phone || '',
     });
+    console.log('[_toolModifica DEBUG] wrapper response:', JSON.stringify(r));
 
     if (r?.success === true) {
       // Aggiorno _lastFound con i nuovi valori
