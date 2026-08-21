@@ -248,6 +248,21 @@ export async function updateReservation(tenant, reservationId, params, meta = {}
   const existingTime = timeToHHMM(existing.time);
   const existingPeople = Number(existing.people);
 
+  // v7.7.22: check "prenotazione già trascorsa" - rifiuta modifica se la data
+  // originale è nel passato. Bug produzione noto: senza questo check, cliente
+  // può chiamare per modificare una cena di ieri e il sistema accetta
+  // silenziosamente lo spostamento a data futura (comportamento confuso e
+  // pericoloso — equivale a creare nuova prenotazione senza saperlo).
+  // Il cliente in questi casi dovrebbe fare una NUOVA prenotazione (crea_prenotazione).
+  const nowRome = new Date().toLocaleString('sv-SE', { timeZone: tenant.timezone || 'Europe/Rome' });
+  const todayRome = nowRome.substring(0, 10);
+  if (existingDate < todayRome) {
+    return {
+      success: false, esito: 'in_past',
+      message: `Prenotazione del ${existingDate} già trascorsa, non modificabile. Se il cliente vuole prenotare per una nuova data, usare crea_prenotazione.`
+    };
+  }
+
   const merged = {
     date:            (params.date !== undefined && params.date !== null && params.date !== '') ? params.date : existingDate,
     time:            (params.time !== undefined && params.time !== null && params.time !== '') ? params.time : existingTime,
