@@ -175,9 +175,16 @@ export async function findReservations(tenant, params) {
      LIMIT ${Math.min(limit * 5, 100)}
   `;
 
+  // v7.7.17-DEBUG: log tattico per capire perché trova_prenotazione non trova
+  console.log('[findReservations DEBUG] tenant.id=', JSON.stringify(tenant?.id));
+  console.log('[findReservations DEBUG] params=', JSON.stringify({name, date, phone, limit, includeCancelled}));
+  console.log('[findReservations DEBUG] sql=', sql);
+  console.log('[findReservations DEBUG] values=', JSON.stringify(values));
+
   let result;
   try {
     result = await query(sql, values);
+    console.log('[findReservations DEBUG] rows=', result.rows.length);
   } catch (err) {
     if (err.message && err.message.includes('unaccent')) {
       const fallbackConditions = conditions.map(c => {
@@ -206,6 +213,7 @@ export async function findReservations(tenant, params) {
   }
 
   const limited = rows.slice(0, limit);
+  console.log('[findReservations DEBUG] after filter rows=', rows.length, 'limited=', limited.length);
   return {
     success: true,
     esito: limited.length > 0 ? 'trovate' : 'non_trovate',
