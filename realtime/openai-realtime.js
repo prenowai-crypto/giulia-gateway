@@ -1894,12 +1894,19 @@ Non prendere prenotazioni.`;
   }
 
   _foundResult(res, searchedName) {
-    this._lastFound = res;
+    // v7.7.19: fix mismatch id/eventId - il wrapper trovaPrenotazioneTool
+    // restituisce l'oggetto reservation con campo `id` (dal Postgres), ma
+    // _toolModifica e _toolCancella cercano `_lastFound.eventId`. Senza questo
+    // mapping tutte le modifiche/cancellazioni fallivano silenziosamente
+    // (il modello chiamava il tool, il tool ritornava "prenotazione non
+    // identificata", ma il runner contava PASS perché il tool call era stato
+    // fatto).
+    this._lastFound = { ...res, eventId: res.eventId || res.id };
     const tn = res.time?.length === 5 ? res.time + ':00' : (res.time || '');
     const existingNotes = res.notes || '';
     const result = {
       trovata: true,
-      eventId: res.eventId,
+      eventId: res.eventId || res.id,
       nome:    res.name,
       data:    DateManager.formatForDisplay(res.date),
       ora:     TimeManager.formatForDisplay(tn),
