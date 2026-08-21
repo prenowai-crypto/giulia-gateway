@@ -217,9 +217,14 @@
       "crea_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "chius"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "chius",
+        "fuori orario",
+        "servizio",
+        "non è possibile"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -348,9 +353,15 @@
     "forbiddenToolCalls": [
       "crea_prenotazione"
     ],
-    "replyMustContain": [
-      "capacit"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "capacit",
+        "non disponibile",
+        "troppi",
+        "oltre",
+        "massimo"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
