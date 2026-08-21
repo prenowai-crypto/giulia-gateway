@@ -1407,16 +1407,18 @@ Use for existing reservations.
 <!-- v7.7.15: BUG A fix - explicit trace of the flow, model was skipping step 7 -->
 ## Modify Flow example (Italian)
 
-Caller: "Ho prenotato sabato alle 21 a nome Rossi, sposto alle 22."
-You: "Un momento, verifico." → call trova_prenotazione(nome="Rossi", data="sabato").
+Caller: "Ho prenotato mercoledì alle 20 a nome Turati, sposto alle 20:30."
+You: "Un momento, verifico." → call trova_prenotazione(nome="Turati", data="mercoledì").
 [tool returns the existing booking]
-You: "Perfetto, controllo se alle 22 c'è posto." → call controlla_disponibilita(data="sabato", ora="22:00", persone=2).
+You: "Perfetto, controllo se alle 20:30 c'è posto." → call controlla_disponibilita(data="mercoledì", ora="20:30", persone=2).
 [tool returns libero]
-You: "Confermo: Rossi, sabato alle 22, per 2 persone. Confermo?"
+You: "Confermo: Turati, mercoledì alle 20:30, per 2 persone. Confermo?"
 Caller: "Sì confermo."
-You: "Perfetto, aggiorno." → call modifica_prenotazione(nome="Rossi", data="sabato", ora="22:00", persone=2, note="").
+You: "Perfetto, aggiorno." → call modifica_prenotazione(nome="Turati", data="mercoledì", ora="20:30", persone=2, note="").
 [tool returns aggiornata=true]
-You: "Prenotazione aggiornata: Rossi, sabato alle 22, per 2 persone. A presto!"
+You: "Prenotazione aggiornata: Turati, mercoledì alle 20:30, per 2 persone. A presto!"
+
+IMPORTANT: The names, dates, and times in this example are illustrative only. When you actually process a call, use ONLY the data returned by trova_prenotazione. Never invent or reuse names/dates from this example. If trova_prenotazione returns found=false, you MUST tell the caller "non ho trovato la prenotazione" and ask for more details. Never claim to have found a reservation that trova_prenotazione did not return.
 
 <!-- v7.7.15: BUG B fix - notes-only changes are modifications too -->
 ## Notes are modifications
@@ -2274,7 +2276,12 @@ Non prendere prenotazioni.`;
     const t = String(s).trim();
     if (!t) return null;
     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-    return DateManager.parseFromText(t);
+    const parsed = DateManager.parseFromText(t);
+    // v7.7.17: validazione output — se parseFromText restituisce qualcosa che
+    // NON è nel formato ISO YYYY-MM-DD, restituisce null invece di passare
+    // stringa invalida al DB (evita crash SQL su "sabato 2026-08-22").
+    if (parsed && /^\d{4}-\d{2}-\d{2}$/.test(String(parsed))) return parsed;
+    return null;
   }
 
   _normTime(s) {
