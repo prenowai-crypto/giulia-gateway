@@ -2,9 +2,9 @@
   {
     "id": "B08-001",
     "category": "modify",
-    "description": "Modifica ora, stesso giorno. Cliente richiama e chiede spostamento orario.",
+    "description": "Modifica ora, stesso giorno. Rossi 22/8 21:00 → 22:00. Slot libero (solo Rossi).",
     "userTurns": [
-      "Buongiorno, ho una prenotazione per sabato prossimo alle nove di sera a nome Rossi, vorrei spostarla alle dieci",
+      "Buongiorno, ho una prenotazione per sabato 22 agosto alle 21 a nome Rossi, vorrei spostarla alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -18,9 +18,9 @@
   {
     "id": "B08-002",
     "category": "modify",
-    "description": "Modifica data, stesso orario. Cliente sposta di un giorno.",
+    "description": "Modifica data. Bianchi 23/8 21:00 → 24/8 (ma 24/8 chiuso lunedì, deve rifiutare). Uso 25/8.",
     "userTurns": [
-      "Salve, ho prenotato per sabato alle nove di sera a nome Bianchi, vorrei spostare a domenica stessa ora",
+      "Salve, ho prenotato per il 23 agosto alle 21 a nome Bianchi, sposto al 25 agosto stessa ora",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -28,15 +28,15 @@
       { "name": "modifica_prenotazione", "argsContain": {} }
     ],
     "forbiddenToolCalls": ["crea_prenotazione", "cancella_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["domenica"],
+    "replyMustContain": ["25"],
     "replyLanguage": "it"
   },
   {
     "id": "B08-003",
     "category": "modify",
-    "description": "Aumento persone. Da 4 a 6.",
+    "description": "Aumento persone. Verdi 25/8 21:00 da 4 a 6.",
     "userTurns": [
-      "Buongiorno, ho una prenotazione a nome Verdi per sabato alle nove di sera per quattro persone, saremo in sei",
+      "Buongiorno, ho una prenotazione a nome Verdi per il 25 agosto alle 21 per quattro persone, saremo in sei",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -50,9 +50,9 @@
   {
     "id": "B08-004",
     "category": "modify",
-    "description": "Diminuzione persone. Da 5 a 3.",
+    "description": "Diminuzione persone. Marino 26/8 21:00 da 5 a 3.",
     "userTurns": [
-      "Salve, prenotazione a nome Marino per sabato sera alle nove, siamo passati da cinque a tre persone",
+      "Salve, ho prenotato a nome Marino per il 26 agosto alle 21 per cinque persone, siamo passati a tre",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -66,9 +66,9 @@
   {
     "id": "B08-005",
     "category": "modify",
-    "description": "Aggiunta nota (allergia) a prenotazione esistente senza note.",
+    "description": "Aggiunta nota. Ferrari 27/8 21:00, aggiungere 'celiaco'.",
     "userTurns": [
-      "Buongiorno, ho una prenotazione a nome Ferrari per domenica sera alle nove, aggiungete che sono celiaco",
+      "Buongiorno, ho prenotato a nome Ferrari per il 27 agosto alle 21, aggiungete che sono celiaco",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -82,9 +82,9 @@
   {
     "id": "B08-006",
     "category": "modify",
-    "description": "Cambio ora + persone insieme.",
+    "description": "Cambio ora + persone insieme. Costa 28/8 21:00 → 22:00 + da 2 a 4.",
     "userTurns": [
-      "Salve, prenotazione a nome Costa per domenica alle nove di sera due persone, cambio in alle dieci e siamo in quattro",
+      "Salve, ho prenotato a nome Costa per il 28 agosto alle 21 due persone, cambio in alle 22 e siamo in quattro",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -98,9 +98,9 @@
   {
     "id": "B08-007",
     "category": "modify",
-    "description": "Cambio data + ora insieme.",
+    "description": "Cambio a orario dopo chiusura cena. Ricci 29/8 21:30 → 23:00 (fuori orario).",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Ricci per domenica alle nove e mezza di sera, sposto a lunedì stessa ora",
+      "Buongiorno, ho prenotato a nome Ricci per il 29 agosto alle 21:30, sposto alle 23",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -113,9 +113,9 @@
   {
     "id": "B08-008",
     "category": "modify",
-    "description": "Cambio data + persone + nuova nota. Modify multi-campo con nota preesistente.",
+    "description": "Cambio persone + nuova nota. Greco 30/8 13:00 (pranzo dom) da 4 a 5, aggiungi vegetariano.",
     "userTurns": [
-      "Salve, prenotazione a nome Greco per lunedì all'una del pomeriggio, sposto a martedì stessa ora e siamo in cinque, aggiungete che uno è vegetariano",
+      "Salve, ho prenotato a nome Greco per il 30 agosto all'una del pomeriggio, siamo passati a cinque persone e uno è vegetariano",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -129,9 +129,9 @@
   {
     "id": "B08-009",
     "category": "modify",
-    "description": "Modifica a orario chiuso (giovedì pranzo). Backend deve rifiutare.",
+    "description": "Cambio a giovedì pranzo (chiuso). Testa 1/9 21:00 → 4/9 13:00 (venerdì pranzo chiuso).",
     "userTurns": [
-      "Salve, prenotazione a nome Testa per sabato sera alle nove, sposto a giovedì all'una del pomeriggio",
+      "Salve, ho prenotato a nome Testa per il 1 settembre alle 21, sposto al 4 settembre all'una",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -144,9 +144,9 @@
   {
     "id": "B08-010",
     "category": "modify",
-    "description": "Modifica a data passata. Deve essere rifiutata.",
+    "description": "Cambio a data passata. Longo 2/9 21:00 → 15/8. Deve rifiutare.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Longo per giovedì prossimo sera alle nove, la sposto a lunedì scorso",
+      "Buongiorno, ho prenotato a nome Longo per il 2 settembre alle 21, sposto al 15 agosto",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -159,9 +159,9 @@
   {
     "id": "B08-011",
     "category": "modify",
-    "description": "Modifica a lunedì (giorno chiusura totale). Backend rifiuta.",
+    "description": "Cambio a lunedì (chiuso). Sanna 3/9 21:00 → 7/9 (lunedì).",
     "userTurns": [
-      "Salve, prenotazione a nome Sanna per mercoledì sera alle nove, sposto a lunedì stessa ora",
+      "Salve, ho prenotato a nome Sanna per il 3 settembre alle 21, sposto al 7 settembre",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -174,9 +174,9 @@
   {
     "id": "B08-012",
     "category": "modify",
-    "description": "Aumento persone oltre MAX_PAX_PER_SLOT=30. Da 20 a 35.",
+    "description": "Aumento oltre MAX_PAX. De Luca 4/9 21:00 da 20 a 35.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome De Luca per sabato sera alle nove per venti persone, siamo passati a trentacinque",
+      "Buongiorno, ho prenotato a nome De Luca per il 4 settembre alle 21 per venti persone, siamo passati a trentacinque",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -189,9 +189,9 @@
   {
     "id": "B08-013",
     "category": "modify",
-    "description": "Aumento persone da 30 a 50 (soglia evento). Deve triggerare flow richiedi_evento.",
+    "description": "Promozione ad evento. Gallo 5/9 21:00 da 30 a 50 → richiedi_evento.",
     "userTurns": [
-      "Salve, prenotazione a nome Gallo per sabato sera alle nove per trenta persone, siamo diventati cinquanta",
+      "Salve, ho prenotato a nome Gallo per il 5 settembre alle 21 per trenta persone, siamo diventati cinquanta",
       "Va bene, procedete pure"
     ],
     "expectedToolCalls": [
@@ -204,10 +204,10 @@
   {
     "id": "B08-014",
     "category": "modify",
-    "description": "Cliente dà solo nome, senza data. Trova per nome + telefono deve funzionare.",
+    "description": "Cliente dà solo nome (senza data). Palumbo 6/9 21:00. Sposta alle 22.",
     "userTurns": [
       "Salve, vorrei modificare la mia prenotazione, mi chiamo Palumbo",
-      "Vorrei spostarla alle dieci di sera stessa data",
+      "Vorrei spostarla alle 22 stessa data",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -221,9 +221,9 @@
   {
     "id": "B08-015",
     "category": "modify",
-    "description": "Cliente dà nome + data errata. Trova fallback per solo nome.",
+    "description": "Cliente dà nome + data errata. Barone 8/9 21:00 (cliente dice 7/9). Fallback nome.",
     "userTurns": [
-      "Salve, prenotazione a nome Barone per venerdì sera alle nove, sposto a sabato stessa ora",
+      "Salve, ho prenotato a nome Barone per il 7 settembre alle 21, sposto al 10 settembre",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -236,10 +236,10 @@
   {
     "id": "B08-016",
     "category": "modify",
-    "description": "Cliente ha 2 prenotazioni attive (Colombo sabato 22/8 + Colombo sabato 29/8). Il modello deve chiedere quale.",
+    "description": "Cliente Colombo ha 2 prenotazioni: 9/9 e 10/9. Chiede quale.",
     "userTurns": [
       "Buongiorno, vorrei modificare la mia prenotazione a nome Colombo",
-      "Quella di sabato prossimo, la sposto alle dieci",
+      "Quella del 9 settembre, la sposto alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -253,7 +253,7 @@
   {
     "id": "B08-017",
     "category": "modify",
-    "description": "Cliente cerca prenotazione inesistente. Gestione elegante.",
+    "description": "Cliente cerca prenotazione inesistente (Zambrano). Gestione elegante.",
     "userTurns": [
       "Salve, vorrei modificare la mia prenotazione a nome Zambrano per domani sera",
       "Ah forse mi sbaglio di ristorante, grazie"
@@ -268,9 +268,9 @@
   {
     "id": "B08-018",
     "category": "modify",
-    "description": "Nome ambiguo Rossi vs Grossi. Fuzzy match backend restituisce Grossi (score alto).",
+    "description": "Nome ambiguo Grossi (vs Rossi). Grossi 11/9 21:00. Sposta alle 22.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Grossi per venerdì sera alle nove, sposto alle dieci",
+      "Buongiorno, ho prenotato a nome Grossi per il 11 settembre alle 21, sposto alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -284,10 +284,10 @@
   {
     "id": "B08-019",
     "category": "modify",
-    "description": "Caller da telefono diverso da quello della prenotazione. Deve poter modificare comunque (business decision: no security block).",
+    "description": "Caller da telefono diverso da prenotazione. Esposito 12/9 21:00. Deve modificare comunque.",
     "userTurns": [
-      "Salve, vorrei modificare la prenotazione a nome Esposito per sabato sera",
-      "Sposto alle dieci",
+      "Salve, vorrei modificare la prenotazione a nome Esposito per il 12 settembre alle 21",
+      "Sposto alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -301,9 +301,9 @@
   {
     "id": "B08-020",
     "category": "modify",
-    "description": "Prenotazione con phone=NULL (creata via canale non-vocale). Caller può modificare normalmente.",
+    "description": "Prenotazione con phone NULL (web/walk-in). Anonimo 13/9 21:00. Modifica normale.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Anonimo per sabato sera alle nove, sposto alle dieci",
+      "Buongiorno, ho prenotato a nome Anonimo per il 13 settembre alle 21, sposto alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -317,10 +317,10 @@
   {
     "id": "B08-021",
     "category": "modify",
-    "description": "Caller da telefono diverso da quello della prenotazione (Bruno con phone +393999999999). Deve poter modificare comunque.",
+    "description": "Caller diverso da prenotazione (Bruno 15/9). Modifica normale.",
     "userTurns": [
-      "Salve, vorrei modificare la prenotazione a nome Bruno per sabato sera",
-      "Sposto alle dieci",
+      "Salve, vorrei modificare la prenotazione a nome Bruno per il 15 settembre",
+      "Sposto alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -334,9 +334,9 @@
   {
     "id": "B08-022",
     "category": "modify",
-    "description": "Sostituzione nota completa. 'compleanno' → 'anniversario'.",
+    "description": "Sostituzione nota. Amato 16/9 21:00 note='compleanno' → 'anniversario'.",
     "userTurns": [
-      "Salve, prenotazione a nome Amato per sabato sera alle nove con nota compleanno, sostituite con anniversario",
+      "Salve, ho prenotato a nome Amato per il 16 settembre alle 21 con nota compleanno, sostituite con anniversario",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -350,9 +350,9 @@
   {
     "id": "B08-023",
     "category": "modify",
-    "description": "Rimozione nota esistente. Cliente dice 'togli la nota tavolo esterno'.",
+    "description": "Rimozione nota. Ferri 17/9 21:00 note='tavolo esterno' → togliere.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Ferri per sabato sera alle nove con nota tavolo esterno, togliete la nota",
+      "Buongiorno, ho prenotato a nome Ferri per il 17 settembre alle 21 con nota tavolo esterno, togliete la nota",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -366,9 +366,9 @@
   {
     "id": "B08-024",
     "category": "modify",
-    "description": "Aggiunta nota a prenotazione senza note esistenti.",
+    "description": "Aggiunta nota a prenotazione senza nota. Serra 18/9 21:00, aggiungi seggiolone.",
     "userTurns": [
-      "Salve, prenotazione a nome Serra per sabato sera alle nove, aggiungete che serve seggiolone per bambino",
+      "Salve, ho prenotato a nome Serra per il 18 settembre alle 21, aggiungete che serve seggiolone per bambino",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -382,9 +382,9 @@
   {
     "id": "B08-025",
     "category": "modify",
-    "description": "Cliente cambia idea prima della conferma. No modifica_prenotazione.",
+    "description": "Cliente cambia idea prima della conferma. Vitale 19/9 21:00, no modifica.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Vitale per sabato sera alle nove, sposto alle dieci",
+      "Buongiorno, ho prenotato a nome Vitale per il 19 settembre alle 21, sposto alle 22",
       "No aspetta, lascio così com'è grazie"
     ],
     "expectedToolCalls": [
@@ -397,9 +397,9 @@
   {
     "id": "B08-026",
     "category": "modify",
-    "description": "Doppia modifica in stessa chiamata: cambio ora poi cambio persone.",
+    "description": "Doppia modifica in-flight. Neri 20/9 21:00 → cambia in ora + persone.",
     "userTurns": [
-      "Salve, prenotazione a nome Neri per sabato sera alle nove tre persone, sposto alle dieci",
+      "Salve, ho prenotato a nome Neri per il 20 settembre alle 21 tre persone, sposto alle 22",
       "Aspetta, cambio anche in quattro persone",
       "Sì confermo"
     ],
@@ -414,9 +414,9 @@
   {
     "id": "B08-027",
     "category": "modify",
-    "description": "Cliente inizia modify ma poi vuole cancellare (switch intent).",
+    "description": "Switch intent: modify → cancella. Ferretti 22/9 21:00.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Ferretti per sabato sera alle nove, sposto alle dieci",
+      "Buongiorno, ho prenotato a nome Ferretti per il 22 settembre alle 21, sposto alle 22",
       "No aspetta, cancellala del tutto",
       "Sì confermo"
     ],
@@ -431,7 +431,7 @@
   {
     "id": "B08-028",
     "category": "modify",
-    "description": "trova_prenotazione restituisce array vuoto (nome inesistente). Gestione elegante.",
+    "description": "Nome inesistente (Xhemajli). Gestione elegante non-trovato.",
     "userTurns": [
       "Salve, vorrei modificare la prenotazione a nome Xhemajli per sabato sera",
       "Ah forse mi sbaglio, grazie"
@@ -446,9 +446,9 @@
   {
     "id": "B08-029",
     "category": "modify",
-    "description": "Modify normale + recap dettagliato. Verifica che il modello dica esplicitamente i dettagli.",
+    "description": "Modify normale con recap dettagliato. Cattaneo 23/9 21:00 → 22:00.",
     "userTurns": [
-      "Buongiorno, prenotazione a nome Cattaneo per sabato sera alle nove per due persone, sposto alle dieci",
+      "Buongiorno, ho prenotato a nome Cattaneo per il 23 settembre alle 21 per due persone, sposto alle 22",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -462,9 +462,9 @@
   {
     "id": "B08-030",
     "category": "modify",
-    "description": "Cliente tenta modifica di prenotazione PASSATA (15 agosto già trascorso). Rifiuto elegante.",
+    "description": "Modifica prenotazione passata. Longhi 15/8 (già trascorso). Rifiuto elegante.",
     "userTurns": [
-      "Salve, prenotazione a nome Longhi per il quindici agosto sera alle nove, sposto a sabato prossimo",
+      "Salve, ho prenotato a nome Longhi per il 15 agosto alle 21, sposto al 22 settembre",
       "Sì confermo"
     ],
     "expectedToolCalls": [
