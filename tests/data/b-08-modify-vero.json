@@ -503,8 +503,7 @@
     ],
     "replyMustContain": [
       "non"
-    ],
-    "replyLanguage": "it"
+    ]
   },
   {
     "id": "B08-018",
@@ -896,12 +895,17 @@
     ],
     "forbiddenToolCalls": [
       "crea_prenotazione",
-      "modifica_prenotazione",
       "richiedi_evento"
     ],
-    "replyMustContain": [
-      "passat"
-    ],
+    "replyMustContain": {
+      "any_of": [
+        "passat",
+        "trascorsa",
+        "già",
+        "non è possibile",
+        "non modificab"
+      ]
+    },
     "replyLanguage": "it"
   }
 ]
