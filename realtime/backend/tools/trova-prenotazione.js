@@ -1,150 +1,100 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // TOOL: trova_prenotazione
 // ═══════════════════════════════════════════════════════════════════════════════
-// Cerca una prenotazione per nome, data e/o telefono.
-// Usata dal modello prima di ogni modifica_prenotazione o cancella_prenotazione.
+// Cerca una prenotazione esistente per nome (obbligatorio) + data (opzionale).
+//
+// v7.7.18 (2026-08-21): RIMOSSO filtro phone strict.
+//   Business decision: un cliente può chiamare da un telefono diverso
+//   (numero cambiato, chiama da lavoro, chiede a parente). Il phone del
+//   caller viene usato solo come TIE-BREAKER (boost score se matcha),
+//   NON come filtro esclusivo. Un cliente identifica la prenotazione con
+//   nome + eventualmente data, il phone è solo informativo.
 //
 // Payload input:
-//   {
-//     nome: "Costa",            (opzionale ma quasi sempre presente)
-//     data: "2026-08-07",       (opzionale)
-//     telefono: "+39...",       (opzionale, il gateway lo passa se disponibile)
-//   }
+//   { nome: "Rossi", data: "2026-08-22" }
 //
-// Risposta output:
-//   {
-//     found: true,
-//     count: 1,
-//     reservation: { eventId, date, time, people, name, phone, notes, status },
-//     reservations: [ ... ]     ← se count > 1, tutti i match
-//   }
-//
-// In caso di non trovato:
-//   { found: false, count: 0, motivo: "non_trovata" }
+// Meta (dal gateway):
+//   { callId, callerPhone }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { getTenantByPhone } from '../services/tenants.js';
 import { findReservations } from '../services/reservations.js';
 
-// Riusa gli helper di formattazione di crea-prenotazione (mantengo consistenza)
-function formatDateItalian(dateInput, timezone = 'Europe/Rome') {
-  let d;
-  if (dateInput instanceof Date) {
-    const iso = dateInput.toISOString().substring(0, 10);
-    d = new Date(`${iso}T12:00:00Z`);
-  } else if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}/)) {
-    d = new Date(`${dateInput.substring(0, 10)}T12:00:00Z`);
-  } else {
-    d = new Date(dateInput);
-  }
-  if (isNaN(d.getTime())) return String(dateInput);
-  return new Intl.DateTimeFormat('it-IT', {
-    weekday: 'long', day: 'numeric', month: 'long', timeZone: timezone,
-  }).format(d);
-}
-
-function shortTime(timeInput) {
-  if (!timeInput) return '';
-  if (timeInput instanceof Date) {
-    const h = String(timeInput.getUTCHours()).padStart(2, '0');
-    const m = String(timeInput.getUTCMinutes()).padStart(2, '0');
-    return `${h}:${m}`;
-  }
-  return String(timeInput).substring(0, 5);
-}
-
-// Mappa una riga DB al formato risposta compatibile con Apps Script
-function mapReservationToResponse(r) {
-  // `eventId` è il campo che il modello si aspetta come identificatore.
-  // Nel vecchio sistema era il Google Calendar event ID.
-  // Nel nuovo sistema usiamo l'UUID di Postgres come identificatore univoco.
-  return {
-    eventId: String(r.id),
-    date: r.date instanceof Date ? r.date.toISOString().substring(0, 10) : String(r.date).substring(0, 10),
-    time: shortTime(r.time),
-    people: Number(r.people),
-    name: r.name,
-    phone: r.phone || null,
-    email: r.email || null,
-    notes: r.notes || '',
-    status: r.status,
-    is_group: !!r.is_group,
-    // Info human-readable utile al modello per parlare al cliente
-    data_human: formatDateItalian(r.date),
-  };
-}
-
-/**
- * trovaPrenotazioneTool(restaurantConfig, params, meta?)
- *
- * @param {object} restaurantConfig  - config del ristorante (dal gateway)
- * @param {object} params            - payload originale del gateway
- * @param {object} meta              - { callId, callerPhone } opzionali
- * @returns {Promise<object>}        - risposta drop-in
- */
 export async function trovaPrenotazioneTool(restaurantConfig, params, meta = {}) {
   let tenant = restaurantConfig;
-
-  if (!tenant?.id && restaurantConfig?.twilio_number) {
-    tenant = await getTenantByPhone(restaurantConfig.twilio_number);
-    if (!tenant) {
-      return { found: false, count: 0, motivo: 'tenant_not_found' };
-    }
+  if (!tenant?.id && restaurantConfig?.phone_number) {
+    tenant = await getTenantByPhone(restaurantConfig.phone_number);
+    if (!tenant) return { found: false, count: 0, motivo: 'tenant_not_found' };
   }
+  if (!tenant?.id) return { found: false, count: 0, motivo: 'invalid_tenant' };
 
-  if (!tenant?.id) {
-    return { found: false, count: 0, motivo: 'invalid_tenant' };
-  }
+  const nome = params.nome || params.name || null;
+  const data = params.data || params.date || null;
 
-  // Estrai i parametri (compatibili con nomenclatura Apps Script + varianti)
-  const nome     = params.nome     || params.name     || null;
-  const data     = params.data     || params.date     || null;
-  const telefono = params.telefono || params.phone    || meta.callerPhone || null;
+  // v7.7.18: NON passiamo phone come filtro strict.
+  // La ricerca è per nome + data (opzionale). Phone del caller viene
+  // salvato solo per audit / boost score futuro se necessario.
+  const callerPhoneForAudit = params.telefono || params.phone || meta.callerPhone || null;
 
-  // Il modello a volte chiama trova senza nessun parametro (bug o edge case).
-  // Almeno un criterio è richiesto.
-  if (!nome && !data && !telefono) {
-    return {
-      found: false,
-      count: 0,
-      motivo: 'no_criteria',
-      messaggio_utente: 'Servono nome, data o telefono per cercare',
-    };
+  if (!nome) {
+    return { found: false, count: 0, motivo: 'missing_nome' };
   }
 
   const result = await findReservations(tenant, {
     name: nome,
     date: data,
-    phone: telefono,
+    // NO phone filter: chiunque può cercare per nome
     limit: 5,
   });
 
-  if (!result.success) {
-    return {
-      found: false,
-      count: 0,
-      motivo: result.esito || 'search_failed',
-      messaggio_utente: result.message,
-    };
-  }
+  const reservations = result.reservations || [];
 
-  if (result.count === 0) {
+  if (reservations.length === 0) {
     return {
       found: false,
       count: 0,
       motivo: 'non_trovata',
-      messaggio_utente: 'Nessuna prenotazione trovata con questi criteri',
     };
   }
 
-  // Mappa i risultati al formato risposta
-  const mapped = result.reservations.map(mapReservationToResponse);
+  // Se c'è un solo risultato, restituisci quella
+  if (reservations.length === 1) {
+    const r = reservations[0];
+    return {
+      found: true,
+      count: 1,
+      reservation: {
+        id: r.id,
+        nome: r.name,
+        data: r.date,
+        ora: r.time,
+        persone: r.people,
+        note: r.notes || '',
+        phone: r.phone,
+      },
+      caller_matches_phone: callerPhoneForAudit && r.phone && callerPhoneForAudit === r.phone,
+    };
+  }
+
+  // Multipli risultati: ordina per match phone (chi matcha viene primo)
+  const withMatch = reservations.map(r => ({
+    ...r,
+    _phoneMatch: callerPhoneForAudit && r.phone === callerPhoneForAudit ? 1 : 0,
+  })).sort((a, b) => b._phoneMatch - a._phoneMatch);
 
   return {
     found: true,
-    count: result.count,
-    reservation: mapped[0],     // ← primo match (più rilevante)
-    reservations: mapped,       // ← tutti i match (se ce ne sono più di 1)
-    total_matches: result.total_matches,
+    count: withMatch.length,
+    reservations: withMatch.map(r => ({
+      id: r.id,
+      nome: r.name,
+      data: r.date,
+      ora: r.time,
+      persone: r.people,
+      note: r.notes || '',
+      phone: r.phone,
+    })),
+    // Modello deve chiedere disambiguazione al caller
+    needs_disambiguation: true,
   };
 }
