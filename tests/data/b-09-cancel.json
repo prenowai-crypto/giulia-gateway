@@ -1,0 +1,386 @@
+[
+  {
+    "id": "B09-001",
+    "category": "cancel",
+    "description": "Cancel semplice. Ricci Junior 1/10 21:00.",
+    "userTurns": [
+      "Salve, vorrei cancellare la mia prenotazione a nome Ricci Junior per il 1 ottobre alle 21",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Ricci Junior" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-002",
+    "category": "cancel",
+    "description": "Cancel con solo nome (senza data). Villa 2/10.",
+    "userTurns": [
+      "Buongiorno, vorrei cancellare la prenotazione a nome Villa",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Villa" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Villa"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-003",
+    "category": "cancel",
+    "description": "Cancel con nome + data errata. Sartori 3/10 ma cliente dice 4/10 → fallback nome.",
+    "userTurns": [
+      "Salve, ho prenotato a nome Sartori per il 4 ottobre alle 21, vorrei cancellarla",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Sartori" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["cancell", "Sartori"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-004",
+    "category": "cancel",
+    "description": "Cancel + conferma esplicita variante. Milani 4/10.",
+    "userTurns": [
+      "Buonasera, cancellate la prenotazione a nome Milani per il 4 ottobre alle 21",
+      "Certo, procedete"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Milani" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-005",
+    "category": "cancel",
+    "description": "Cancel con motivazione (upsell probabile). Fumagalli 6/10.",
+    "userTurns": [
+      "Salve, non riesco a venire il 6 ottobre alle 21, cancella la prenotazione a nome Fumagalli",
+      "No grazie, per adesso solo cancellare"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Fumagalli" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-006",
+    "category": "cancel",
+    "description": "Sinonimo 'annulla'. Rinaldi 7/10.",
+    "userTurns": [
+      "Buongiorno, vorrei annullare la mia prenotazione a nome Rinaldi per il 7 ottobre",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Rinaldi" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["cancell", "annull"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-007",
+    "category": "cancel",
+    "description": "Cliente esita poi conferma. Guerra 8/10.",
+    "userTurns": [
+      "Salve, forse dovrei cancellare la prenotazione a nome Guerra per l'8 ottobre",
+      "Sì la cancello, cancellala per favore",
+      "Confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Guerra" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-008",
+    "category": "cancel",
+    "description": "Cancel breve e diretto. Lombardi 9/10.",
+    "userTurns": [
+      "Cancellami la prenotazione a nome Lombardi del 9 ottobre",
+      "Sì"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Lombardi" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-009",
+    "category": "cancel",
+    "description": "Cliente Silvestri ha 2 prenotazioni (10/10 e 11/10). Cancel disambiguazione.",
+    "userTurns": [
+      "Buongiorno, vorrei cancellare la prenotazione a nome Silvestri",
+      "Quella del 10 ottobre",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Silvestri" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["quale", "10 ottobre", "cancell"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-010",
+    "category": "cancel",
+    "description": "Nome ambiguo/fuzzy: Caruso vs simili. Caruso 13/10.",
+    "userTurns": [
+      "Salve, ho prenotato a nome Caruso per il 13 ottobre alle 21, vorrei cancellare",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Caruso" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Caruso"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-011",
+    "category": "cancel",
+    "description": "Caller da telefono diverso (business decision: cancel comunque). Basile phone +393999999999.",
+    "userTurns": [
+      "Buongiorno, cancellate la prenotazione a nome Basile per il 14 ottobre alle 21",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Basile" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-012",
+    "category": "cancel",
+    "description": "Prenotazione con phone NULL (canale web/walk-in). Serafini 15/10.",
+    "userTurns": [
+      "Salve, vorrei cancellare la prenotazione a nome Serafini per il 15 ottobre alle 21",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Serafini" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-013",
+    "category": "cancel",
+    "description": "Cliente cambia idea prima conferma. Riva 16/10. NESSUN cancel.",
+    "userTurns": [
+      "Salve, vorrei cancellare la prenotazione a nome Riva per il 16 ottobre",
+      "No aspetta, lascio così ci proviamo a venire"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Riva" } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["Riva"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-014",
+    "category": "cancel",
+    "description": "Cliente esita per conflitto → modello propone spostamento (upsell). Poli 17/10.",
+    "userTurns": [
+      "Buongiorno, purtroppo il 17 ottobre non posso venire, cancellate la prenotazione a nome Poli",
+      "Ah ok, non ci avevo pensato. Se mi spostate al 18 va bene",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Poli" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["18", "spost"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-015",
+    "category": "cancel",
+    "description": "Cliente inizia cancel poi vuole modificare (switch cancel→modify). Manzoni 18/10.",
+    "userTurns": [
+      "Salve, cancellate la prenotazione a nome Manzoni del 18 ottobre",
+      "No aspetta, invece di cancellarla la sposto al 19 ottobre stessa ora",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Manzoni" } },
+      { "name": "modifica_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["19", "spost", "sabato"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-016",
+    "category": "cancel",
+    "description": "Cancel con nota extra ('cancellala e segna motivo'). Zanetti 20/10.",
+    "userTurns": [
+      "Buongiorno, cancellate la prenotazione a nome Zanetti per il 20 ottobre, segnate che non poteva venire per lavoro",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Zanetti" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-017",
+    "category": "cancel",
+    "description": "Cancel + cliente accetta upsell spostamento proposto. Bosco 21/10.",
+    "userTurns": [
+      "Salve, non riesco a venire il 21 ottobre alle 21, vorrei cancellare a nome Bosco",
+      "Sì, se avete disponibilità il 22 alle 21 va benissimo",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Bosco" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["22", "spost", "giovedì"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-018",
+    "category": "cancel",
+    "description": "Cliente cambia idea 2 volte poi conferma. Motta 22/10.",
+    "userTurns": [
+      "Buongiorno, vorrei cancellare la prenotazione a nome Motta per il 22 ottobre",
+      "Aspetta, forse la sposto",
+      "No no cancellala e basta",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Motta" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-019",
+    "category": "cancel",
+    "description": "Cancel poi cliente vuole rifare nuova prenotazione. Cavallo 23/10.",
+    "userTurns": [
+      "Salve, cancellate la prenotazione a nome Cavallo per il 23 ottobre alle 21",
+      "Sì confermo. Anzi, potete rifarla per il 30 ottobre stessa ora, stesso numero di persone?",
+      "Sì confermo la nuova"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Cavallo" } },
+      { "name": "cancella_prenotazione", "argsContain": {} },
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Cavallo" } }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": ["30"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-020",
+    "category": "cancel",
+    "description": "Cancel di prenotazione con nota preesistente. Farina 24/10.",
+    "userTurns": [
+      "Buongiorno, cancellate la prenotazione a nome Farina per il 24 ottobre alle 21",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Farina" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["cancell"],
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-021",
+    "category": "cancel",
+    "description": "Cancel di prenotazione PASSATA (15/8, già trascorsa). Backend v7.7.25 deve rifiutare.",
+    "userTurns": [
+      "Salve, vorrei cancellare la prenotazione a nome Costantini per il 15 agosto alle 21",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Costantini" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["passat", "trascorsa", "già", "non serve"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-022",
+    "category": "cancel",
+    "description": "Cancel di prenotazione GIÀ CANCELLATA (idempotent). Pini 25/10 status CANCELLED.",
+    "userTurns": [
+      "Buongiorno, cancellate la prenotazione a nome Pini per il 25 ottobre",
+      "Ah ok grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Pini" } }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["già cancell", "non è più", "non risulta", "cancell"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B09-023",
+    "category": "cancel",
+    "description": "Nome inesistente. Zocchi non esiste. Gestione elegante.",
+    "userTurns": [
+      "Salve, vorrei cancellare la prenotazione a nome Zocchi per domani sera",
+      "Ah forse mi sbaglio ristorante, grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Zocchi" } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["non"]
+  },
+  {
+    "id": "B09-024",
+    "category": "cancel",
+    "description": "Nome inesistente 2. Xelva non esiste.",
+    "userTurns": [
+      "Buongiorno, cancellate la prenotazione a nome Xelva per il 20 ottobre",
+      "Grazie, ricontrollerò"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Xelva" } }
+    ],
+    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
+    "replyMustContain": ["non"]
+  }
+]
