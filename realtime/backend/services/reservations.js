@@ -404,6 +404,20 @@ export async function cancelReservation(tenant, reservationId, meta = {}) {
     };
   }
 
+  // v7.7.25: check "prenotazione già trascorsa" - rifiuta cancel se data passata.
+  // Coerente con updateReservation (v7.7.22). Business decision: se la
+  // prenotazione è già passata non ha senso cancellarla, il cliente probabilmente
+  // sta cercando quella sbagliata o vuole fare qualcos'altro (nuova prenotazione).
+  const existingDate = dateToIsoString(existing.date);
+  const nowRome = new Date().toLocaleString('sv-SE', { timeZone: tenant.timezone || 'Europe/Rome' });
+  const todayRome = nowRome.substring(0, 10);
+  if (existingDate < todayRome) {
+    return {
+      success: false, esito: 'in_past',
+      message: `Prenotazione del ${existingDate} già trascorsa, non serve cancellarla.`
+    };
+  }
+
   const cancelledRow = await withTransaction(async (client) => {
     await client.query(`SELECT id FROM reservations WHERE id = $1 FOR UPDATE`, [reservationId]);
 
