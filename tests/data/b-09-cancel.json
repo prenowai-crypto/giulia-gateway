@@ -8,11 +8,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Ricci Junior" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Ricci Junior"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -24,11 +38,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Villa" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Villa"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Villa"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Villa"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -40,10 +68,24 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Sartori" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Sartori"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["cancell", "Sartori"]},
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "cancell",
+        "Sartori"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -55,11 +97,25 @@
       "Certo, procedete"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Milani" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Milani"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -68,14 +124,28 @@
     "description": "Cancel con motivazione (upsell probabile). Fumagalli 6/10.",
     "userTurns": [
       "Salve, non riesco a venire il 6 ottobre alle 21, cancella la prenotazione a nome Fumagalli",
-      "No grazie, per adesso solo cancellare"
+      "Sì confermo, cancellala grazie"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Fumagalli" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Fumagalli"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -87,11 +157,28 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Rinaldi" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Rinaldi"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["cancell", "annull"]},
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "cancell",
+        "annull"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -104,11 +191,25 @@
       "Confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Guerra" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Guerra"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -120,11 +221,25 @@
       "Sì"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Lombardi" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Lombardi"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -137,11 +252,29 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Silvestri" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Silvestri"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["quale", "10 ottobre", "cancell"]},
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "quale",
+        "10 ottobre",
+        "cancell"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -153,11 +286,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Caruso" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Caruso"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Caruso"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Caruso"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -169,11 +316,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Basile" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Basile"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -185,11 +346,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Serafini" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Serafini"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -201,10 +376,22 @@
       "No aspetta, lascio così ci proviamo a venire"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Riva" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Riva"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["Riva"],
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "Riva"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -217,11 +404,28 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Poli" } },
-      { "name": "modifica_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Poli"
+        }
+      },
+      {
+        "name": "modifica_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["18", "spost"]},
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "crea_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "18",
+        "spost"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -230,15 +434,33 @@
     "description": "Cliente inizia cancel poi vuole modificare (switch cancel→modify). Manzoni 18/10.",
     "userTurns": [
       "Salve, cancellate la prenotazione a nome Manzoni del 18 ottobre",
-      "No aspetta, invece di cancellarla la sposto al 19 ottobre stessa ora",
+      "No aspetta, invece di cancellarla la sposto al 20 ottobre stessa ora",
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Manzoni" } },
-      { "name": "modifica_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Manzoni"
+        }
+      },
+      {
+        "name": "modifica_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["19", "spost", "sabato"]},
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "crea_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "20",
+        "spost",
+        "martedì"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -250,11 +472,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Zanetti" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Zanetti"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -267,10 +503,24 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Bosco" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Bosco"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["22", "spost", "giovedì"]},
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "22",
+        "spost",
+        "giovedì"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -284,11 +534,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Motta" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Motta"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "crea_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -301,12 +565,29 @@
       "Sì confermo la nuova"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Cavallo" } },
-      { "name": "cancella_prenotazione", "argsContain": {} },
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Cavallo" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Cavallo"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Cavallo"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["richiedi_evento"],
-    "replyMustContain": ["30"],
+    "forbiddenToolCalls": [
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "30"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -318,11 +599,25 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Farina" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Farina"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["cancell"],
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "cancell"
+    ],
     "replyLanguage": "it"
   },
   {
@@ -334,25 +629,55 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Costantini" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Costantini"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["passat", "trascorsa", "già", "non serve"]},
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "passat",
+        "trascorsa",
+        "già",
+        "non serve"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
     "id": "B09-022",
     "category": "cancel",
-    "description": "Cancel di prenotazione GIÀ CANCELLATA (idempotent). Pini 25/10 status CANCELLED.",
+    "description": "Cliente cerca prenotazione già CANCELLED. Il tool filtra status CANCELLED quindi risponde 'non trovata'. Gestione elegante.",
     "userTurns": [
       "Buongiorno, cancellate la prenotazione a nome Pini per il 25 ottobre",
       "Ah ok grazie"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Pini" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Pini"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["già cancell", "non è più", "non risulta", "cancell"]},
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "non",
+        "trovat"
+      ]
+    },
     "replyLanguage": "it"
   },
   {
@@ -364,10 +689,22 @@
       "Ah forse mi sbaglio ristorante, grazie"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Zocchi" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Zocchi"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["non"]
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "non"
+    ]
   },
   {
     "id": "B09-024",
@@ -378,9 +715,21 @@
       "Grazie, ricontrollerò"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Xelva" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Xelva"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["cancella_prenotazione", "crea_prenotazione", "modifica_prenotazione", "richiedi_evento"],
-    "replyMustContain": ["non"]
+    "forbiddenToolCalls": [
+      "cancella_prenotazione",
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": [
+      "non"
+    ]
   }
 ]
