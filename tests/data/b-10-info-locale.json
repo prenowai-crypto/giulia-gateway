@@ -1,0 +1,310 @@
+[
+  {
+    "id": "B10-001",
+    "category": "info",
+    "description": "Info parcheggio (chiave: parcheggio → 'No, non c'è parcheggio'). Default branch.",
+    "userTurns": [
+      "Buongiorno, avete il parcheggio?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["non", "no"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-002",
+    "category": "info",
+    "description": "Info accessibilità disabili (chiave: accessibility). Default branch.",
+    "userTurns": [
+      "Salve, il locale è accessibile per persone in sedia a rotelle?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["non", "purtroppo", "non accessibile"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-003",
+    "category": "info",
+    "description": "Metodi pagamento (chiave: metodi_pagamento). Default branch.",
+    "userTurns": [
+      "Buongiorno, accettate pagamento con carta o solo contanti?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["carta", "cash", "entrambi"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-004",
+    "category": "info",
+    "description": "Indirizzo (chiave: indirizzo → Via del Corso 123 Milano). Default branch.",
+    "userTurns": [
+      "Salve, dove siete di preciso?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Corso", "Milano", "Via"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-005",
+    "category": "info",
+    "description": "Dehors (chiave: dehors → 'Non disponibile'). Default branch.",
+    "userTurns": [
+      "Buongiorno, avete tavoli all'aperto o dehors?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["non", "no"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-006",
+    "category": "info",
+    "description": "Senza glutine (chiave: senza_glutine → 'Sì'). Default branch (diete).",
+    "userTurns": [
+      "Salve, ho un amico celiaco, avete opzioni senza glutine?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["sì", "si", "gluten", "opzion"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-007",
+    "category": "info",
+    "description": "Vegano (chiave: vegano → 'Non ci sono opzioni'). Default branch (diete).",
+    "userTurns": [
+      "Buongiorno, avete piatti vegani nel menu?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["non", "no", "purtroppo"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-008",
+    "category": "info",
+    "description": "Seggiolone bambino (chiave: seggiolone → 'Sì'). Default branch (servizi).",
+    "userTurns": [
+      "Salve, ho un bambino piccolo, avete seggiolone?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["sì", "si", "seggiolon"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-009",
+    "category": "info",
+    "description": "Coperto (chiave: prezzi_extra → '2,50 euro'). Default branch.",
+    "userTurns": [
+      "Buongiorno, il coperto quanto costa a persona?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["2", "due", "coperto"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-010",
+    "category": "info",
+    "description": "Orari apertura (branch OPENING). Deve triggerare 'orari'.",
+    "userTurns": [
+      "Buongiorno, a che ora aprite la sera?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["19", "sette", "otto", "cena", "sera"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-011",
+    "category": "info",
+    "description": "Orari settimanali (branch OPENING). 'che orari fate'.",
+    "userTurns": [
+      "Salve, che orari fate durante la settimana?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["orari", "aperto", "aperti", "chius"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-012",
+    "category": "info",
+    "description": "Giorno chiusura settimanale (branch OPENING, closed_days). 'chiudete lunedì'.",
+    "userTurns": [
+      "Buongiorno, chiudete il lunedì?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["lunedì", "sì", "si", "chius"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-013",
+    "category": "info",
+    "description": "Chiusura Natale (branch CLOSURE). Seed B10 ha 25/12/2026 chiusura totale.",
+    "userTurns": [
+      "Salve, siete aperti a Natale il 25 dicembre?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["chius", "Natale", "25 dicembre", "no", "non"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-014",
+    "category": "info",
+    "description": "Chiusure straordinarie (branch CLOSURE). 'prossime chiusure'.",
+    "userTurns": [
+      "Buongiorno, avete chiusure straordinarie nei prossimi mesi?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Natale", "Capodanno", "chius", "novembre", "dicembre"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-015",
+    "category": "info",
+    "description": "Menu completo (branch MENU). 'cosa avete nel menu'.",
+    "userTurns": [
+      "Salve, potreste dirmi cosa avete nel menu?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["pasta", "carne", "pesce", "antipasti", "primi", "secondi"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-016",
+    "category": "info",
+    "description": "Menu categoria PRIMI (branch MENU + detectCategoria). 'primi'.",
+    "userTurns": [
+      "Buongiorno, cosa avete come primi piatti?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["carbonara", "amatriciana", "tagliatelle", "risotto", "gnocchi", "linguine"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-017",
+    "category": "info",
+    "description": "Menu categoria DOLCI (branch MENU + detectCategoria). 'dolci'.",
+    "userTurns": [
+      "Salve, quali dolci fate?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["tiramisù", "panna cotta", "cannolo", "torta"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-018",
+    "category": "info",
+    "description": "Piatto specifico presente nel menu (branch MENU keyword 'carbonara').",
+    "userTurns": [
+      "Buongiorno, fate la carbonara?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["sì", "si", "carbonara", "12"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-019",
+    "category": "info",
+    "description": "Piatto pesce (branch MENU keyword 'pesce'). Ci sono Branzino, Linguine allo Scoglio, Frittura Calamari, Polpo.",
+    "userTurns": [
+      "Salve, avete piatti di pesce?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["branzino", "linguine", "calamari", "polpo", "pesce"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-020",
+    "category": "info",
+    "description": "Info non disponibile (WiFi non presente in info_locale). Gestione elegante.",
+    "userTurns": [
+      "Buongiorno, avete il wifi in sala?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["non", "non so", "non ho", "non sono in grado", "purtroppo"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-021",
+    "category": "info",
+    "description": "Query mista (menu + prezzo). Deve gestire in modo naturale.",
+    "userTurns": [
+      "Salve, quanto costa la tagliata di manzo?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["22", "ventidue", "tagliata"]},
+    "replyLanguage": "it"
+  },
+  {
+    "id": "B10-022",
+    "category": "info",
+    "description": "Info + intent prenotazione. Modello deve rispondere info e poi indirizzare a prenotazione.",
+    "userTurns": [
+      "Buongiorno, che tipo di cucina fate?"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["italian", "tipic", "tradizional"]},
+    "replyLanguage": "it"
+  }
+]
