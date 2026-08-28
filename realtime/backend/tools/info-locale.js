@@ -133,9 +133,23 @@ export async function infoLocaleTool(restaurantConfig, params = {}, meta = {}) {
       for (const k of relevantKeys) filtered[k] = info[k];
       return { success: true, tipo: 'info', info: filtered };
     }
+
+    // v7.7.27: FIX ANTI-HALLUCINATION - il cliente ha chiesto qualcosa di
+    // specifico (es. "wifi", "aria condizionata") che NON è tra le chiavi
+    // del JSONB info_locale. Prima ritornavamo l'intero JSONB e il modello
+    // hallucinava ("Sì il WiFi è disponibile" quando non c'è). Ora ritorniamo
+    // esplicitamente `info_non_disponibile` così il modello capisce che non
+    // deve inventare.
+    return {
+      success: false,
+      tipo: 'info_non_disponibile',
+      argomento_richiesto: argomento,
+      chiavi_disponibili: Object.keys(info),
+      message: `L'informazione richiesta ("${argomento}") non è tra i dati registrati per questo ristorante. NON inventare la risposta: informa il cliente che questo dato non è disponibile e suggerisci di chiamare direttamente il ristorante al numero pubblico.`,
+    };
   }
 
-  // Nessun match specifico → info completa (il modello sceglie cosa dire)
+  // Nessun argomento → info completa (il modello sceglie cosa dire)
   if (Object.keys(info).length === 0) {
     return { success: false, info: {}, message: 'informazione non disponibile' };
   }
