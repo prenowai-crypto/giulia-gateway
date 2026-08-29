@@ -1,0 +1,214 @@
+[
+  {
+    "id": "B16-001",
+    "category": "capacity",
+    "description": "Slot saturo (30/30). Cliente prova prenotazione. Modello deve rifiutare o proporre alternativa.",
+    "userTurns": [
+      "Buongiorno, vorrei prenotare per domenica 17 gennaio 2027 alle 21 per due persone a nome Aleandri"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": {"data": "2027-01-17", "ora": "21:00"} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["pieno", "non disponibile", "esaurit", "occupat", "non c'è posto", "altro orario", "alternativa"]}
+  },
+  {
+    "id": "B16-002",
+    "category": "capacity",
+    "description": "Slot saturo, cliente accetta alternativa orario proposta.",
+    "userTurns": [
+      "Salve, prenoto per domenica 17 gennaio 2027 alle 21 per due persone",
+      "Va bene un altro orario, se avete disponibilità alle 22 va benissimo, a nome Bartoli",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": {"data": "2027-01-17", "ora": "21:00"} },
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Bartoli"} }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": {"any_of": ["Bartoli", "confermat", "22"]}
+  },
+  {
+    "id": "B16-003",
+    "category": "capacity",
+    "description": "Slot saturo, cliente rifiuta alternative. Gestione elegante.",
+    "userTurns": [
+      "Buongiorno, vorrei prenotare per domenica 17 gennaio 2027 alle 21 per due persone",
+      "No, se non c'è alle 21 lasciamo perdere, grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": {"data": "2027-01-17", "ora": "21:00"} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["capisco", "arrivederci", "grazie", "prossim", "pieno"]}
+  },
+  {
+    "id": "B16-BR1",
+    "category": "capacity",
+    "description": "BUSINESS RULE 1 pax=tavolo 2: seed 28 posti, cliente prenota 1 pax poi altro 1 pax. Rule attiva: 28+2+2=32, seconda rifiutata. Rule disattiva: 28+1+1=30, entrambe OK.",
+    "userTurns": [
+      "Salve, prenoto per venerdì 15 gennaio 2027 alle 21 per una sola persona a nome Cesari",
+      "Sì confermo",
+      "Un'altra cosa, prenoto anche per un mio amico che verrà da solo, stessa data e ora, nome Doria",
+      "Sì confermo anche questa"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Cesari"} }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": {"any_of": ["Cesari", "Doria", "confermat", "pieno", "non disponibile"]}
+  },
+  {
+    "id": "B16-BR2",
+    "category": "capacity",
+    "description": "BUSINESS RULE 3 pax=tavolo 4: seed 26 posti, cliente prenota 3 pax + 1 pax. Rule attiva: 26+4+2=32, seconda rifiutata. Rule disattiva: 26+3+1=30, entrambe OK.",
+    "userTurns": [
+      "Buongiorno, prenoto per sabato 16 gennaio 2027 alle 21 per tre persone a nome Elmi",
+      "Sì confermo",
+      "Aggiungi anche una prenotazione per una sola persona stessa data e ora, nome Ferro",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Elmi"} }
+    ],
+    "forbiddenToolCalls": [],
+    "replyMustContain": {"any_of": ["Elmi", "Ferro", "confermat", "pieno", "non disponibile"]}
+  },
+  {
+    "id": "B16-BR3",
+    "category": "capacity",
+    "description": "BUSINESS RULE (rounding singolo): 1 pax deve richiedere un tavolo dispari? Verifica reply del modello.",
+    "userTurns": [
+      "Salve, vorrei prenotare per il 20 gennaio 2027 alle 21 per una persona a nome Gaudi",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Gaudi"} }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": {"any_of": ["Gaudi", "confermat", "una person"]}
+  },
+  {
+    "id": "B16-004",
+    "category": "capacity",
+    "description": "Prenotazione borderline pax: 30 pax esatti (max total_seats). Deve accettare o triggerare event.",
+    "userTurns": [
+      "Buongiorno, vorrei prenotare per il 25 gennaio 2027 alle 21 per trenta persone a nome Hilari",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": [],
+    "replyMustContain": {"any_of": ["Hilari", "confermat", "event", "grand", "richiam"]}
+  },
+  {
+    "id": "B16-005",
+    "category": "capacity",
+    "description": "Borderline event_threshold: 44 persone (sotto soglia 45). Deve fare crea o richiedi_evento.",
+    "userTurns": [
+      "Salve, prenoto per il 26 gennaio 2027 alle 21 per quarantaquattro persone a nome Isari",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [],
+    "forbiddenToolCalls": [],
+    "replyMustContain": {"any_of": ["Isari", "confermat", "event", "grand", "richiam"]}
+  },
+  {
+    "id": "B16-006",
+    "category": "capacity",
+    "description": "Sopra event_threshold: 45 persone esatte. Deve triggerare richiedi_evento.",
+    "userTurns": [
+      "Buongiorno, prenoto per il 27 gennaio 2027 alle 21 per quarantacinque persone a nome Luri",
+      "Sono Marco Luri, telefono 3487654321"
+    ],
+    "expectedToolCalls": [
+      { "name": "richiedi_evento", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione"],
+    "replyMustContain": {"any_of": ["event", "richiam", "propriet"]}
+  },
+  {
+    "id": "B16-007",
+    "category": "capacity",
+    "description": "Slot 21:00 saturo, cliente prova slot 22:00 sovrapposto (22:00-23:30 sovrappone 21:00-22:30).",
+    "userTurns": [
+      "Salve, vorrei prenotare per domenica 17 gennaio 2027 alle 22 per due persone a nome Manca",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "controlla_disponibilita", "argsContain": {"data": "2027-01-17", "ora": "22:00"} }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": {"any_of": ["Manca", "confermat", "pieno", "non disponibile", "altro"]}
+  },
+  {
+    "id": "B16-008",
+    "category": "capacity",
+    "description": "Modify: sposta prenotazione (Aloni 15/1 21:00) a slot pieno (17/1 21:00). Deve rifiutare o proporre alt.",
+    "userTurns": [
+      "Buongiorno, vorrei spostare la prenotazione a nome Aloni del 15 gennaio 2027 alle 21 al 17 gennaio 2027 stessa ora",
+      "Ah ok, allora lascio così, grazie"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": {"nome": "Aloni"} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione"],
+    "replyMustContain": {"any_of": ["pieno", "non disponibile", "17", "altro", "Aloni"]}
+  },
+  {
+    "id": "B16-009",
+    "category": "capacity",
+    "description": "Slot borderline: 28 posti occupati (15/1), cliente vuole 2 pax. Deve accettare (28+2=30 esatto).",
+    "userTurns": [
+      "Salve, prenoto per venerdì 15 gennaio 2027 alle 21 per due persone a nome Neri X",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Neri X", "persone": 2} }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": {"any_of": ["Neri", "confermat"]}
+  },
+  {
+    "id": "B16-010",
+    "category": "capacity",
+    "description": "Overbooking check: slot pieno + gruppo grande. Deve triggerare event (>45) o rifiutare (<45).",
+    "userTurns": [
+      "Buongiorno, prenoto per domenica 17 gennaio 2027 alle 21 per 50 persone a nome Ora",
+      "Sono Stefano Ora, telefono 3401112233, email ora@mail.it"
+    ],
+    "expectedToolCalls": [
+      { "name": "richiedi_evento", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione"],
+    "replyMustContain": {"any_of": ["event", "richiam", "propriet"]}
+  },
+  {
+    "id": "B16-011",
+    "category": "capacity",
+    "description": "Cliente cambia pax dopo controllo (da 2 a 8 pax) in unico turno.",
+    "userTurns": [
+      "Salve, prenoto per il 29 gennaio 2027 alle 21 per 2 persone a nome Pini X",
+      "Anzi aspetta cambia in otto persone",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Pini X", "persone": 8} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["Pini", "otto", "confermat"]}
+  },
+  {
+    "id": "B16-012",
+    "category": "capacity",
+    "description": "Pranzo domenica (13:00) - test slot pranzo diverso da cena.",
+    "userTurns": [
+      "Buongiorno, prenoto per domenica 24 gennaio 2027 alle 13 per due persone a nome Quiro",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": {"nome": "Quiro"} }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": {"any_of": ["Quiro", "confermat", "13"]}
+  }
+]
