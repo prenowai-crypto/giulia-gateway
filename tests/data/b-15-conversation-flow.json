@@ -1,0 +1,230 @@
+[
+  {
+    "id": "B15-001",
+    "category": "flow",
+    "description": "Multi-intent semplice: cliente chiede info parcheggio, poi decide di prenotare.",
+    "userTurns": [
+      "Buongiorno, avete parcheggio?",
+      "Ok grazie. Allora vorrei prenotare per venerdì 4 dicembre alle 21 per due persone, mi chiamo Gentile"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} },
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Gentile" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Gentile", "prenotaz", "confermat"]}
+  },
+  {
+    "id": "B15-002",
+    "category": "flow",
+    "description": "Multi-intent inverso: prenotazione, poi info menu.",
+    "userTurns": [
+      "Salve, vorrei prenotare per sabato 5 dicembre alle 21 per due persone, mi chiamo Marchesi",
+      "Confermo. Una cosa prima di chiudere, avete piatti vegetariani?"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Marchesi" } },
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["vegetari", "Marchesi", "confermat", "prenotaz"]}
+  },
+  {
+    "id": "B15-003",
+    "category": "flow",
+    "description": "Cambio idea 3 volte: cliente prenota, cambia orario, poi cancella tutto. Battaglia già in DB.",
+    "userTurns": [
+      "Buongiorno, vorrei modificare la mia prenotazione di venerdì 6 novembre a nome Battaglia",
+      "Sposta alle 22",
+      "Anzi aspetta, sposta a sabato 7 stessa ora",
+      "No no cancella tutto, cambio idea, cancella la prenotazione"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Battaglia" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione"],
+    "replyMustContain": {"any_of": ["cancell", "Battaglia"]}
+  },
+  {
+    "id": "B15-004",
+    "category": "flow",
+    "description": "Cliente confuso sulla data cambia opinione. Nuova prenotazione.",
+    "userTurns": [
+      "Salve, vorrei prenotare per giovedì 3 dicembre",
+      "Aspetta scusi, forse è meglio venerdì 4",
+      "No decisamente sabato 5 dicembre alle 21 per due persone, a nome Nervi"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Nervi" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Nervi", "sabato", "5", "confermat"]}
+  },
+  {
+    "id": "B15-005",
+    "category": "flow",
+    "description": "Interruzione: cliente inizia una richiesta e a metà cambia completamente argomento.",
+    "userTurns": [
+      "Buongiorno vorrei prenotare per…",
+      "Ah scusi mi sto sbagliando, volevo solo sapere che orari fate"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["orari", "aperto", "sera", "cena"]}
+  },
+  {
+    "id": "B15-006",
+    "category": "flow",
+    "description": "Info+prenotazione contestuale: 'che orari fate? Ok voglio prenotare per stasera'.",
+    "userTurns": [
+      "Salve, che orari fate la sera?",
+      "Perfetto, prenoto per venerdì 11 dicembre alle 22 per due persone, nome Ottaviano"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} },
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ottaviano" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Ottaviano", "confermat", "22"]}
+  },
+  {
+    "id": "B15-007",
+    "category": "flow",
+    "description": "Cliente incerto: chiede varie opzioni prima di decidere.",
+    "userTurns": [
+      "Buongiorno, che opzioni avete per una cena a fine mese?",
+      "Ok grazie. Diciamo sabato 26 dicembre alle 20:30 per tre persone a nome Piras"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Piras" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Piras", "26", "confermat"]}
+  },
+  {
+    "id": "B15-008",
+    "category": "flow",
+    "description": "Cancel + ricreare nuova prenotazione stessa chiamata. Carbone già in DB (7/11).",
+    "userTurns": [
+      "Salve, cancellate la prenotazione a nome Carbone del 7 novembre alle 21",
+      "Confermo. Ma dopo cancellata, rifatemela per sabato 12 dicembre stessa ora, per tre persone",
+      "Sì confermo la nuova"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Carbone" } },
+      { "name": "cancella_prenotazione", "argsContain": {} },
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Carbone" } }
+    ],
+    "forbiddenToolCalls": ["richiedi_evento"],
+    "replyMustContain": {"any_of": ["Carbone", "12", "confermat"]}
+  },
+  {
+    "id": "B15-009",
+    "category": "flow",
+    "description": "Modify poi cambia idea e cancella. Donati già in DB (8/11).",
+    "userTurns": [
+      "Buongiorno, vorrei spostare la prenotazione a nome Donati dell'8 novembre alle 22",
+      "No aspetta, cancellala del tutto",
+      "Sì confermo cancella"
+    ],
+    "expectedToolCalls": [
+      { "name": "trova_prenotazione", "argsContain": { "nome": "Donati" } },
+      { "name": "cancella_prenotazione", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
+    "replyMustContain": {"any_of": ["cancell", "Donati"]}
+  },
+  {
+    "id": "B15-010",
+    "category": "flow",
+    "description": "Prenotazione + aggiunta persone a fine flow.",
+    "userTurns": [
+      "Salve, prenoto per il 15 dicembre alle 21 per due persone a nome Quadri",
+      "Ah aspetta, cambio, siamo in tre non due",
+      "Sì confermo"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Quadri", "persone": 3 } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["Quadri", "tre", "confermat"]}
+  },
+  {
+    "id": "B15-011",
+    "category": "flow",
+    "description": "Flow con 'aspetta scusa cosa dicevo?' - modello deve gestire perdita di contesto elegantemente.",
+    "userTurns": [
+      "Buongiorno vorrei prenotare per il 17 dicembre alle 21 per due persone",
+      "Aspetta scusa cosa stavo dicendo?",
+      "Ah sì per il 17 dicembre a nome Ranieri, alle 21 per due"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ranieri" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["Ranieri", "17", "confermat"]}
+  },
+  {
+    "id": "B15-012",
+    "category": "flow",
+    "description": "Cliente fa 2 prenotazioni distinte in stessa chiamata. Falco già in DB (10/11), aggiunge nuova.",
+    "userTurns": [
+      "Salve, vorrei aggiungere una nuova prenotazione al mio account, sempre a nome Falco, per il 18 dicembre alle 21 per due persone",
+      "Sì confermo. E già che ci sono, aggiungi anche il 19 dicembre stessa ora sempre a nome mio, sempre due persone",
+      "Sì confermo anche la seconda"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Falco" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["Falco", "18", "19", "confermat"]}
+  },
+  {
+    "id": "B15-013",
+    "category": "flow",
+    "description": "Info menu + decisione prenotazione basata sul menu.",
+    "userTurns": [
+      "Buongiorno, cosa avete di secondo?",
+      "Perfetto, allora prenoto per venerdì 18 dicembre alle 21 per due persone a nome Sereno"
+    ],
+    "expectedToolCalls": [
+      { "name": "info_locale", "argsContain": {} },
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Sereno" } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
+    "replyMustContain": {"any_of": ["Sereno", "confermat", "18"]}
+  },
+  {
+    "id": "B15-014",
+    "category": "flow",
+    "description": "Prenotazione + reclamo su cena passata - modello dovrebbe trasferire per reclamo.",
+    "userTurns": [
+      "Salve, vorrei prenotare per sabato 19 dicembre alle 21 per due persone a nome Toscani",
+      "Confermo la prenotazione. Un'altra cosa: sono venuto la settimana scorsa e mi hanno servito freddo, voglio lamentarmi con qualcuno"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Toscani" } },
+      { "name": "trasferisci_al_ristorante", "argsContain": {} }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["Toscani", "trasfer", "ristorante", "chiamerà", "richiam"]}
+  },
+  {
+    "id": "B15-015",
+    "category": "flow",
+    "description": "Cliente riabbraccia il flow dopo distrazione (rumore/interruzione simulata).",
+    "userTurns": [
+      "Buongiorno vorrei prenotare per il 22 dicembre",
+      "Scusi c'è mio figlio che piange, un attimo",
+      "Eccomi scusi. Allora, 22 dicembre alle 20:30 per quattro persone a nome Ugolini"
+    ],
+    "expectedToolCalls": [
+      { "name": "crea_prenotazione", "argsContain": { "nome": "Ugolini", "persone": 4 } }
+    ],
+    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
+    "replyMustContain": {"any_of": ["Ugolini", "quattro", "22", "confermat"]}
+  }
+]
