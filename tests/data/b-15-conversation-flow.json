@@ -74,7 +74,8 @@
       "Buongiorno, vorrei modificare la mia prenotazione di venerdì 6 novembre a nome Battaglia",
       "Sposta alle 22",
       "Anzi aspetta, sposta a sabato 7 stessa ora",
-      "No no cancella tutto, cambio idea, cancella la prenotazione"
+      "No no cancella tutto, cambio idea, cancella la prenotazione",
+      "Sì confermo, cancella"
     ],
     "expectedToolCalls": [
       {
@@ -195,8 +196,8 @@
     "category": "flow",
     "description": "Cliente incerto: chiede varie opzioni prima di decidere.",
     "userTurns": [
-      "Buongiorno, che opzioni avete per una cena a fine mese?",
-      "Ok grazie. Diciamo sabato 26 dicembre alle 20:30 per tre persone a nome Piras",
+      "Buongiorno, che opzioni avete per una cena a fine settimana?",
+      "Ok grazie. Diciamo venerdì 4 dicembre alle 21 per tre persone a nome Piras",
       "Sì confermo"
     ],
     "expectedToolCalls": [
@@ -454,7 +455,7 @@
     "userTurns": [
       "Buongiorno vorrei prenotare per il 22 dicembre",
       "Scusi c'è mio figlio che piange, un attimo",
-      "Eccomi scusi. Allora, 22 dicembre alle 20:30 per quattro persone a nome Ugolini",
+      "Eccomi scusi. Allora, 22 dicembre alle 21 per quattro persone a nome Ugolini",
       "Sì confermo"
     ],
     "expectedToolCalls": [
