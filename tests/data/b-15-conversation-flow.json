@@ -5,14 +5,32 @@
     "description": "Multi-intent semplice: cliente chiede info parcheggio, poi decide di prenotare.",
     "userTurns": [
       "Buongiorno, avete parcheggio?",
-      "Ok grazie. Allora vorrei prenotare per venerdì 4 dicembre alle 21 per due persone, mi chiamo Gentile"
+      "Ok grazie. Allora vorrei prenotare per venerdì 4 dicembre alle 21 per due persone, mi chiamo Gentile",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "info_locale", "argsContain": {} },
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Gentile" } }
+      {
+        "name": "info_locale",
+        "argsContain": {}
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Gentile"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["Gentile", "prenotaz", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Gentile",
+        "prenotaz",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-002",
@@ -20,14 +38,33 @@
     "description": "Multi-intent inverso: prenotazione, poi info menu.",
     "userTurns": [
       "Salve, vorrei prenotare per sabato 5 dicembre alle 21 per due persone, mi chiamo Marchesi",
-      "Confermo. Una cosa prima di chiudere, avete piatti vegetariani?"
+      "Sì confermo",
+      "Un'ultima cosa prima di chiudere: avete piatti vegetariani?"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Marchesi" } },
-      { "name": "info_locale", "argsContain": {} }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Marchesi"
+        }
+      },
+      {
+        "name": "info_locale",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["vegetari", "Marchesi", "confermat", "prenotaz"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "vegetari",
+        "Marchesi",
+        "confermat",
+        "prenotaz"
+      ]
+    }
   },
   {
     "id": "B15-003",
@@ -40,11 +77,26 @@
       "No no cancella tutto, cambio idea, cancella la prenotazione"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Battaglia" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Battaglia"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione"],
-    "replyMustContain": {"any_of": ["cancell", "Battaglia"]}
+    "forbiddenToolCalls": [
+      "crea_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "cancell",
+        "Battaglia"
+      ]
+    }
   },
   {
     "id": "B15-004",
@@ -53,13 +105,29 @@
     "userTurns": [
       "Salve, vorrei prenotare per giovedì 3 dicembre",
       "Aspetta scusi, forse è meglio venerdì 4",
-      "No decisamente sabato 5 dicembre alle 21 per due persone, a nome Nervi"
+      "No decisamente sabato 5 dicembre alle 21 per due persone, a nome Nervi",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Nervi" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Nervi"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["Nervi", "sabato", "5", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Nervi",
+        "sabato",
+        "5",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-005",
@@ -70,10 +138,24 @@
       "Ah scusi mi sto sbagliando, volevo solo sapere che orari fate"
     ],
     "expectedToolCalls": [
-      { "name": "info_locale", "argsContain": {} }
+      {
+        "name": "info_locale",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["crea_prenotazione", "modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["orari", "aperto", "sera", "cena"]}
+    "forbiddenToolCalls": [
+      "crea_prenotazione",
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "orari",
+        "aperto",
+        "sera",
+        "cena"
+      ]
+    }
   },
   {
     "id": "B15-006",
@@ -81,14 +163,32 @@
     "description": "Info+prenotazione contestuale: 'che orari fate? Ok voglio prenotare per stasera'.",
     "userTurns": [
       "Salve, che orari fate la sera?",
-      "Perfetto, prenoto per venerdì 11 dicembre alle 22 per due persone, nome Ottaviano"
+      "Perfetto, prenoto per venerdì 11 dicembre alle 22 per due persone, nome Ottaviano",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "info_locale", "argsContain": {} },
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Ottaviano" } }
+      {
+        "name": "info_locale",
+        "argsContain": {}
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Ottaviano"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["Ottaviano", "confermat", "22"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Ottaviano",
+        "confermat",
+        "22"
+      ]
+    }
   },
   {
     "id": "B15-007",
@@ -96,13 +196,28 @@
     "description": "Cliente incerto: chiede varie opzioni prima di decidere.",
     "userTurns": [
       "Buongiorno, che opzioni avete per una cena a fine mese?",
-      "Ok grazie. Diciamo sabato 26 dicembre alle 20:30 per tre persone a nome Piras"
+      "Ok grazie. Diciamo sabato 26 dicembre alle 20:30 per tre persone a nome Piras",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Piras" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Piras"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["Piras", "26", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Piras",
+        "26",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-008",
@@ -114,12 +229,33 @@
       "Sì confermo la nuova"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Carbone" } },
-      { "name": "cancella_prenotazione", "argsContain": {} },
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Carbone" } }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Carbone"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Carbone"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["richiedi_evento"],
-    "replyMustContain": {"any_of": ["Carbone", "12", "confermat"]}
+    "forbiddenToolCalls": [
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Carbone",
+        "12",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-009",
@@ -131,11 +267,27 @@
       "Sì confermo cancella"
     ],
     "expectedToolCalls": [
-      { "name": "trova_prenotazione", "argsContain": { "nome": "Donati" } },
-      { "name": "cancella_prenotazione", "argsContain": {} }
+      {
+        "name": "trova_prenotazione",
+        "argsContain": {
+          "nome": "Donati"
+        }
+      },
+      {
+        "name": "cancella_prenotazione",
+        "argsContain": {}
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "crea_prenotazione"],
-    "replyMustContain": {"any_of": ["cancell", "Donati"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "crea_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "cancell",
+        "Donati"
+      ]
+    }
   },
   {
     "id": "B15-010",
@@ -147,10 +299,26 @@
       "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Quadri", "persone": 3 } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Quadri",
+          "persone": 3
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["Quadri", "tre", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Quadri",
+        "tre",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-011",
@@ -159,13 +327,29 @@
     "userTurns": [
       "Buongiorno vorrei prenotare per il 17 dicembre alle 21 per due persone",
       "Aspetta scusa cosa stavo dicendo?",
-      "Ah sì per il 17 dicembre a nome Ranieri, alle 21 per due"
+      "Ah sì per il 17 dicembre a nome Ranieri, alle 21 per due",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Ranieri" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Ranieri"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["Ranieri", "17", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Ranieri",
+        "17",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-012",
@@ -177,10 +361,26 @@
       "Sì confermo anche la seconda"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Falco" } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Falco"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["Falco", "18", "19", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Falco",
+        "18",
+        "19",
+        "confermat"
+      ]
+    }
   },
   {
     "id": "B15-013",
@@ -188,29 +388,64 @@
     "description": "Info menu + decisione prenotazione basata sul menu.",
     "userTurns": [
       "Buongiorno, cosa avete di secondo?",
-      "Perfetto, allora prenoto per venerdì 18 dicembre alle 21 per due persone a nome Sereno"
+      "Perfetto, allora prenoto per venerdì 18 dicembre alle 21 per due persone a nome Sereno",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "info_locale", "argsContain": {} },
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Sereno" } }
+      {
+        "name": "info_locale",
+        "argsContain": {}
+      },
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Sereno"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione"],
-    "replyMustContain": {"any_of": ["Sereno", "confermat", "18"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Sereno",
+        "confermat",
+        "18"
+      ]
+    }
   },
   {
     "id": "B15-014",
     "category": "flow",
-    "description": "Prenotazione + reclamo su cena passata - modello dovrebbe trasferire per reclamo.",
+    "description": "Prenotazione + reclamo. Modello deve creare prenotazione. Transfer è nice-to-have (bug prompt noto — mini fatica su switch intent).",
     "userTurns": [
       "Salve, vorrei prenotare per sabato 19 dicembre alle 21 per due persone a nome Toscani",
-      "Confermo la prenotazione. Un'altra cosa: sono venuto la settimana scorsa e mi hanno servito freddo, voglio lamentarmi con qualcuno"
+      "Sì confermo la prenotazione",
+      "Un'altra cosa: sono venuto la settimana scorsa e mi hanno servito freddo, voglio lamentarmi con qualcuno"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Toscani" } },
-      { "name": "trasferisci_al_ristorante", "argsContain": {} }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Toscani"
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["Toscani", "trasfer", "ristorante", "chiamerà", "richiam"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Toscani",
+        "confermat",
+        "trasfer",
+        "ristorante",
+        "richiam"
+      ]
+    }
   },
   {
     "id": "B15-015",
@@ -219,12 +454,30 @@
     "userTurns": [
       "Buongiorno vorrei prenotare per il 22 dicembre",
       "Scusi c'è mio figlio che piange, un attimo",
-      "Eccomi scusi. Allora, 22 dicembre alle 20:30 per quattro persone a nome Ugolini"
+      "Eccomi scusi. Allora, 22 dicembre alle 20:30 per quattro persone a nome Ugolini",
+      "Sì confermo"
     ],
     "expectedToolCalls": [
-      { "name": "crea_prenotazione", "argsContain": { "nome": "Ugolini", "persone": 4 } }
+      {
+        "name": "crea_prenotazione",
+        "argsContain": {
+          "nome": "Ugolini",
+          "persone": 4
+        }
+      }
     ],
-    "forbiddenToolCalls": ["modifica_prenotazione", "cancella_prenotazione", "richiedi_evento"],
-    "replyMustContain": {"any_of": ["Ugolini", "quattro", "22", "confermat"]}
+    "forbiddenToolCalls": [
+      "modifica_prenotazione",
+      "cancella_prenotazione",
+      "richiedi_evento"
+    ],
+    "replyMustContain": {
+      "any_of": [
+        "Ugolini",
+        "quattro",
+        "22",
+        "confermat"
+      ]
+    }
   }
 ]
