@@ -48,6 +48,20 @@ function intervalsOverlap(startA, endA, startB, endB) {
   return startA < endB && startB < endA;
 }
 
+// v7.7.29: BUSINESS RULE tavoli.
+// Un cliente da 1 pax occupa un tavolo da 2 (posti fisici).
+// Un cliente da 3 pax occupa un tavolo da 4 (posti fisici).
+// Il conteggio della capacità DEVE tenere conto dei posti FISICI occupati,
+// non del numero di persone dichiarato dal cliente, altrimenti il ristorante
+// rischia overbooking (es. 15 prenotazioni da 1 pax = sistema conta 15 posti,
+// realtà occupano 30 posti fisici = 15 tavoli da 2).
+function roundToTable(pax) {
+  const n = Number(pax);
+  if (n === 1) return 2;
+  if (n === 3) return 4;
+  return n;
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -153,12 +167,17 @@ export async function checkAvailability(tenant, params) {
     const rStart = timeToMinutes(r.time);
     const rEnd   = rStart + slotMinutes;
     if (intervalsOverlap(newStart, newEnd, rStart, rEnd)) {
-      occupiedSeats += Number(r.people);
+      // v7.7.29: applico rounding a tavolo per ogni prenotazione esistente.
+      // Es. r.people=1 → conta come 2 posti fisici (tavolo da 2).
+      occupiedSeats += roundToTable(r.people);
     }
   }
 
   const totalSeats = Number(tenant.total_seats) || 30;
-  const seatsAfter = occupiedSeats + Number(people);
+  // v7.7.29: applico rounding anche alla nuova richiesta.
+  // Es. cliente chiede 3 pax → conta come 4 posti fisici (tavolo da 4).
+  const requestedSeats = roundToTable(people);
+  const seatsAfter = occupiedSeats + requestedSeats;
 
   // ─── 8. Verifica capacità ──────────────────────────────────────────────────
   if (seatsAfter > totalSeats) {
@@ -167,7 +186,8 @@ export async function checkAvailability(tenant, params) {
       message: 'slot pieno',
       capienza: totalSeats,
       occupati: occupiedSeats,
-      richiesti: Number(people),
+      richiesti: requestedSeats,
+      richiesti_dichiarati: Number(people),
     };
   }
 
