@@ -1,7 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// AVAILABILITY SERVICE — Check disponibilità slot
+// AVAILABILITY SERVICE — Check disponibilità slot (v7.7.30)
 // ═══════════════════════════════════════════════════════════════════════════════
-// Business logic (identica a quella di Apps Script attuale):
+// v7.7.30 (2026-08-30): SPOSTATO check event_threshold PRIMA di day_closed/
+// closure/time_closed. Eventi >=eventThreshold pax sono decisione business del
+// ristoratore (email tramite richiedi_evento) — NON devono essere bloccati per
+// orario/data. Fix bug B13 identificato in review batch.
+//
+// Business logic:
 //
 //   Uno slot è definito da (data, ora, slot_minutes). Ogni prenotazione occupa
 //   uno slot temporale. Due slot si sovrappongono se il loro intervallo
@@ -87,6 +92,18 @@ export async function checkAvailability(tenant, params) {
     return { esito: 'in_past', message: 'data nel passato' };
   }
 
+  // ─── 1b. Check event threshold ─────────────────────────────────────────────
+  // v7.7.30: SPOSTATO PRIMA di day_closed/closure/time_closed.
+  // BUSINESS RULE: eventi grandi (>=eventThreshold pax) sono decisione del
+  // ristoratore che valuterà via email. NON deve bloccare per orario/data/chiusure.
+  // Il ristoratore può aprire eccezionalmente per un matrimonio o cerimonia
+  // anche in giorno di chiusura settimanale, in orario fuori servizio, ecc.
+  // Il tool richiedi_evento raccoglie i dati e li invia via email al proprietario.
+  const eventThreshold = Number(tenant.eventThreshold) || 45;
+  if (Number(people) >= eventThreshold) {
+    return { esito: 'evento', message: 'usa richiedi_evento invece di crea_prenotazione' };
+  }
+
   // ─── 2. Check giorno di chiusura settimanale ──────────────────────────────
   const dow = dayOfWeek(date);
   if ((tenant.closedDays || []).includes(dow)) {
@@ -132,11 +149,9 @@ export async function checkAvailability(tenant, params) {
     return { esito: 'time_closed_dinner', giorno: dow };
   }
 
-  // ─── 5. Check event threshold (prenotazione MOLTO grande = evento) ─────────
-  const eventThreshold = Number(tenant.eventThreshold) || 45;
-  if (people >= eventThreshold) {
-    return { esito: 'evento', message: 'usa richiedi_evento invece di crea_prenotazione' };
-  }
+  // ─── 5. (Rimosso) Check event threshold — spostato allo step 1b ──────────
+  // v7.7.30: era qui prima, ora è subito dopo in_past per garantire che
+  // eventi grandi non vengano bloccati da orario/giorno chiuso.
 
   // ─── 6. Check large group threshold (informativo, non blocca) ──────────────
   const largeGroupThreshold = Number(tenant.largeGroupThreshold) || 10;
