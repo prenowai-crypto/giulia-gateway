@@ -1668,13 +1668,20 @@ export class OpenAIRealtimeClient {
           format: { type: 'audio/pcma' },
           transcription: { model: 'whisper-1' },
           turn_detection: {
-            // v7.6.2 (2026-08-06): mantengo semantic_vad + eagerness auto.
-            //   Il "parla sopra a se stessa" NON era un problema di VAD, era
-            //   il prompt che chiedeva di annunciare le tool call ("un attimo,
-            //   controllo..."). Con backend Postgres istantaneo l'annuncio e
-            //   l'esito arrivavano insieme. Fix in prompt (v7.6.2 changelog).
-            type: 'semantic_vad',
-            eagerness: 'auto',
+            // v7.7.30 (2026-08-30): STEP 0 barge-in fix.
+            //   Switch da semantic_vad a server_vad per risolvere il problema
+            //   "modello parla sopra il cliente". semantic_vad ha bug documentati
+            //   sul barge-in: gli eventi input_audio_buffer.speech_started non
+            //   arrivano affidabilmente durante il playback dell'assistant, quindi
+            //   interrupt_response:true resta ininfluente. server_vad genera
+            //   speech_started immediatamente non appena rileva voce, e con
+            //   interrupt_response:true OpenAI ferma la generazione in tempo reale.
+            //   Handler client-side in _dispatchServerEvent (case speech_started)
+            //   emette response.cancel per belt-and-suspenders.
+            type: 'server_vad',
+            threshold: 0.5,                 // sensibilità VAD (0-1); 0.5 = default OpenAI
+            prefix_padding_ms: 300,         // audio buffer prima del rilevamento
+            silence_duration_ms: 500,       // 500ms silenzio = fine turno cliente
             create_response: true,
             interrupt_response: true,
           },
@@ -1761,6 +1768,8 @@ Non prendere prenotazioni.`;
         }
         break;
       case 'response.output_audio.delta':
+        // v7.7.30 STEP 0: tracking assistente in playback per barge-in
+        this._assistantSpeaking = true;
         if (msg.delta) this.onAudioDelta(msg.delta);
         break;
       case 'response.output_audio_transcript.done':
@@ -1774,6 +1783,16 @@ Non prendere prenotazioni.`;
         break;
       case 'input_audio_buffer.speech_started':
         console.log(`🎙️  [${this.connId}] cliente: speech_started`);
+        // v7.7.30 STEP 0: barge-in fix belt-and-suspenders.
+        //   interrupt_response:true nella session già dovrebbe fermare la
+        //   generazione. In più inviamo response.cancel esplicito se c'è una
+        //   response attiva, per garantire lo stop immediato anche in caso
+        //   di edge case OpenAI. Se non c'è response attiva, cancel è no-op.
+        if (this._assistantSpeaking) {
+          console.log(`🛑 [${this.connId}] barge-in rilevato → response.cancel`);
+          this._send({ type: 'response.cancel' });
+          this._assistantSpeaking = false;
+        }
         break;
       case 'input_audio_buffer.speech_stopped':
         console.log(`🎙️  [${this.connId}] cliente: speech_stopped`);
@@ -1785,6 +1804,8 @@ Non prendere prenotazioni.`;
         this._handleFunctionCall(msg);
         break;
       case 'response.done':
+        // v7.7.30 STEP 0: assistente ha finito il turno → reset flag barge-in
+        this._assistantSpeaking = false;
         if (msg.response?.usage) {
           const u = msg.response.usage;
           console.log(`📊 [${this.connId}] tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
