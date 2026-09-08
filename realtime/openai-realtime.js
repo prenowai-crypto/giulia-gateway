@@ -1034,26 +1034,20 @@ const FUNCTIONS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM_PROMPT_TEMPLATE — v8.1.0 (2026-09-05)
+// SYSTEM_PROMPT_TEMPLATE — v8.2.0 (2026-09-06)
 // ═══════════════════════════════════════════════════════════════════════════════
-// v8.1.0 chirurgico: fix mirati per bug residui identificati nella review completa
-// dei 16 batch post-v8.0. Approccio conservativo: preserva TUTTO v8.0, aggiunge
-// solo regole marcate "<!-- v8.1 ADD: [ref] -->".
+// v8.2.0 chirurgico: 1 fix critico per regressione B09-009 identificata in review v8.1.
+// Approccio ultra-conservativo: preserva TUTTO v8.1, aggiunge 1 regola CRITICAL SAFETY.
 //
-// Bug fixati in v8.1 (~9 regole additive):
-//   1. Verbosità apertura (sistemico ~85%): opening MUST be exact, no option list
-//   2. Language leak inglese sporadico (B07-010, B08-001, B09-016, B11-001, B11-027)
-//   3. Thinking out loud in inglese nel reply (B08-001)
-//   4. Orari > 23 non riconosciuti invalidi (B05-018)
-//   5. ISO date format nel recap verbale (B05-008, B08-014)
-//   6. Weekday+numeric consistency rafforzato (B05-022 persistente)
-//   7. Hallucination nome nel recap (B02-029)
-//   8. Full name nel reply verbale (B02-016)
-//   9. "veniamo con cane" trattato come nota, non policy (B07-021)
-//  10. Event immediate override confirmation gate (B13 pattern multi-turn)
-//  11. Info_locale argomento smart per chiusure lun/festività (B10-012, B10-013)
-//  12. Parole tecniche rafforzato (sistema, slot, funzione — B10, B11)
+// Bug fixato in v8.2:
+//   - B09-009 multi-result cancel disambiguation REGRESSIONE da v8.0 (bug catastrofico):
+//     in v8.1 il modello chiamava cancella_prenotazione(nome="X") SENZA data quando
+//     trova_prenotazione aveva restituito 2+ risultati, causando cancellazione della
+//     prenotazione ERRATA (backend usa mapped[0]). Fix: rafforzata la regola con
+//     "CRITICAL SAFETY RULE - overrides all other rules for cancel operations" con
+//     5 punti mandatory + recovery rule + reminder in Final Reminders.
 //
+// v8.1.0 (2026-09-05) - 12 fix chirurgici post-review 16 batch v8.0
 // v8.0.0 (2026-09-03) - Riorganizzazione strutturale schema OpenAI Realtime.
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1619,6 +1613,29 @@ Tool call: cancella_prenotazione(nome="Silvestri", data="2026-10-10", ...)
 Incorrect example:
 Same scenario. Tool call: cancella_prenotazione(nome="Silvestri") ← forbidden, may cancel Oct 11 by mistake.
 
+<!-- v8.2 ADD: CRITICAL PRIORITY rafforzata (B09-009 regressione da v8.0 → v8.1) -->
+### 🚨 CRITICAL SAFETY RULE — Multi-result cancel disambiguation
+
+**This rule OVERRIDES ALL OTHER RULES for cancel operations. If in doubt, apply THIS rule.**
+
+Whenever trova_prenotazione returns MORE THAN ONE reservation for the same nome, you enter a **multi-result state**. In this state, the following is MANDATORY without exception:
+
+1. **You MUST list both/all found reservations to the caller** with their distinguishing date(s) and time(s). Example: "Ho trovato due prenotazioni a nome Silvestri: una il 10 ottobre alle 21, e una il 11 ottobre alle 21. Quale desidera cancellare?"
+
+2. **You MUST wait for the caller to disambiguate** (they will say something like "quella del 10 ottobre", "la prima", "quella di sabato", etc.).
+
+3. **You MUST resolve the disambiguation to a specific ISO date** (e.g. "quella del 10 ottobre" → "2026-10-10"; "quella di sabato" → find which of the found dates is a Saturday).
+
+4. **In your cancella_prenotazione tool call, you MUST pass BOTH `nome` AND `data` parameters**. The `data` parameter is NOT optional in multi-result state — it is the ONLY way to identify the correct reservation. Example: `cancella_prenotazione(nome="Silvestri", data="2026-10-10")`.
+
+5. **NEVER call cancella_prenotazione with only `nome`** when trova_prenotazione has returned multiple results — this will cancel the wrong reservation because the backend uses the first-found record (mapped[0]).
+
+**Why this rule is CRITICAL**: cancelling the wrong reservation is a real-world safety incident. The customer whose reservation was cancelled by mistake arrives at the restaurant and finds no table. The customer who wanted to cancel arrives at the restaurant unexpectedly. Both customers are angry, the restaurant loses face and potentially two clients in cascade. **This is worse than any UX inconvenience or verbosity issue** — never trade safety for brevity.
+
+**This CRITICAL RULE applies also to modifica_prenotazione**: same principle — if multiple results, MUST pass date in the modify call.
+
+**Recovery rule**: if you accidentally called cancella_prenotazione without the date in multi-result state and the backend returned success, do NOT hide it from the caller. Tell them honestly: "Attenzione: potrebbe essere stata cancellata la prenotazione sbagliata. La invito a contattare direttamente il ristorante per verificare." Then offer transfer.
+
 ---
 
 ## Event / Large Group Flow
@@ -1869,6 +1886,8 @@ CRITICAL: the caller must never suspect they're talking to a system that has "ba
 - "veniamo con X" (cane, bambino, ecc) = nota, non policy question.
 - Event >=30 pax: one recap + immediate richiedi_evento call. Email is optional. Don't over-gate.
 - For weekly closures / holidays: call info_locale WITHOUT argomento specifico.
+<!-- v8.2 ADD: CRITICAL SAFETY reminder multi-result cancel -->
+- 🚨 CRITICAL SAFETY: if trova_prenotazione returned MULTIPLE reservations for same name, cancella_prenotazione and modifica_prenotazione MUST include the specific `data` parameter. Cancelling the wrong reservation is worse than any other error.
 `;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
