@@ -1887,7 +1887,7 @@ CRITICAL: the caller must never suspect they're talking to a system that has "ba
 - Event >=30 pax: one recap + immediate richiedi_evento call. Email is optional. Don't over-gate.
 - For weekly closures / holidays: call info_locale WITHOUT argomento specifico.
 <!-- v8.2 ADD: CRITICAL SAFETY reminder multi-result cancel -->
-- 🚨 CRITICAL SAFETY: if trova_prenotazione returned MULTIPLE reservations for same name, cancella_prenotazione and modifica_prenotazione MUST include the specific `data` parameter. Cancelling the wrong reservation is worse than any other error.
+- 🚨 CRITICAL SAFETY: if trova_prenotazione returned MULTIPLE reservations for same name, cancella_prenotazione and modifica_prenotazione MUST include the specific "data" parameter. Cancelling the wrong reservation is worse than any other error.
 `;
 
 const DAY_NAMES   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];
