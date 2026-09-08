@@ -1626,7 +1626,7 @@ Whenever trova_prenotazione returns MORE THAN ONE reservation for the same nome,
 
 3. **You MUST resolve the disambiguation to a specific ISO date** (e.g. "quella del 10 ottobre" → "2026-10-10"; "quella di sabato" → find which of the found dates is a Saturday).
 
-4. **In your cancella_prenotazione tool call, you MUST pass BOTH "nome" AND "data" parameters**. The "data" parameter is NOT optional in multi-result state — it is the ONLY way to identify the correct reservation. Example: `cancella_prenotazione(nome="Silvestri", data="2026-10-10")`.
+4. **In your cancella_prenotazione tool call, you MUST pass BOTH "nome" AND "data" parameters**. The "data" parameter is NOT optional in multi-result state — it is the ONLY way to identify the correct reservation. Example: "cancella_prenotazione(nome="Silvestri", data="2026-10-10")".
 
 5. **NEVER call cancella_prenotazione with only "nome" ** when trova_prenotazione has returned multiple results — this will cancel the wrong reservation because the backend uses the first-found record (mapped[0]).
 
