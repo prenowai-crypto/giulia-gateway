@@ -2086,6 +2086,26 @@ Non prendere prenotazioni.`;
           this._send({ type: 'response.create' });
         }
         break;
+      case 'conversation.item.created': {
+        // Text-based runners send user turns as conversation.item.create/input_text
+        // instead of audio transcription events. Update the language gate here too,
+        // but DO NOT auto-create a response: the text runner owns response.create.
+        const item = msg.item;
+        if (item?.role === 'user' && Array.isArray(item.content)) {
+          const textParts = item.content
+            .filter(c => c?.type === 'input_text' && typeof c.text === 'string')
+            .map(c => c.text.trim())
+            .filter(Boolean);
+          if (textParts.length) {
+            this._updateRuntimeLanguage(textParts.join(' '));
+            this._send({
+              type: 'session.update',
+              session: { instructions: `${this._buildSystemPrompt()}${this._runtimeLanguageInstruction()}` },
+            });
+          }
+        }
+        break;
+      }
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
@@ -2743,7 +2763,97 @@ Non prendere prenotazioni.`;
   }
 
   // v7.4.10: esegue il transfer effettivo. Chiamato da response.done handler
-  // (quando il modello ha finito di parlare) o dal safety timer.\n\n  _detectCallerLanguage(text) {\n    const s = String(text || '').trim();\n    if (!s) return 'it';\n    if (/[ぁ-ゟ゠-ヿ]/.test(s)) return 'ja';\n    if (/[\u4e00-\u9fff]/.test(s)) return 'zh';\n    if (/[\u0600-\u06ff]/.test(s)) return 'ar';\n    if (/[\u0400-\u04ff]/.test(s)) return 'ru';\n\n    const t = s.toLowerCase();\n    const scores = { it: 0, en: 0, fr: 0, es: 0, de: 0, pt: 0, nl: 0, pl: 0 };\n    const add = (lang, words) => words.forEach(w => { if (t.includes(w)) scores[lang]++; });\n    add('it', [' buongiorno ', ' buonasera ', ' prenotazione', ' vorrei ', ' grazie ', ' per favore', ' avete ', ' dolci']);\n    add('en', [' hello ', ' hi ', ' booking', ' reservation', ' table ', ' please ', ' thank you', ' what time']);\n    add('fr', [' bonjour ', ' réservation', ' table ', ' merci ', ' s’il vous plaît', ' je voudrais', ' est-ce']);\n    add('es', [' hola ', ' reserva', ' mesa ', ' gracias ', ' por favor', ' quisiera', ' tienen ']);\n    add('de', [' hallo ', ' reservierung', ' tisch ', ' danke ', ' bitte ', ' ich möchte', ' haben sie']);\n    add('pt', [' olá ', ' reserva', ' mesa ', ' obrigado ', ' por favor', ' gostaria', ' vocês ']);\n    add('nl', [' hallo ', ' reservering', ' tafel ', ' bedankt ', ' alstublieft', ' ik wil', ' hebben jullie']);\n    add('pl', [' dzień dobry', ' rezerwacj', ' stolik', ' dziękuj', ' proszę', ' chciałbym', ' macie ']);\n    const ordered = Object.entries(scores).sort((a,b) => b[1] - a[1]);\n    return ordered[0][1] > 0 ? ordered[0][0] : 'it';\n  }\n\n  _runtimeLanguageInstruction() {\n    const lang = this._activeLanguage || 'it';\n    const disclosureRequired = lang !== 'it' && !this._disclosureDone.has(lang);\n    const phrases = {\n      it: 'Sono l’assistente vocale automatico del ristorante.',\n      en: 'I am the restaurant’s automated voice assistant.',\n      fr: 'Je suis l’assistant vocal automatique du restaurant.',\n      es: 'Soy el asistente de voz automático del restaurante.',\n      de: 'Ich bin der automatische Sprachassistent des Restaurants.',\n      pt: 'Sou o assistente de voz automático do restaurante.',\n      nl: 'Ik ben de automatische spraakassistent van het restaurant.',\n      pl: 'Jestem automatycznym asystentem głosowym restauracji.',\n      ru: 'Я автоматический голосовой ассистент ресторана.',\n      ja: '私はレストランの自動音声アシスタントです。',\n      zh: '我是餐厅的自动语音助手。',\n      ar: 'أنا المساعد الصوتي الآلي للمطعم.',\n    };\n    return `\nRUNTIME LANGUAGE GATE (highest priority for spoken output):\nACTIVE_LANGUAGE=${lang}\nDISCLOSURE_REQUIRED=${disclosureRequired ? 'YES' : 'NO'}\nIf DISCLOSURE_REQUIRED=YES, the first spoken sentence MUST identify you as the restaurant's automated/AI voice assistant in ACTIVE_LANGUAGE before any service content.\nCanonical identity phrase: ${phrases[lang] || phrases.it}\nAll spoken output MUST be entirely in ACTIVE_LANGUAGE, including tool results, recaps, confirmations, preambles, corrections and closing. Never copy Italian wording from internal tool data or prompt examples into a non-Italian response. After the disclosure, immediately answer the caller's latest request; do not ask a generic opening question.`;\n  }\n\n  _updateRuntimeLanguage(transcript) {\n    this._lastUserTranscript = String(transcript || '').trim();\n    const detected = this._detectCallerLanguage(this._lastUserTranscript);\n    if (detected && detected !== this._activeLanguage) {\n      this._activeLanguage = detected;\n      if (detected !== 'it') this._disclosureDone.delete(detected);\n    }\n  }\n\n  _requestResponseAfterTranscript() {\n    this._send({\n      type: 'session.update',\n      session: { instructions: `${this._buildSystemPrompt()}${this._runtimeLanguageInstruction()}` },\n    });\n    this._responseInFlight = true;\n    this._send({ type: 'response.create' });\n  }\n
+  // (quando il modello ha finito di parlare) o dal safety timer.
+
+  _detectCallerLanguage(text) {
+    const s = String(text || '').trim();
+    if (!s) return null;
+
+    // Script-based detection is deterministic for these languages.
+    if (/[ぁ-ゟ゠-ヿ]/u.test(s)) return 'ja';
+    if (/[\u4e00-\u9fff]/u.test(s)) return 'zh';
+    if (/[\u0600-\u06ff]/u.test(s)) return 'ar';
+    if (/[\u0400-\u04ff]/u.test(s)) return 'ru';
+
+    const t = ` ${s.toLowerCase().replace(/[.,!?;:()[\]{}"']/g, ' ')} `;
+    const scores = { it: 0, en: 0, fr: 0, es: 0, de: 0, pt: 0, nl: 0, pl: 0 };
+    const add = (lang, words) => words.forEach(w => { if (t.includes(w)) scores[lang]++; });
+
+    add('it', [' buongiorno ', ' buonasera ', ' prenotazione', ' prenotare ', ' vorrei ', ' grazie ', ' per favore', ' avete ', ' dolci ']);
+    add('en', [' hello ', ' hi ', ' good morning ', ' good evening ', ' booking ', ' reservation ', ' table ', ' please ', ' thank you', ' i would like ', ' next saturday', ' next sunday', ' next wednesday']);
+    add('fr', [' bonjour ', ' bonsoir ', ' réservation', ' réserver ', ' table ', ' merci ', ' s il vous plaît', ' je voudrais ', ' prochain ', ' prochaine ', ' personnes ']);
+    add('es', [' hola ', ' buenos días ', ' buenas noches ', ' reserva', ' reservar ', ' mesa ', ' gracias ', ' por favor', ' quisiera ', ' próximo ', ' próxima ', ' personas ']);
+    add('de', [' hallo ', ' guten tag ', ' guten abend ', ' reservierung', ' reservieren ', ' tisch ', ' danke ', ' bitte ', ' ich möchte', ' personen ', ' nächsten ', ' nächste ']);
+    add('pt', [' olá ', ' bom dia ', ' boa noite ', ' reserva', ' reservar ', ' mesa ', ' obrigado ', ' obrigada ', ' por favor', ' gostaria ', ' próxima ', ' pessoas ']);
+    add('nl', [' hallo ', ' goedendag ', ' goedemiddag ', ' goedenavond ', ' reservering', ' reserveren ', ' tafel ', ' bedankt ', ' alstublieft', ' ik wil ', ' volgende ', ' personen ']);
+    add('pl', [' dzień dobry', ' dobry wieczór', ' rezerwacj', ' zarezerwować ', ' stolik ', ' dziękuj', ' proszę ', ' chciałbym ', ' chciałabym ', ' następny ', ' następną ', ' osób ']);
+
+    const ordered = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    if (ordered[0][1] === 0) return null;
+    if (ordered.length > 1 && ordered[0][1] === ordered[1][1]) return null;
+    return ordered[0][0];
+  }
+
+  _isShortAffirmation(text) {
+    const t = String(text || '').trim().toLowerCase().replace(/[.!?]/g, '');
+    return /^(yes|yes please|yes confirm|confirm|ok|okay|sure|ja|oui|sí|si|sim|tak|да|はい|はい確認|是的|好|نعم|نعم أؤكد|sì|si confermo|va bene|d'accordo)$/.test(t);
+  }
+
+  _runtimeLanguageInstruction() {
+    const lang = this._activeLanguage || 'it';
+    const disclosureRequired = lang !== 'it' && !this._disclosureDone.has(lang);
+    const phrases = {
+      it: 'Sono l’assistente vocale automatico del ristorante.',
+      en: 'I am the restaurant’s automated voice assistant.',
+      fr: 'Je suis l’assistant vocal automatique du restaurant.',
+      es: 'Soy el asistente de voz automático del restaurante.',
+      de: 'Ich bin der automatische Sprachassistent des Restaurants.',
+      pt: 'Sou o assistente de voz automático do restaurante.',
+      nl: 'Ik ben de automatische spraakassistent van het restaurant.',
+      pl: 'Jestem automatycznym asystentem głosowym restauracji.',
+      ru: 'Я автоматический голосовой ассистент ресторана.',
+      ja: '私はレストランの自動音声アシスタントです。',
+      zh: '我是餐厅的自动语音助手。',
+      ar: 'أنا المساعد الصوتي الآلي للمطعم.',
+    };
+    return `
+RUNTIME LANGUAGE GATE — HIGHEST PRIORITY FOR SPOKEN OUTPUT
+ACTIVE_LANGUAGE=${lang}
+DISCLOSURE_REQUIRED=${disclosureRequired ? 'YES' : 'NO'}
+If DISCLOSURE_REQUIRED=YES, the first spoken sentence MUST identify you as the restaurant's automated/AI voice assistant in ACTIVE_LANGUAGE before any service content.
+Canonical identity phrase: ${phrases[lang] || phrases.it}
+All spoken output MUST be entirely in ACTIVE_LANGUAGE, including tool results, recaps, confirmations, preambles, corrections and closing.
+Never copy Italian wording from internal tool data or prompt examples into a non-Italian response.
+After the disclosure, immediately answer the caller's latest request; do not ask a generic opening question.`;
+  }
+
+  _updateRuntimeLanguage(transcript) {
+    this._lastUserTranscript = String(transcript || '').trim();
+    const detected = this._detectCallerLanguage(this._lastUserTranscript);
+
+    // Never let an ambiguous/short confirmation reset an established language.
+    if (this._activeLanguage !== 'it' && (this._isShortAffirmation(this._lastUserTranscript) || !detected)) {
+      return;
+    }
+    if (!detected) return;
+
+    // First clear non-Italian turn establishes the language.
+    // Later switching is allowed only when the new language is unambiguous.
+    if (detected !== this._activeLanguage) {
+      this._activeLanguage = detected;
+      if (detected !== 'it') this._disclosureDone.delete(detected);
+    }
+  }
+
+  _requestResponseAfterTranscript() {
+    this._send({
+      type: 'session.update',
+      session: { instructions: `${this._buildSystemPrompt()}${this._runtimeLanguageInstruction()}` },
+    });
+    this._responseInFlight = true;
+    this._send({ type: 'response.create' });
+  }
+
   async _executePendingTransfer() {
     if (!this._pendingTransfer) return;
     const { restaurantPhone, telnyxApiKey } = this._pendingTransfer;
