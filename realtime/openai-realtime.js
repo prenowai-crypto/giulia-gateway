@@ -1953,6 +1953,11 @@ export class OpenAIRealtimeClient {
     // v7.7.4: _restaurantInfo rimosso — info locale caricata dinamicamente
     // dal backend Postgres (info_locale JSONB nel tenant).
     this._pendingCalls     = new Map();
+    // v8.2.3: deterministic runtime language/disclosure gate.
+    this._activeLanguage = 'it';
+    this._disclosureDone = new Set(['it']);
+    this._responseInFlight = false;
+    this._lastUserTranscript = '';
 
     this._toolsEnabled = !!(
       this.restaurantConfig &&
@@ -2009,7 +2014,8 @@ export class OpenAIRealtimeClient {
             //   l'esito arrivavano insieme. Fix in prompt (v7.6.2 changelog).
             type: 'semantic_vad',
             eagerness: 'auto',
-            create_response: true,
+            // v8.2.3: wait for transcription so Node can detect language before response.
+            create_response: false,
             interrupt_response: true,
           },
           noise_reduction: { type: 'far_field' },
@@ -2076,6 +2082,7 @@ Non prendere prenotazioni.`;
         if (!this._sessionReady) {
           this._sessionReady = true;
           console.log(`✅ [${this.connId}] session.updated → richiedo saluto iniziale`);
+          this._responseInFlight = true;
           this._send({ type: 'response.create' });
         }
         break;
@@ -2089,8 +2096,9 @@ Non prendere prenotazioni.`;
             } else {
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
-            // v7.4.39 — Disclosure gestita dal prompt (opening ripetuta nella lingua del cliente).
-            // Il VAD auto-genera la response, nessuna injection code-side necessaria.
+            // v8.2.3: language detection MUST happen before response generation.
+            this._updateRuntimeLanguage(t);
+            this._requestResponseAfterTranscript();
           }
         }
         break;
@@ -2099,6 +2107,26 @@ Non prendere prenotazioni.`;
         break;
       case 'response.output_audio_transcript.done':
         if (msg.transcript) {
+          // Disclosure is complete only after it was actually spoken.
+          if (this._activeLanguage !== 'it') {
+            const spoken = String(msg.transcript).toLowerCase();
+            const disclosurePatterns = {
+              en: /automated voice assistant|voice assistant|ai assistant|voice ai/,
+              fr: /assistant vocal|assistante vocale|assistant ia|assistant automatique/,
+              es: /asistente vocal|asistente de voz|asistente virtual|asistente autom[aá]tico/,
+              de: /sprachassistent|sprach-ki|ki-assistent/,
+              pt: /assistente de voz|assistente vocal|assistente autom[aá]tico/,
+              nl: /spraakassistent|stemassistent|stem-assistent|voice assistant/,
+              pl: /asystent głosowy|asystentem głosowym|asystent/,
+              ru: /голосовой|голосового|голосовой ассистент|ai-ассистент|ассистент/,
+              ja: /自動音声アシスタント/,
+              zh: /语音助手|语音助理|智能助手/,
+              ar: /المساعد الصوتي|المساعد|مساعد صوتي/,
+            };
+            if (disclosurePatterns[this._activeLanguage]?.test(spoken)) {
+              this._disclosureDone.add(this._activeLanguage);
+            }
+          }
           if (process.env.LOG_TRANSCRIPTS === 'true') {
             console.log(`💬 [${this.connId}] [AI]: ${msg.transcript}`);
           } else {
@@ -2107,6 +2135,10 @@ Non prendere prenotazioni.`;
         }
         break;
       case 'input_audio_buffer.speech_started':
+        if (this._responseInFlight) {
+          this._send({ type: 'response.cancel' });
+          this._responseInFlight = false;
+        }
         console.log(`🎙️  [${this.connId}] cliente: speech_started`);
         break;
       case 'input_audio_buffer.speech_stopped':
@@ -2119,6 +2151,7 @@ Non prendere prenotazioni.`;
         this._handleFunctionCall(msg);
         break;
       case 'response.done':
+        this._responseInFlight = false;
         if (msg.response?.usage) {
           const u = msg.response.usage;
           console.log(`📊 [${this.connId}] tokens: total=${u.total_tokens} in=${u.input_tokens} out=${u.output_tokens}`);
@@ -2169,6 +2202,7 @@ Non prendere prenotazioni.`;
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(result) },
     });
 
+    this._responseInFlight = true;
     this._send({ type: 'response.create' });
   }
 
@@ -2709,7 +2743,7 @@ Non prendere prenotazioni.`;
   }
 
   // v7.4.10: esegue il transfer effettivo. Chiamato da response.done handler
-  // (quando il modello ha finito di parlare) o dal safety timer.
+  // (quando il modello ha finito di parlare) o dal safety timer.\n\n  _detectCallerLanguage(text) {\n    const s = String(text || '').trim();\n    if (!s) return 'it';\n    if (/[ぁ-ゟ゠-ヿ]/.test(s)) return 'ja';\n    if (/[\u4e00-\u9fff]/.test(s)) return 'zh';\n    if (/[\u0600-\u06ff]/.test(s)) return 'ar';\n    if (/[\u0400-\u04ff]/.test(s)) return 'ru';\n\n    const t = s.toLowerCase();\n    const scores = { it: 0, en: 0, fr: 0, es: 0, de: 0, pt: 0, nl: 0, pl: 0 };\n    const add = (lang, words) => words.forEach(w => { if (t.includes(w)) scores[lang]++; });\n    add('it', [' buongiorno ', ' buonasera ', ' prenotazione', ' vorrei ', ' grazie ', ' per favore', ' avete ', ' dolci']);\n    add('en', [' hello ', ' hi ', ' booking', ' reservation', ' table ', ' please ', ' thank you', ' what time']);\n    add('fr', [' bonjour ', ' réservation', ' table ', ' merci ', ' s’il vous plaît', ' je voudrais', ' est-ce']);\n    add('es', [' hola ', ' reserva', ' mesa ', ' gracias ', ' por favor', ' quisiera', ' tienen ']);\n    add('de', [' hallo ', ' reservierung', ' tisch ', ' danke ', ' bitte ', ' ich möchte', ' haben sie']);\n    add('pt', [' olá ', ' reserva', ' mesa ', ' obrigado ', ' por favor', ' gostaria', ' vocês ']);\n    add('nl', [' hallo ', ' reservering', ' tafel ', ' bedankt ', ' alstublieft', ' ik wil', ' hebben jullie']);\n    add('pl', [' dzień dobry', ' rezerwacj', ' stolik', ' dziękuj', ' proszę', ' chciałbym', ' macie ']);\n    const ordered = Object.entries(scores).sort((a,b) => b[1] - a[1]);\n    return ordered[0][1] > 0 ? ordered[0][0] : 'it';\n  }\n\n  _runtimeLanguageInstruction() {\n    const lang = this._activeLanguage || 'it';\n    const disclosureRequired = lang !== 'it' && !this._disclosureDone.has(lang);\n    const phrases = {\n      it: 'Sono l’assistente vocale automatico del ristorante.',\n      en: 'I am the restaurant’s automated voice assistant.',\n      fr: 'Je suis l’assistant vocal automatique du restaurant.',\n      es: 'Soy el asistente de voz automático del restaurante.',\n      de: 'Ich bin der automatische Sprachassistent des Restaurants.',\n      pt: 'Sou o assistente de voz automático do restaurante.',\n      nl: 'Ik ben de automatische spraakassistent van het restaurant.',\n      pl: 'Jestem automatycznym asystentem głosowym restauracji.',\n      ru: 'Я автоматический голосовой ассистент ресторана.',\n      ja: '私はレストランの自動音声アシスタントです。',\n      zh: '我是餐厅的自动语音助手。',\n      ar: 'أنا المساعد الصوتي الآلي للمطعم.',\n    };\n    return `\nRUNTIME LANGUAGE GATE (highest priority for spoken output):\nACTIVE_LANGUAGE=${lang}\nDISCLOSURE_REQUIRED=${disclosureRequired ? 'YES' : 'NO'}\nIf DISCLOSURE_REQUIRED=YES, the first spoken sentence MUST identify you as the restaurant's automated/AI voice assistant in ACTIVE_LANGUAGE before any service content.\nCanonical identity phrase: ${phrases[lang] || phrases.it}\nAll spoken output MUST be entirely in ACTIVE_LANGUAGE, including tool results, recaps, confirmations, preambles, corrections and closing. Never copy Italian wording from internal tool data or prompt examples into a non-Italian response. After the disclosure, immediately answer the caller's latest request; do not ask a generic opening question.`;\n  }\n\n  _updateRuntimeLanguage(transcript) {\n    this._lastUserTranscript = String(transcript || '').trim();\n    const detected = this._detectCallerLanguage(this._lastUserTranscript);\n    if (detected && detected !== this._activeLanguage) {\n      this._activeLanguage = detected;\n      if (detected !== 'it') this._disclosureDone.delete(detected);\n    }\n  }\n\n  _requestResponseAfterTranscript() {\n    this._send({\n      type: 'session.update',\n      session: { instructions: `${this._buildSystemPrompt()}${this._runtimeLanguageInstruction()}` },\n    });\n    this._responseInFlight = true;\n    this._send({ type: 'response.create' });\n  }\n
   async _executePendingTransfer() {
     if (!this._pendingTransfer) return;
     const { restaurantPhone, telnyxApiKey } = this._pendingTransfer;
