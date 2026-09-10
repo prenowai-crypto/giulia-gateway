@@ -1953,7 +1953,9 @@ export class OpenAIRealtimeClient {
     // v7.7.4: _restaurantInfo rimosso — info locale caricata dinamicamente
     // dal backend Postgres (info_locale JSONB nel tenant).
     this._pendingCalls     = new Map();
-    // v8.2.3: deterministic runtime language/disclosure gate.
+
+    // v8.2.4: language is enforced at RESPONSE level, not only in the session prompt.
+    // Realtime response.create supports per-response instructions that override session instructions.
     this._activeLanguage = 'it';
     this._disclosureDone = new Set(['it']);
     this._responseInFlight = false;
@@ -2014,7 +2016,9 @@ export class OpenAIRealtimeClient {
             //   l'esito arrivavano insieme. Fix in prompt (v7.6.2 changelog).
             type: 'semantic_vad',
             eagerness: 'auto',
-            // v8.2.3: wait for transcription so Node can detect language before response.
+            // v8.2.4: never auto-create a response. We first wait for the
+            // completed caller transcription, lock the language in Node, then
+            // create the response with response-level language instructions.
             create_response: false,
             interrupt_response: true,
           },
@@ -2086,26 +2090,6 @@ Non prendere prenotazioni.`;
           this._send({ type: 'response.create' });
         }
         break;
-      case 'conversation.item.created': {
-        // Text-based runners send user turns as conversation.item.create/input_text
-        // instead of audio transcription events. Update the language gate here too,
-        // but DO NOT auto-create a response: the text runner owns response.create.
-        const item = msg.item;
-        if (item?.role === 'user' && Array.isArray(item.content)) {
-          const textParts = item.content
-            .filter(c => c?.type === 'input_text' && typeof c.text === 'string')
-            .map(c => c.text.trim())
-            .filter(Boolean);
-          if (textParts.length) {
-            this._updateRuntimeLanguage(textParts.join(' '));
-            this._send({
-              type: 'session.update',
-              session: { instructions: `${this._buildSystemPrompt()}${this._runtimeLanguageInstruction()}` },
-            });
-          }
-        }
-        break;
-      }
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           const t = msg.transcript.trim();
@@ -2116,9 +2100,11 @@ Non prendere prenotazioni.`;
             } else {
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
-            // v8.2.3: language detection MUST happen before response generation.
+            // v8.2.4: language gate is decided BEFORE inference.
+            // The ASR transcript is only used to choose the response language;
+            // the model is then given a short, response-specific language fence.
             this._updateRuntimeLanguage(t);
-            this._requestResponseAfterTranscript();
+            this._requestLanguageLockedResponse();
           }
         }
         break;
@@ -2127,18 +2113,17 @@ Non prendere prenotazioni.`;
         break;
       case 'response.output_audio_transcript.done':
         if (msg.transcript) {
-          // Disclosure is complete only after it was actually spoken.
-          if (this._activeLanguage !== 'it') {
+          if (this._activeLanguage !== 'it' && !this._disclosureDone.has(this._activeLanguage)) {
             const spoken = String(msg.transcript).toLowerCase();
             const disclosurePatterns = {
-              en: /automated voice assistant|voice assistant|ai assistant|voice ai/,
+              en: /automated voice assistant|voice assistant|ai assistant/,
               fr: /assistant vocal|assistante vocale|assistant ia|assistant automatique/,
               es: /asistente vocal|asistente de voz|asistente virtual|asistente autom[aá]tico/,
               de: /sprachassistent|sprach-ki|ki-assistent/,
               pt: /assistente de voz|assistente vocal|assistente autom[aá]tico/,
               nl: /spraakassistent|stemassistent|stem-assistent|voice assistant/,
               pl: /asystent głosowy|asystentem głosowym|asystent/,
-              ru: /голосовой|голосового|голосовой ассистент|ai-ассистент|ассистент/,
+              ru: /голосовой|голосового|голосовой ассистент|ассистент/,
               ja: /自動音声アシスタント/,
               zh: /语音助手|语音助理|智能助手/,
               ar: /المساعد الصوتي|المساعد|مساعد صوتي/,
@@ -2155,6 +2140,7 @@ Non prendere prenotazioni.`;
         }
         break;
       case 'input_audio_buffer.speech_started':
+        // v8.2.4: cancel generation immediately on barge-in.
         if (this._responseInFlight) {
           this._send({ type: 'response.cancel' });
           this._responseInFlight = false;
@@ -2187,6 +2173,139 @@ Non prendere prenotazioni.`;
         console.error(`❌ [${this.connId}] Realtime error:`, JSON.stringify(msg.error || msg));
         break;
     }
+  }
+
+  _detectCallerLanguage(text) {
+    const s = String(text || '').trim();
+    if (!s || s.length < 2) return null;
+
+    // High-confidence scripts first.
+    if (/[\u3040-\u30ff]/.test(s)) return 'ja';
+    if (/[\u4e00-\u9fff]/.test(s)) return 'zh';
+    if (/[\u0600-\u06ff]/.test(s)) return 'ar';
+    if (/[\u0400-\u04ff]/.test(s)) return 'ru';
+
+    const lower = s.toLowerCase();
+    const scores = {
+      en: 0, fr: 0, es: 0, de: 0, pt: 0, nl: 0, pl: 0, it: 0,
+    };
+    const add = (lang, words, weight = 1) => {
+      for (const w of words) {
+        if (lower.includes(w)) scores[lang] += weight;
+      }
+    };
+
+    add('en', ['good morning','good evening','good afternoon','i would like','i\'d like','i want','please confirm','next saturday','next sunday','next wednesday','for two people','for 2 people','table for'], 3);
+    add('fr', ['bonjour','bonsoir','je voudrais','je souhaite','une table','pour deux','pour 2','confirmez','réserver','reserver','samedi prochain','dimanche prochain','mercredi prochain'], 3);
+    add('es', ['buenos días','buenas noches','quisiera','quiero reservar','una mesa','para dos','para 2','confirmo','sábado próximo','sabado proximo','domingo próximo','domingo proximo','miércoles próximo','miercoles proximo'], 3);
+    add('de', ['guten tag','guten abend','ich möchte','ich mochte','ich möchte einen tisch','einen tisch','für zwei','fur zwei','für 2','bestätige','bestatige','nächsten samstag','nachsten samstag','nächsten sonntag','nachsten sonntag'], 3);
+    add('pt', ['bom dia','boa tarde','boa noite','gostaria de reservar','uma mesa','para duas','para 2','confirmo','próximo sábado','proximo sábado','próximo domingo','proximo domingo'], 3);
+    add('nl', ['goedendag','goedemorgen','goedenavond','ik wil graag','ik wil een tafel','een tafel','voor twee','voor 2','bevestig','volgende zaterdag','volgende zondag','volgende woensdag'], 3);
+    add('pl', ['dzień dobry','dzien dobry','dobry wieczór','dobry wieczor','chciałbym','chcialbym','chciałabym','chcialabym','zarezerwować','zarezerwowac','stolik','dla dwóch','dla dwoch','potwierdzam','następną sobotę','nastepna sobote'], 3);
+    add('it', ['buongiorno','buonasera','vorrei prenotare','vorrei riservare','un tavolo','per due','per 2','confermo','sabato prossimo','domenica prossima','mercoledì prossimo','mercoledi prossimo'], 3);
+
+    // Useful single-word markers; lower weight prevents accidental switches.
+    add('en', ['hello','please','confirm','reserve','book'], 1);
+    add('fr', ['bonjour','merci','oui','réserver','reserver'], 1);
+    add('es', ['hola','gracias','sí','si','reservar'], 1);
+    add('de', ['hallo','danke','ja','reservieren'], 1);
+    add('pt', ['olá','ola','obrigado','sim','reservar'], 1);
+    add('nl', ['hallo','bedankt','ja','reserveren'], 1);
+    add('pl', ['tak','dziękuję','dziekuje','rezerwacja'], 1);
+    add('it', ['salve','grazie','sì','si','prenotare'], 1);
+
+    let best = null, bestScore = 0;
+    for (const [lang, score] of Object.entries(scores)) {
+      if (score > bestScore) { best = lang; bestScore = score; }
+    }
+    return bestScore >= 2 ? best : null;
+  }
+
+  _updateRuntimeLanguage(transcript) {
+    this._lastUserTranscript = transcript || '';
+    const detected = this._detectCallerLanguage(transcript);
+    if (!detected) return;
+
+    // A clear later switch is allowed. Short confirmations such as "yes/ja/si"
+    // are deliberately too weak to change language.
+    if (detected !== this._activeLanguage) {
+      this._activeLanguage = detected;
+      this._disclosureDone.delete(detected);
+      console.log(`🌐 [${this.connId}] language lock -> ${detected}`);
+    }
+  }
+
+  _disclosureSentence(lang) {
+    const name = this.restaurantConfig?.restaurant_name || this.restaurantConfig?.restaurantName || 'Osteria Test';
+    const sentences = {
+      it: `Salve, sono l'assistente vocale automatico di ${name}.`,
+      en: `Hello, I am the automated voice assistant of ${name}.`,
+      fr: `Bonjour, je suis l'assistant vocal automatique de ${name}.`,
+      es: `Hola, soy el asistente vocal automático de ${name}.`,
+      de: `Guten Tag, ich bin der automatische Sprachassistent von ${name}.`,
+      pt: `Olá, sou o assistente vocal automático de ${name}.`,
+      nl: `Goedendag, ik ben de automatische spraakassistent van ${name}.`,
+      pl: `Dzień dobry, jestem automatycznym asystentem głosowym ${name}.`,
+      ru: `Здравствуйте, я автоматический голосовой помощник ${name}.`,
+      ja: `こんにちは、私は${name}の自動音声アシスタントです。`,
+      zh: `您好，我是${name}的自动语音助理。`,
+      ar: `مرحباً، أنا المساعد الصوتي الآلي لدى ${name}.`,
+    };
+    return sentences[lang] || sentences.it;
+  }
+
+  _languageFenceInstructions() {
+    const lang = this._activeLanguage || 'it';
+    const disclosureRequired = lang !== 'it' && !this._disclosureDone.has(lang);
+    const disclosure = this._disclosureSentence(lang);
+    const rules = {
+      it: 'ITALIAN: parla esclusivamente in italiano.',
+      en: 'ENGLISH: speak exclusively in English. NEVER use Italian service/filler words.',
+      fr: 'FRENCH: speak exclusively in French. NEVER use Italian service/filler words.',
+      es: 'SPANISH: speak exclusively in Spanish. NEVER use Italian service/filler words.',
+      de: 'GERMAN: speak exclusively in German. NEVER use Italian service/filler words.',
+      pt: 'PORTUGUESE: speak exclusively in Portuguese. NEVER use Italian service/filler words.',
+      nl: 'DUTCH: speak exclusively in Dutch. NEVER use Italian service/filler words.',
+      pl: 'POLISH: speak exclusively in Polish. NEVER use Italian service/filler words.',
+      ru: 'RUSSIAN: speak exclusively in Russian. NEVER use Italian service/filler words.',
+      ja: 'JAPANESE: speak exclusively in Japanese. NEVER use Italian service/filler words.',
+      zh: 'CHINESE: speak exclusively in Chinese. NEVER use Italian service/filler words.',
+      ar: 'ARABIC: speak exclusively in Arabic. NEVER use Italian service/filler words.',
+    }[lang] || 'Speak exclusively in the active language.';
+
+    if (disclosureRequired) {
+      return [
+        'HARD RESPONSE LANGUAGE FENCE.',
+        `ACTIVE_LANGUAGE=${lang}.`,
+        rules,
+        `MANDATORY AI DISCLOSURE: the spoken response MUST BEGIN with this exact sentence: "${disclosure}"`,
+        'Do not put any greeting, tool preamble, availability result, recap, question, or other service content before that sentence.',
+        'After that exact sentence, immediately continue with the caller\'s latest request in the same language.',
+        'Do not ask a generic "how can I help?" after the disclosure if the caller already made a concrete request.',
+        'All spoken output in this response must remain in ACTIVE_LANGUAGE. Tool names, internal database fields, Italian prompt examples, and Italian tool output are NEVER spoken verbatim.',
+        'Before speaking, silently check every natural-language word for language leakage. If any Italian service/filler word appears, rewrite the entire response before emitting audio.',
+      ].join(' ');
+    }
+
+    return [
+      'HARD RESPONSE LANGUAGE FENCE.',
+      `ACTIVE_LANGUAGE=${lang}.`,
+      rules,
+      'The AI disclosure has already been completed for this language. Do not repeat it unless the caller clearly changes language again.',
+      'Answer the caller\'s latest request directly. All spoken output, tool preambles, tool results, recaps, confirmations, booking outcomes, corrections, and closing must be entirely in ACTIVE_LANGUAGE.',
+      'Never copy Italian tool output or Italian internal wording into speech. Translate/reformulate it naturally in ACTIVE_LANGUAGE.',
+      'Before speaking, silently check every natural-language word for language leakage. If any Italian service/filler word appears, rewrite the entire response before emitting audio.',
+    ].join(' ');
+  }
+
+  _requestLanguageLockedResponse() {
+    this._responseInFlight = true;
+    this._send({
+      type: 'response.create',
+      response: {
+        instructions: this._languageFenceInstructions(),
+      },
+    });
   }
 
   _accumulateCallArgs(msg) {
@@ -2222,8 +2341,14 @@ Non prendere prenotazioni.`;
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(result) },
     });
 
+    // v8.2.4: tool results are followed by a fresh response-level language fence.
     this._responseInFlight = true;
-    this._send({ type: 'response.create' });
+    this._send({
+      type: 'response.create',
+      response: {
+        instructions: this._languageFenceInstructions(),
+      },
+    });
   }
 
   async _execTool(name, args) {
@@ -2764,96 +2889,6 @@ Non prendere prenotazioni.`;
 
   // v7.4.10: esegue il transfer effettivo. Chiamato da response.done handler
   // (quando il modello ha finito di parlare) o dal safety timer.
-
-  _detectCallerLanguage(text) {
-    const s = String(text || '').trim();
-    if (!s) return null;
-
-    // Script-based detection is deterministic for these languages.
-    if (/[ぁ-ゟ゠-ヿ]/u.test(s)) return 'ja';
-    if (/[\u4e00-\u9fff]/u.test(s)) return 'zh';
-    if (/[\u0600-\u06ff]/u.test(s)) return 'ar';
-    if (/[\u0400-\u04ff]/u.test(s)) return 'ru';
-
-    const t = ` ${s.toLowerCase().replace(/[.,!?;:()[\]{}"']/g, ' ')} `;
-    const scores = { it: 0, en: 0, fr: 0, es: 0, de: 0, pt: 0, nl: 0, pl: 0 };
-    const add = (lang, words) => words.forEach(w => { if (t.includes(w)) scores[lang]++; });
-
-    add('it', [' buongiorno ', ' buonasera ', ' prenotazione', ' prenotare ', ' vorrei ', ' grazie ', ' per favore', ' avete ', ' dolci ']);
-    add('en', [' hello ', ' hi ', ' good morning ', ' good evening ', ' booking ', ' reservation ', ' table ', ' please ', ' thank you', ' i would like ', ' next saturday', ' next sunday', ' next wednesday']);
-    add('fr', [' bonjour ', ' bonsoir ', ' réservation', ' réserver ', ' table ', ' merci ', ' s il vous plaît', ' je voudrais ', ' prochain ', ' prochaine ', ' personnes ']);
-    add('es', [' hola ', ' buenos días ', ' buenas noches ', ' reserva', ' reservar ', ' mesa ', ' gracias ', ' por favor', ' quisiera ', ' próximo ', ' próxima ', ' personas ']);
-    add('de', [' hallo ', ' guten tag ', ' guten abend ', ' reservierung', ' reservieren ', ' tisch ', ' danke ', ' bitte ', ' ich möchte', ' personen ', ' nächsten ', ' nächste ']);
-    add('pt', [' olá ', ' bom dia ', ' boa noite ', ' reserva', ' reservar ', ' mesa ', ' obrigado ', ' obrigada ', ' por favor', ' gostaria ', ' próxima ', ' pessoas ']);
-    add('nl', [' hallo ', ' goedendag ', ' goedemiddag ', ' goedenavond ', ' reservering', ' reserveren ', ' tafel ', ' bedankt ', ' alstublieft', ' ik wil ', ' volgende ', ' personen ']);
-    add('pl', [' dzień dobry', ' dobry wieczór', ' rezerwacj', ' zarezerwować ', ' stolik ', ' dziękuj', ' proszę ', ' chciałbym ', ' chciałabym ', ' następny ', ' następną ', ' osób ']);
-
-    const ordered = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-    if (ordered[0][1] === 0) return null;
-    if (ordered.length > 1 && ordered[0][1] === ordered[1][1]) return null;
-    return ordered[0][0];
-  }
-
-  _isShortAffirmation(text) {
-    const t = String(text || '').trim().toLowerCase().replace(/[.!?]/g, '');
-    return /^(yes|yes please|yes confirm|confirm|ok|okay|sure|ja|oui|sí|si|sim|tak|да|はい|はい確認|是的|好|نعم|نعم أؤكد|sì|si confermo|va bene|d'accordo)$/.test(t);
-  }
-
-  _runtimeLanguageInstruction() {
-    const lang = this._activeLanguage || 'it';
-    const disclosureRequired = lang !== 'it' && !this._disclosureDone.has(lang);
-    const phrases = {
-      it: 'Sono l’assistente vocale automatico del ristorante.',
-      en: 'I am the restaurant’s automated voice assistant.',
-      fr: 'Je suis l’assistant vocal automatique du restaurant.',
-      es: 'Soy el asistente de voz automático del restaurante.',
-      de: 'Ich bin der automatische Sprachassistent des Restaurants.',
-      pt: 'Sou o assistente de voz automático do restaurante.',
-      nl: 'Ik ben de automatische spraakassistent van het restaurant.',
-      pl: 'Jestem automatycznym asystentem głosowym restauracji.',
-      ru: 'Я автоматический голосовой ассистент ресторана.',
-      ja: '私はレストランの自動音声アシスタントです。',
-      zh: '我是餐厅的自动语音助手。',
-      ar: 'أنا المساعد الصوتي الآلي للمطعم.',
-    };
-    return `
-RUNTIME LANGUAGE GATE — HIGHEST PRIORITY FOR SPOKEN OUTPUT
-ACTIVE_LANGUAGE=${lang}
-DISCLOSURE_REQUIRED=${disclosureRequired ? 'YES' : 'NO'}
-If DISCLOSURE_REQUIRED=YES, the first spoken sentence MUST identify you as the restaurant's automated/AI voice assistant in ACTIVE_LANGUAGE before any service content.
-Canonical identity phrase: ${phrases[lang] || phrases.it}
-All spoken output MUST be entirely in ACTIVE_LANGUAGE, including tool results, recaps, confirmations, preambles, corrections and closing.
-Never copy Italian wording from internal tool data or prompt examples into a non-Italian response.
-After the disclosure, immediately answer the caller's latest request; do not ask a generic opening question.`;
-  }
-
-  _updateRuntimeLanguage(transcript) {
-    this._lastUserTranscript = String(transcript || '').trim();
-    const detected = this._detectCallerLanguage(this._lastUserTranscript);
-
-    // Never let an ambiguous/short confirmation reset an established language.
-    if (this._activeLanguage !== 'it' && (this._isShortAffirmation(this._lastUserTranscript) || !detected)) {
-      return;
-    }
-    if (!detected) return;
-
-    // First clear non-Italian turn establishes the language.
-    // Later switching is allowed only when the new language is unambiguous.
-    if (detected !== this._activeLanguage) {
-      this._activeLanguage = detected;
-      if (detected !== 'it') this._disclosureDone.delete(detected);
-    }
-  }
-
-  _requestResponseAfterTranscript() {
-    this._send({
-      type: 'session.update',
-      session: { instructions: `${this._buildSystemPrompt()}${this._runtimeLanguageInstruction()}` },
-    });
-    this._responseInFlight = true;
-    this._send({ type: 'response.create' });
-  }
-
   async _executePendingTransfer() {
     if (!this._pendingTransfer) return;
     const { restaurantPhone, telnyxApiKey } = this._pendingTransfer;
