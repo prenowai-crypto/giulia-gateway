@@ -898,21 +898,7 @@ export { DateManager, TimeManager, PeopleManager, IntentDetector,
 
 console.log('🟢 openai-realtime.js GIULIA-v7.5.1-MT-2026-07-29 caricato (v7.5.1: chiarimenti Modify Flow — data ORIGINALE in trova, no tool intermedi, cancella-e-rifai esempio, pending owner annuncio)');
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MODEL SWITCH — 2026-09-09 (test v8.2 con full model)
-// ═══════════════════════════════════════════════════════════════════════════════
-// Default cambiato da 'gpt-realtime-2.1-mini' a 'gpt-realtime-2.1' (full model)
-// per test bug residui v8.2 mini che potrebbero risolversi automaticamente
-// con model più capace (B03 multilingua, B07 in-flight vs modify, B09-009
-// Silvestri disambiguazione, day X prossimo, ecc.).
-//
-// Override possibile via env var REALTIME_MODEL per tornare al mini rapidamente
-// senza redeploy (es. su Render: REALTIME_MODEL=gpt-realtime-2.1-mini).
-//
-// Reasoning effort: 'low' (minimo disponibile per full realtime) — vedi
-// _sendSessionUpdate() più sotto.
-// ═══════════════════════════════════════════════════════════════════════════════
-const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1';
+const REALTIME_MODEL = process.env.REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_URL   = `wss://api.openai.com/v1/realtime?model=${REALTIME_MODEL}`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1976,19 +1962,6 @@ export class OpenAIRealtimeClient {
       instructions: this._buildSystemPrompt(),
       tools: this._toolsEnabled ? FUNCTIONS : [],
       tool_choice: this._toolsEnabled ? 'auto' : 'none',
-      // ═════════════════════════════════════════════════════════════════════
-      // REASONING — 2026-09-09 (aggiunto per test full model)
-      // ═════════════════════════════════════════════════════════════════════
-      // Con full model (gpt-realtime-2.1) attivo reasoning al livello MINIMO
-      // per contenere costi mentre otteniamo il boost di capacità del full.
-      // Valori supportati: 'low' (minimo), 'medium', 'high'. Se in futuro
-      // vogliamo full-power, cambiare a 'medium' o 'high'.
-      //
-      // NOTA: con REALTIME_MODEL=gpt-realtime-2.1-mini questo parametro
-      // dovrebbe essere ignorato dal backend OpenAI. Se causa errore in
-      // fallback al mini, commentare/rimuovere.
-      // ═════════════════════════════════════════════════════════════════════
-      reasoning: { effort: 'low' },
       audio: {
         input: {
           format: { type: 'audio/pcma' },
