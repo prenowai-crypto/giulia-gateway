@@ -2136,7 +2136,7 @@ Non prendere prenotazioni.`;
     if (includeDisclosure) {
       return [
         `ACTIVE CONVERSATION LANGUAGE: ${lang}.`,
-        'The application has authoritatively detected this caller language from the caller's first utterance.',
+        "The application has authoritatively detected this caller language from the caller's first utterance.",
         `Start this response with EXACTLY this disclosure sentence: ${disclosure}`,
         'Do not speak the Italian disclosure.',
         'After that sentence, continue the requested service entirely in the same language.',
