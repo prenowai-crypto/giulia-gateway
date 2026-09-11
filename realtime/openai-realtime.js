@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v8.3.2 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v7.7.10 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.7.10 (2026-08-12) — Prompt Optimizer integrato (OpenAI Playground).
 //
@@ -1034,12 +1034,7 @@ const FUNCTIONS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM_PROMPT_TEMPLATE — v8.3.0 (2026-09-11)
-// v8.3.0: language detection moved out of prompt-only inference. The caller
-// speaks first, transcription completes, Node detects the language, then the
-// next response is created with an authoritative language/disclosure instruction.
-// VAD create_response is disabled so the model cannot answer before Phase 2 is
-// established. Existing tool flow is otherwise unchanged.
+// SYSTEM_PROMPT_TEMPLATE — v8.2.0 (2026-09-06)
 // ═══════════════════════════════════════════════════════════════════════════════
 // v8.2.0 chirurgico: 1 fix critico per regressione B09-009 identificata in review v8.1.
 // Approccio ultra-conservativo: preserva TUTTO v8.1, aggiunge 1 regola CRITICAL SAFETY.
@@ -1176,22 +1171,15 @@ Correct opening (nothing after the question mark):
 Incorrect opening (forbidden):
 "Salve, sono l'assistente vocale automatico di {{RESTAURANT_NAME}}, come posso aiutarla? Dimmi pure se vuole prenotare, modificare..." ← forbidden.
 
-### Phase 2 — Language detection (application-controlled)
+### Phase 2 — Language detection
 
-The application detects the caller's language ONLY after the caller has actually spoken.
-The first caller utterance is therefore the language-detection event; there is never a need to guess a language before the caller speaks.
+Detect the Active Conversation Language from the caller's first substantive reply after the Italian opening.
 
-The application supplies the detected language to the response as an authoritative turn instruction. Follow that instruction exactly.
+- If Italian: continue in Italian. Do not repeat the disclosure.
+- If non-Italian: your next spoken response in that language MUST begin with the translated disclosure once, then continue service.
 
-CRITICAL PRIORITY: the application-provided language instruction overrides any generic Italian examples or legacy Italian-only wording elsewhere in this prompt. Once LANGUAGE_LOCKED is set to a non-Italian language, all spoken content in that response and subsequent responses MUST use that language.
-
-- If Italian: continue in Italian. No second disclosure is needed.
-- If non-Italian: the FIRST spoken response after that caller utterance MUST begin with the translated AI disclosure in the detected language, then continue the service in that same language.
-- Never answer a non-Italian first caller turn with the Italian disclosure only.
-- Never make a language guess before the caller has spoken.
-
-This is a state transition, not a preference:
-OPENING_IT → CALLER_SPOKE → LANGUAGE_LOCKED → PHASE_2_DISCLOSURE_IF_NON_IT → SERVICE.
+Template:
+"[Greeting], I am the automated voice assistant of {{RESTAURANT_NAME}}, how can I help you? [service content]"
 
 Canonical disclosure phrase by language:
 - Italian: "assistente vocale automatico"
@@ -1211,7 +1199,7 @@ After this disclosure has been delivered once, never repeat it in the same call.
 
 ### Active Conversation Language
 
-- The application sets the Active Conversation Language from the first substantive caller utterance. Treat it as authoritative.
+- Set the Active Conversation Language from the first clear non-Italian caller reply.
 - Keep it for the rest of the call unless the caller explicitly asks to switch language.
 - Random foreign words do not change the language.
 - All spoken text, recaps, preambles, questions, and outcomes must be in the Active Conversation Language.
@@ -1892,7 +1880,7 @@ CRITICAL: the caller must never suspect they're talking to a system that has "ba
 - In-flight corrections before creation are not modifications.
 <!-- v8.1 ADD: reminder chiave regole v8.1 -->
 - Opening turn = disclosure sentence + question mark, NOTHING MORE. No option list.
-- Every word in every reply must be in the Active Conversation Language. If the Active Conversation Language is not Italian, do NOT fall back to Italian. No English fragments when speaking another language, and no Italian fragments in non-Italian replies except proper names or restaurant names that were explicitly provided.
+- Every word in every reply is Italian only. No English fragments ("recap", "for this new time", "Transfered", "that I", etc). No thinking-out-loud in reply.
 - Never speak dates in ISO format (2026-10-04) — always natural Italian ("4 ottobre").
 - Never say a name in recap unless caller provided it.
 - "veniamo con X" (cane, bambino, ecc) = nota, non policy question.
@@ -1930,10 +1918,6 @@ export class OpenAIRealtimeClient {
     // v7.7.4: _restaurantInfo rimosso — info locale caricata dinamicamente
     // dal backend Postgres (info_locale JSONB nel tenant).
     this._pendingCalls     = new Map();
-    // v8.3: language state is owned by the application after the caller speaks.
-    this._activeLanguage = null;
-    this._phase2DisclosureSent = false;
-    this._firstCallerTurnHandled = false;
 
     this._toolsEnabled = !!(
       this.restaurantConfig &&
@@ -1990,10 +1974,7 @@ export class OpenAIRealtimeClient {
             //   l'esito arrivavano insieme. Fix in prompt (v7.6.2 changelog).
             type: 'semantic_vad',
             eagerness: 'auto',
-            // v8.3: response creation is gated by transcription-complete so
-            // the application can establish the caller language before the
-            // first post-opening response.
-            create_response: false,
+            create_response: true,
             interrupt_response: true,
           },
           noise_reduction: { type: 'far_field' },
@@ -2047,110 +2028,6 @@ Non prendere prenotazioni.`;
       .replace(/\{\{CALLER_PHONE\}\}/g,      this.callerPhone || '(sconosciuto)');
   }
 
-  _detectCallerLanguage(text) {
-    const t = String(text || '').toLowerCase().trim();
-    if (!t) return 'it';
-
-    // Deterministic first-turn detector. It runs only after the caller has
-    // actually spoken, so the Italian opening never has to guess the language.
-    // Unicode/script checks handle languages whose scripts are distinctive;
-    // weighted lexical anchors handle the Latin-script languages.
-    if (/[\u4e00-\u9fff]/.test(t)) return 'zh';
-    if (/[\u3040-\u30ff]/.test(t)) return 'ja';
-    if (/[\u0600-\u06ff]/.test(t)) return 'ar';
-    if (/[\u0400-\u04ff]/.test(t)) return 'ru';
-
-    const words = new Set((t.match(/[a-zà-ÿ]+/g) || []));
-    const scores = { it: 0, en: 0, fr: 0, de: 0, es: 0, pt: 0, nl: 0, pl: 0 };
-    const lex = {
-      it: ['buongiorno','buonasera','vorrei','vorremmo','prenotare','prenotazione','tavolo','persone','confermo','confermare','disponibilità','sabato','domenica','mercoledì','giovedì','venerdì','lunedì','martedì','alle','per favore'],
-      en: ['hello','hi','good morning','good evening','i would like',"i'd like",'book','booking','reserve','reservation','table','people','confirm','please','next saturday','next sunday','pm','am'],
-      fr: ['bonjour','bonsoir','je voudrais','je souhaite','réserver','reservation','réservation','table','personnes','confirme','confirmer',"s'il vous plaît",'samedi','dimanche','mercredi','jeudi','vendredi','lundi','mardi','à'],
-      de: ['guten tag','guten morgen','guten abend','ich möchte','ich will','reservieren','reservierung','tisch','personen','bestätige','bestätigen','bitte','samstag','sonntag','mittwoch','donnerstag','freitag','montag','dienstag','uhr'],
-      es: ['buenos días','buenas tardes','buenas noches','quisiera','quiero','reservar','reserva','mesa','personas','confirmo','confirmar','por favor','sábado','domingo','miércoles','jueves','viernes','lunes','martes'],
-      pt: ['bom dia','boa tarde','boa noite','gostaria','quero','reservar','reserva','mesa','pessoas','confirmo','confirmar','por favor','sábado','domingo','quarta-feira','quinta-feira','sexta-feira','segunda-feira','terça-feira'],
-      nl: ['goedemorgen','goedemiddag','goedenavond','ik wil','ik zou graag','reserveren','reservering','tafel','personen','bevestig','bevestigen','alstublieft','zaterdag','zondag','woensdag','donderdag','vrijdag','maandag','dinsdag'],
-      pl: ['dzień dobry','dobry wieczór','chciałbym','chciałabym','chcę','zarezerwować','rezerwacja','stolik','osoby','potwierdzam','potwierdzić','proszę','sobota','niedziela','środa','czwartek','piątek','poniedziałek','wtorek'],
-    };
-
-    for (const [lang, anchors] of Object.entries(lex)) {
-      for (const a of anchors) {
-        if (t.includes(a)) scores[lang] += a.includes(' ') ? 3 : 2;
-      }
-    }
-
-    // Short confirmations are common immediately after a recap.
-    if (/^(yes|yeah|yep|sure|confirm|confirmed|please confirm|yes please)$/.test(t)) return 'en';
-    if (/^(oui|oui je confirme|je confirme)$/.test(t)) return 'fr';
-    if (/^(ja|ja bitte|ich bestätige)$/.test(t)) return 'de';
-    if (/^(sí|si|sí confirmo|confirmo)$/.test(t)) return 'es';
-    if (/^(sim|sim confirmo|confirmo)$/.test(t)) return 'pt';
-    if (/^(ja|ja graag|ik bevestig)$/.test(t)) return 'nl';
-    if (/^(tak|potwierdzam)$/.test(t)) return 'pl';
-
-    const ranked = Object.entries(scores).sort((a,b) => b[1] - a[1]);
-    // For a genuinely ambiguous Latin-script utterance, keep the restaurant's
-    // default language rather than inventing a foreign language.
-    return ranked[0][1] > 0 && ranked[0][1] >= ranked[1][1] + 2 ? ranked[0][0] : 'it';
-  }
-
-  _languageDisclosure(lang) {
-    const name = this.restaurantConfig?.restaurant_name || this.restaurantConfig?.restaurantName || 'il ristorante';
-    const phrases = {
-      it: `Salve, sono l'assistente vocale automatico di ${name}, come posso aiutarla?`,
-      en: `Hello, I am the automated voice assistant of ${name}. How can I help you?`,
-      fr: `Bonjour, je suis l'assistant vocal automatique de ${name}. Comment puis-je vous aider ?`,
-      de: `Guten Tag, ich bin der automatische Sprachassistent von ${name}. Wie kann ich Ihnen helfen?`,
-      es: `Hola, soy el asistente de voz automático de ${name}. ¿Cómo puedo ayudarle?`,
-      pt: `Olá, sou o assistente de voz automático de ${name}. Como posso ajudar?`,
-      nl: `Goedendag, ik ben de geautomatiseerde stemassistent van ${name}. Hoe kan ik u helpen?`,
-      pl: `Dzień dobry, jestem automatycznym asystentem głosowym ${name}. W czym mogę pomóc?`,
-      ru: `Здравствуйте, я автоматический голосовой помощник ${name}. Чем могу помочь?`,
-      ja: `こんにちは、${name}の自動音声アシスタントです。どのようにお手伝いできますか？`,
-      zh: `您好，我是${name}的自动语音助手。请问有什么可以帮您？`,
-      ar: `مرحبًا، أنا المساعد الصوتي الآلي لدى ${name}. كيف يمكنني مساعدتك؟`,
-    };
-    return phrases[lang] || phrases.it;
-  }
-
-  _firstNonItalianTurnInstructions(lang) {
-    if (lang === 'it') return '';
-    return [
-      'CRITICAL FIRST NON-ITALIAN TURN CONTROL:',
-      `The caller's first substantive language has been detected by the application as ${lang}.`,
-      'This detection is authoritative for this turn. Do NOT perform your own language guess.',
-      `Before any service content or tool preamble, your spoken response MUST begin with this exact disclosure: ${this._languageDisclosure(lang)}`,
-      'After that one disclosure sentence, continue the caller service in the same language.',
-      'Do not speak the Italian disclosure on this turn. Do not mix Italian into the response.',
-      'If a tool is required, the translated disclosure comes first, then exactly one short tool preamble, then the tool call in this same response.',
-    ].join('\n');
-  }
-
-  _responseLanguageInstructions(includeDisclosure = false) {
-    const lang = this._activeLanguage || 'it';
-    if (lang === 'it') {
-      return 'Active Conversation Language is Italian. Speak only Italian for caller-facing content.';
-    }
-
-    const disclosure = this._languageDisclosure(lang);
-    if (includeDisclosure) {
-      return [
-        `ACTIVE CONVERSATION LANGUAGE: ${lang}.`,
-        "The application has authoritatively detected this caller language from the caller's first utterance.",
-        `Start this response with EXACTLY this disclosure sentence: ${disclosure}`,
-        'Do not speak the Italian disclosure.',
-        'After that sentence, continue the requested service entirely in the same language.',
-        'Do not mix Italian or English into the response except proper names or restaurant names explicitly supplied by the caller.',
-      ].join('\n');
-    }
-
-    return [
-      `ACTIVE CONVERSATION LANGUAGE: ${lang}.`,
-      'Use this language for every caller-facing word in this response.',
-      'Do not repeat the AI disclosure. Do not mix Italian or English into the response except proper names or restaurant names explicitly supplied by the caller.',
-    ].join('\n');
-  }
-
   async _onMessage(raw) {
     let msg;
     try { msg = JSON.parse(raw.toString()); }
@@ -2177,29 +2054,8 @@ Non prendere prenotazioni.`;
             } else {
               console.log(`💬 [${this.connId}] [user]: (${t.length} char, transcript masked)`);
             }
-
-            // v8.3: application-owned first-turn language gate.
-            // We deliberately do NOT ask the model to infer the language before
-            // the caller speaks. The first Italian disclosure is generated once
-            // at call start; after the caller's first substantive utterance the
-            // application detects the language and explicitly controls the next
-            // response. This removes the fragile prompt-only Phase-2 dependency.
-            if (!this._activeLanguage) {
-              this._activeLanguage = this._detectCallerLanguage(t);
-              this._phase2DisclosureSent = this._activeLanguage !== 'it';
-              console.log(`🌐 [${this.connId}] active language=${this._activeLanguage} (code-side first-turn detection)`);
-            }
-
-            const includeDisclosure = !this._firstCallerTurnHandled && this._activeLanguage !== 'it';
-            this._firstCallerTurnHandled = true;
-
-            // v8.3.2: language is injected on EVERY post-caller response, not only
-            // the first one. This prevents the base prompt or a tool-result response
-            // from drifting back to Italian after Phase 2.
-            this._send({
-              type: 'response.create',
-              response: { instructions: this._responseLanguageInstructions(includeDisclosure) },
-            });
+            // v7.4.39 — Disclosure gestita dal prompt (opening ripetuta nella lingua del cliente).
+            // Il VAD auto-genera la response, nessuna injection code-side necessaria.
           }
         }
         break;
@@ -2278,10 +2134,7 @@ Non prendere prenotazioni.`;
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(result) },
     });
 
-    this._send({
-      type: 'response.create',
-      response: { instructions: this._responseLanguageInstructions(false) },
-    });
+    this._send({ type: 'response.create' });
   }
 
   async _execTool(name, args) {
