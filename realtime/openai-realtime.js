@@ -2062,8 +2062,8 @@ Non prendere prenotazioni.`;
     const scores = { it: 0, en: 0, fr: 0, de: 0, es: 0, pt: 0, nl: 0, pl: 0 };
     const lex = {
       it: ['buongiorno','buonasera','vorrei','vorremmo','prenotare','prenotazione','tavolo','persone','confermo','confermare','disponibilità','sabato','domenica','mercoledì','giovedì','venerdì','lunedì','martedì','alle','per favore'],
-      en: ['hello','hi','good morning','good evening','i would like','i'd like','book','booking','reserve','reservation','table','people','confirm','please','next saturday','next sunday','pm','am'],
-      fr: ['bonjour','bonsoir','je voudrais','je souhaite','réserver','reservation','réservation','table','personnes','confirme','confirmer','s'il vous plaît','samedi','dimanche','mercredi','jeudi','vendredi','lundi','mardi','à'],
+      en: ['hello','hi','good morning','good evening','i would like',"i'd like",'book','booking','reserve','reservation','table','people','confirm','please','next saturday','next sunday','pm','am'],
+      fr: ['bonjour','bonsoir','je voudrais','je souhaite','réserver','reservation','réservation','table','personnes','confirme','confirmer',"s'il vous plaît",'samedi','dimanche','mercredi','jeudi','vendredi','lundi','mardi','à'],
       de: ['guten tag','guten morgen','guten abend','ich möchte','ich will','reservieren','reservierung','tisch','personen','bestätige','bestätigen','bitte','samstag','sonntag','mittwoch','donnerstag','freitag','montag','dienstag','uhr'],
       es: ['buenos días','buenas tardes','buenas noches','quisiera','quiero','reservar','reserva','mesa','personas','confirmo','confirmar','por favor','sábado','domingo','miércoles','jueves','viernes','lunes','martes'],
       pt: ['bom dia','boa tarde','boa noite','gostaria','quero','reservar','reserva','mesa','pessoas','confirmo','confirmar','por favor','sábado','domingo','quarta-feira','quinta-feira','sexta-feira','segunda-feira','terça-feira'],
