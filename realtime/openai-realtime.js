@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRENOW REALTIME v7.7.10 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
+// PRENOW REALTIME v8.3.2 — SPEECH-TO-SPEECH (gpt-realtime-2.1-mini) MULTI-TENANT
 // ═══════════════════════════════════════════════════════════════════════════════
 // Changelog v7.7.10 (2026-08-12) — Prompt Optimizer integrato (OpenAI Playground).
 //
@@ -1183,6 +1183,8 @@ The first caller utterance is therefore the language-detection event; there is n
 
 The application supplies the detected language to the response as an authoritative turn instruction. Follow that instruction exactly.
 
+CRITICAL PRIORITY: the application-provided language instruction overrides any generic Italian examples or legacy Italian-only wording elsewhere in this prompt. Once LANGUAGE_LOCKED is set to a non-Italian language, all spoken content in that response and subsequent responses MUST use that language.
+
 - If Italian: continue in Italian. No second disclosure is needed.
 - If non-Italian: the FIRST spoken response after that caller utterance MUST begin with the translated AI disclosure in the detected language, then continue the service in that same language.
 - Never answer a non-Italian first caller turn with the Italian disclosure only.
@@ -1890,7 +1892,7 @@ CRITICAL: the caller must never suspect they're talking to a system that has "ba
 - In-flight corrections before creation are not modifications.
 <!-- v8.1 ADD: reminder chiave regole v8.1 -->
 - Opening turn = disclosure sentence + question mark, NOTHING MORE. No option list.
-- Every word in every reply is Italian only. No English fragments ("recap", "for this new time", "Transfered", "that I", etc). No thinking-out-loud in reply.
+- Every word in every reply must be in the Active Conversation Language. If the Active Conversation Language is not Italian, do NOT fall back to Italian. No English fragments when speaking another language, and no Italian fragments in non-Italian replies except proper names or restaurant names that were explicitly provided.
 - Never speak dates in ISO format (2026-10-04) — always natural Italian ("4 ottobre").
 - Never say a name in recap unless caller provided it.
 - "veniamo con X" (cane, bambino, ecc) = nota, non policy question.
@@ -2124,6 +2126,31 @@ Non prendere prenotazioni.`;
     ].join('\n');
   }
 
+  _responseLanguageInstructions(includeDisclosure = false) {
+    const lang = this._activeLanguage || 'it';
+    if (lang === 'it') {
+      return 'Active Conversation Language is Italian. Speak only Italian for caller-facing content.';
+    }
+
+    const disclosure = this._languageDisclosure(lang);
+    if (includeDisclosure) {
+      return [
+        `ACTIVE CONVERSATION LANGUAGE: ${lang}.`,
+        'The application has authoritatively detected this caller language from the caller's first utterance.',
+        `Start this response with EXACTLY this disclosure sentence: ${disclosure}`,
+        'Do not speak the Italian disclosure.',
+        'After that sentence, continue the requested service entirely in the same language.',
+        'Do not mix Italian or English into the response except proper names or restaurant names explicitly supplied by the caller.',
+      ].join('\n');
+    }
+
+    return [
+      `ACTIVE CONVERSATION LANGUAGE: ${lang}.`,
+      'Use this language for every caller-facing word in this response.',
+      'Do not repeat the AI disclosure. Do not mix Italian or English into the response except proper names or restaurant names explicitly supplied by the caller.',
+    ].join('\n');
+  }
+
   async _onMessage(raw) {
     let msg;
     try { msg = JSON.parse(raw.toString()); }
@@ -2163,17 +2190,16 @@ Non prendere prenotazioni.`;
               console.log(`🌐 [${this.connId}] active language=${this._activeLanguage} (code-side first-turn detection)`);
             }
 
-            const firstTurnInstruction = !this._firstCallerTurnHandled
-              ? this._firstNonItalianTurnInstructions(this._activeLanguage)
-              : '';
+            const includeDisclosure = !this._firstCallerTurnHandled && this._activeLanguage !== 'it';
             this._firstCallerTurnHandled = true;
 
-            // v8.3: VAD no longer auto-creates responses. We create the response
-            // only after transcription is complete, which gives us deterministic
-            // language state before the model starts speaking.
-            const response = { type: 'response.create' };
-            if (firstTurnInstruction) response.response = { instructions: firstTurnInstruction };
-            this._send(response);
+            // v8.3.2: language is injected on EVERY post-caller response, not only
+            // the first one. This prevents the base prompt or a tool-result response
+            // from drifting back to Italian after Phase 2.
+            this._send({
+              type: 'response.create',
+              response: { instructions: this._responseLanguageInstructions(includeDisclosure) },
+            });
           }
         }
         break;
@@ -2252,7 +2278,10 @@ Non prendere prenotazioni.`;
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(result) },
     });
 
-    this._send({ type: 'response.create' });
+    this._send({
+      type: 'response.create',
+      response: { instructions: this._responseLanguageInstructions(false) },
+    });
   }
 
   async _execTool(name, args) {
