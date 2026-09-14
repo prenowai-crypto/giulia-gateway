@@ -5,30 +5,45 @@
 // Il gateway garantisce che venga passato eventId (dal _lastFound salvato dalla
 // tool call trova_prenotazione precedente).
 //
-// Payload input (identico a quello che il gateway mandava ad Apps Script):
-//   {
-//     eventId: "2b71994f-...",         (UUID Postgres — o vecchio Google ID)
-//     nome: "Costa",                    (opzionale — solo se cambia)
-//     data: "2026-08-08",               (opzionale — solo se cambia)
-//     ora: "22:00",                     (opzionale — solo se cambia)
-//     persone: 3,                       (opzionale — solo se cambia)
-//     telefono: "+39...",               (opzionale)
-//     notes: "Tavolo esterno",          (opzionale — "" = rimozione nota)
-//     source: "telnyx_modify",
-//   }
+// v7.7.31 (2026-09-10): SAFETY NET MULTI-RESULT (B09-009 pattern)
+//   Se il modello chiama con `nome` (senza eventId), il tool fa disambiguation
+//   server-side: se trova >1 prenotazioni per quel nome+data, REFUSE e chiede
+//   data specifica (evita modifica silenziosa di prenotazione sbagliata).
 //
-// Risposta output (drop-in con Apps Script):
+// Payload input (v7.7.31):
+//   PATH A (eventId — path preferito):
+//     {
+//       eventId: "2b71994f-...",         (UUID Postgres)
+//       nome, data, ora, persone, ...    (campi da modificare)
+//     }
+//   PATH B (safety net — nome+data fallback):
+//     {
+//       nome: "Sanna",                    (identifier — obbligatorio)
+//       data: "2026-10-10",               (opzionale — MA richiesto se >1 match)
+//       // + campi da modificare, che si distinguono per essere DIVERSI da nome/data:
+//       ora: "22:00",
+//       persone: 3,
+//       notes: "...",
+//     }
+//   NOTA: in PATH B, `data` è AMBIGUA — è identifier o nuovo valore?
+//   Convenzione: se `eventId` assente, `data` è IDENTIFIER (data prenotazione
+//   esistente). Per cambiare la data ci vuole PATH A con eventId + nuovo `data`.
+//
+// Risposta output:
 //   Successo:
 //     { success: true, changeType: "UPDATE", stato: "CONFIRMED",
 //       data: "sabato 8 agosto", ora: "22:00", persone: 3, eventId: "..." }
-//   Errore:
-//     { success: false, reason: "not_found", message: "..." }
-//     { success: false, reason: "slot_pieno", message: "..." }
-//     { success: false, reason: "giorno_chiuso", message: "..." }
+//   Errore standard:
+//     { success: false, reason: "not_found" | "slot_pieno" | ..., message: "..." }
+//   Errore multi-result (nuovo v7.7.31):
+//     { success: false, reason: "date_required_for_disambiguation",
+//       message: "Trovate N prenotazioni a nome X. Specificare la data.",
+//       matches: [{ data_iso, data_naturale, ora, persone }, ...],
+//       count: N }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { getTenantByPhone } from '../services/tenants.js';
-import { updateReservation } from '../services/reservations.js';
+import { updateReservation, findReservations } from '../services/reservations.js';
 
 function formatDateItalian(dateInput, timezone = 'Europe/Rome') {
   let d;
@@ -56,10 +71,62 @@ function shortTime(timeInput) {
   return String(timeInput).substring(0, 5);
 }
 
+function toIsoDate(dateInput) {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) return dateInput.toISOString().substring(0, 10);
+  const s = String(dateInput);
+  return s.substring(0, 10);
+}
+
 // Valida che una stringa sia un UUID Postgres
 function isValidUUID(str) {
   if (!str || typeof str !== 'string') return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// v7.7.31 SAFETY NET: risolve nome+data → eventId con multi-result disambiguation
+// ═══════════════════════════════════════════════════════════════════════════════
+async function resolveEventIdFromNameDate(tenant, nome, data) {
+  const result = await findReservations(tenant, {
+    name: nome,
+    date: data || undefined,
+    limit: 5,
+  });
+  const reservations = result.reservations || [];
+
+  if (reservations.length === 0) {
+    return { ok: false, reason: 'not_found', message: `Nessuna prenotazione trovata a nome ${nome}${data ? ' per il ' + formatDateItalian(data, tenant.timezone) : ''}.` };
+  }
+
+  if (reservations.length === 1) {
+    return { ok: true, eventId: String(reservations[0].id) };
+  }
+
+  const matches = reservations.map(r => ({
+    data_iso: toIsoDate(r.date),
+    data_naturale: formatDateItalian(r.date, tenant.timezone),
+    ora: shortTime(r.time),
+    persone: Number(r.people),
+  }));
+
+  if (data) {
+    return {
+      ok: false,
+      reason: 'time_required_for_disambiguation',
+      message: `Trovate ${reservations.length} prenotazioni a nome ${nome} per il ${formatDateItalian(data, tenant.timezone)}. Specificare anche l'orario.`,
+      matches,
+      count: reservations.length,
+    };
+  }
+
+  return {
+    ok: false,
+    reason: 'date_required_for_disambiguation',
+    message: `Trovate ${reservations.length} prenotazioni a nome ${nome}. Specificare la data per modificare quella corretta.`,
+    matches,
+    count: reservations.length,
+  };
 }
 
 /**
@@ -78,14 +145,34 @@ export async function modificaPrenotazioneTool(restaurantConfig, params, meta = 
     return { success: false, reason: 'invalid_tenant', message: 'Configurazione ristorante non valida' };
   }
 
-  // Recupera eventId (UUID della prenotazione)
-  const eventId = params.eventId || params.event_id || null;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // v7.7.31 SAFETY NET: se eventId assente, prova a risolvere da nome+data
+  // ═══════════════════════════════════════════════════════════════════════════
+  let eventId = params.eventId || params.event_id || null;
+
   if (!eventId) {
-    return {
-      success: false,
-      reason: 'missing_eventid',
-      message: 'eventId richiesto per la modifica. Chiama prima trova_prenotazione.'
-    };
+    const nome = params.nome || params.name || null;
+    const data = params.data || params.date || null;
+
+    if (!nome) {
+      return {
+        success: false,
+        reason: 'missing_eventid',
+        message: 'eventId (o nome) richiesto per la modifica. Chiama prima trova_prenotazione.'
+      };
+    }
+
+    const resolved = await resolveEventIdFromNameDate(tenant, nome, data);
+    if (!resolved.ok) {
+      return {
+        success: false,
+        reason: resolved.reason,
+        message: resolved.message,
+        matches: resolved.matches,
+        count: resolved.count,
+      };
+    }
+    eventId = resolved.eventId;
   }
 
   // Verifica formato UUID (proteggo da eventId "vecchi" tipo Google Calendar)
@@ -98,14 +185,19 @@ export async function modificaPrenotazioneTool(restaurantConfig, params, meta = 
   }
 
   // Chiamata al service con partial update
+  // NOTA: se abbiamo risolto eventId da nome+data (PATH B), NON passiamo
+  // params.data come nuovo valore (era l'identifier). Passiamo undefined per
+  // date/name — evita di "riscrivere" la data esistente con se stessa.
+  const usedFallback = !params.eventId && !params.event_id;
+
   const result = await updateReservation(
     tenant,
     eventId,
     {
-      date:   params.data,
+      date:   usedFallback ? undefined : params.data,
       time:   params.ora,
       people: params.persone !== undefined ? Number(params.persone) : undefined,
-      name:   params.nome,
+      name:   usedFallback ? undefined : params.nome,
       phone:  params.telefono,
       email:  params.email,
       // Note: rispetto la stringa vuota come segnale di "rimuovi"
