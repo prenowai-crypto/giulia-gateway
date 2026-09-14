@@ -4,22 +4,39 @@
 // Cancella una prenotazione (soft delete).
 // Il modello passa l'eventId ottenuto da trova_prenotazione precedente.
 //
-// Payload input:
-//   {
-//     eventId: "2b71994f-...",       (UUID Postgres — richiesto)
-//     motivo: "customer_request",     (opzionale)
-//     source: "telnyx_cancel",
-//   }
+// v7.7.31 (2026-09-10): SAFETY NET MULTI-RESULT (B09-009 Silvestri)
+//   Se il modello chiama con `nome` (senza eventId), il tool fa disambiguation
+//   server-side: se trova >1 prenotazioni per quel nome+data, REFUSE e chiede
+//   data specifica (evita mapped[0] silenzioso che cancella la sbagliata).
 //
-// Risposta output (drop-in con Apps Script):
+// Payload input (v7.7.31):
+//   PATH A (eventId — path preferito):
+//     {
+//       eventId: "2b71994f-...",       (UUID Postgres — richiesto)
+//       motivo: "customer_request",     (opzionale)
+//       source: "telnyx_cancel",
+//     }
+//   PATH B (safety net — nome+data fallback):
+//     {
+//       nome: "Silvestri",              (richiesto se eventId assente)
+//       data: "2026-10-10",             (opzionale — MA richiesto se >1 match)
+//       motivo, source, ...
+//     }
+//
+// Risposta output:
 //   Successo:
 //     { success: true, cancellata: true, eventId, nome, data, ora, persone }
-//   Errore:
+//   Errore standard:
 //     { success: false, reason: "not_found" | "missing_eventid" | ..., message: "..." }
+//   Errore multi-result (nuovo v7.7.31):
+//     { success: false, reason: "date_required_for_disambiguation",
+//       message: "Trovate N prenotazioni a nome X. Specificare la data.",
+//       matches: [{ data_iso, data_naturale, ora, persone }, ...],
+//       count: N }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { getTenantByPhone } from '../services/tenants.js';
-import { cancelReservation } from '../services/reservations.js';
+import { cancelReservation, findReservations } from '../services/reservations.js';
 
 function formatDateItalian(dateInput, timezone = 'Europe/Rome') {
   let d;
@@ -47,9 +64,67 @@ function shortTime(timeInput) {
   return String(timeInput).substring(0, 5);
 }
 
+function toIsoDate(dateInput) {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) return dateInput.toISOString().substring(0, 10);
+  const s = String(dateInput);
+  return s.substring(0, 10);
+}
+
 function isValidUUID(str) {
   if (!str || typeof str !== 'string') return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// v7.7.31 SAFETY NET: risolve nome+data → eventId con multi-result disambiguation
+// ═══════════════════════════════════════════════════════════════════════════════
+async function resolveEventIdFromNameDate(tenant, nome, data) {
+  const result = await findReservations(tenant, {
+    name: nome,
+    date: data || undefined,
+    limit: 5,
+  });
+  const reservations = result.reservations || [];
+
+  if (reservations.length === 0) {
+    return { ok: false, reason: 'not_found', message: `Nessuna prenotazione trovata a nome ${nome}${data ? ' per il ' + formatDateItalian(data, tenant.timezone) : ''}.` };
+  }
+
+  if (reservations.length === 1) {
+    return { ok: true, eventId: String(reservations[0].id) };
+  }
+
+  // >1 match: REFUSE e chiedi data specifica al modello
+  // Se il caller ha già passato una data e ci sono ancora >1 match,
+  // significa che ci sono più prenotazioni STESSO NOME + STESSA DATA
+  // (raro, ma possibile — es. 2 Rossi diversi stessa sera): serve orario.
+  const matches = reservations.map(r => ({
+    data_iso: toIsoDate(r.date),
+    data_naturale: formatDateItalian(r.date, tenant.timezone),
+    ora: shortTime(r.time),
+    persone: Number(r.people),
+  }));
+
+  if (data) {
+    // stesso nome + stessa data + multi-match → serve ora
+    return {
+      ok: false,
+      reason: 'time_required_for_disambiguation',
+      message: `Trovate ${reservations.length} prenotazioni a nome ${nome} per il ${formatDateItalian(data, tenant.timezone)}. Specificare anche l'orario.`,
+      matches,
+      count: reservations.length,
+    };
+  }
+
+  // Solo nome, no data: chiedi data
+  return {
+    ok: false,
+    reason: 'date_required_for_disambiguation',
+    message: `Trovate ${reservations.length} prenotazioni a nome ${nome}. Specificare la data per cancellare quella corretta.`,
+    matches,
+    count: reservations.length,
+  };
 }
 
 export async function cancellaPrenotazioneTool(restaurantConfig, params, meta = {}) {
@@ -65,12 +140,34 @@ export async function cancellaPrenotazioneTool(restaurantConfig, params, meta = 
     return { success: false, reason: 'invalid_tenant', message: 'Configurazione ristorante non valida' };
   }
 
-  const eventId = params.eventId || params.event_id || null;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // v7.7.31 SAFETY NET: se eventId assente, prova a risolvere da nome+data
+  // ═══════════════════════════════════════════════════════════════════════════
+  let eventId = params.eventId || params.event_id || null;
+
   if (!eventId) {
-    return {
-      success: false, reason: 'missing_eventid',
-      message: 'eventId richiesto per cancellare. Chiama prima trova_prenotazione.'
-    };
+    const nome = params.nome || params.name || null;
+    const data = params.data || params.date || null;
+
+    if (!nome) {
+      return {
+        success: false, reason: 'missing_eventid',
+        message: 'eventId (o nome) richiesto per cancellare. Chiama prima trova_prenotazione.'
+      };
+    }
+
+    // Prova a risolvere nome+data → eventId con safety net multi-result
+    const resolved = await resolveEventIdFromNameDate(tenant, nome, data);
+    if (!resolved.ok) {
+      return {
+        success: false,
+        reason: resolved.reason,
+        message: resolved.message,
+        matches: resolved.matches,
+        count: resolved.count,
+      };
+    }
+    eventId = resolved.eventId;
   }
 
   if (!isValidUUID(eventId)) {
