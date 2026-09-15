@@ -2170,6 +2170,10 @@ Non prendere prenotazioni.`;
       const r = await trovaPrenotazioneTool(this.restaurantConfig, {
         nome: cleanName, data: dateISO,
       }, meta);
+      // v7.7.32 FIX B09-009: check multi-result PRIMA di controllare r.reservation
+      if (r?.found && Array.isArray(r.reservations) && r.reservations.length > 1) {
+        return this._foundMultiResult(r.reservations, cleanName);
+      }
       if (r?.found && r.reservation) return this._foundResult(r.reservation, cleanName);
     }
 
@@ -2178,6 +2182,10 @@ Non prendere prenotazioni.`;
       const r = await trovaPrenotazioneTool(this.restaurantConfig, {
         nome: cleanName,
       }, meta);
+      // v7.7.32 FIX B09-009: check multi-result PRIMA di controllare r.reservation
+      if (r?.found && Array.isArray(r.reservations) && r.reservations.length > 1) {
+        return this._foundMultiResult(r.reservations, cleanName);
+      }
       if (r?.found && r.reservation) return this._foundResult(r.reservation, cleanName);
     }
 
@@ -2186,10 +2194,53 @@ Non prendere prenotazioni.`;
       const r = await trovaPrenotazioneTool(this.restaurantConfig, {
         telefono: phone,
       }, meta);
+      if (r?.found && Array.isArray(r.reservations) && r.reservations.length > 1) {
+        return this._foundMultiResult(r.reservations, cleanName);
+      }
       if (r?.found && r.reservation) return this._foundResult(r.reservation, cleanName);
     }
 
     return { trovata: false };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // v7.7.32 FIX B09-009 (2026-09-14): gestione MULTI-RESULT per cancel/modify
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Quando trova_prenotazione ritorna >1 prenotazioni per stesso nome, salvo
+  // TUTTE in _lastFound come ARRAY. Poi _toolCancella / _toolModifica useranno
+  // la data passata dal modello per selezionare l'eventId corretto.
+  //
+  // PRIMA (bug catastrofico): _lastFound conteneva mapped[0] = prima
+  // prenotazione trovata, e cancel/modify cancellavano/modificavano quella
+  // SBAGLIATA indipendentemente da data passata dal modello.
+  // ═══════════════════════════════════════════════════════════════════════════
+  _foundMultiResult(reservations, searchedName) {
+    // Salvo TUTTI i risultati come array in _lastFound (con eventId=id per compat)
+    this._lastFound = reservations.map(r => ({
+      ...r,
+      eventId: r.eventId || r.id,
+    }));
+
+    // Preparo lista pulita per il modello (con dates formattate se disponibili)
+    const prenotazioni = reservations.map(r => ({
+      eventId: r.eventId || r.id,
+      nome: r.name || r.nome,
+      data: DateManager.formatForDisplay(r.date || r.data),
+      data_iso: (r.date || r.data)?.toString().substring(0, 10),
+      ora: TimeManager.formatForDisplay(
+        (r.time || r.ora)?.length === 5 ? (r.time || r.ora) + ':00' : (r.time || r.ora || '')
+      ),
+      persone: r.people || r.persone,
+      note: r.notes || r.note || 'nessuna',
+    }));
+
+    return {
+      trovata: true,
+      count: reservations.length,
+      needs_disambiguation: true,
+      prenotazioni,
+      istruzione: `Ho trovato ${reservations.length} prenotazioni a nome ${searchedName}. CHIEDI al cliente quale desidera tra queste (usa le date). Poi, nella chiamata cancella_prenotazione o modifica_prenotazione successiva, PASSA il parametro "data" con la data ISO (YYYY-MM-DD) della prenotazione scelta — questo è NECESSARIO per selezionare quella corretta.`,
+    };
   }
 
   _foundResult(res, searchedName) {
@@ -2357,7 +2408,41 @@ Non prendere prenotazioni.`;
   }
 
   async _toolModifica({ nome, data, ora, persone, note }) {
-    const base = this._lastFound;
+    // v7.7.32 FIX B09-009: se _lastFound è ARRAY (multi-result), uso data
+    // per disambiguare — con la convenzione che, quando arrivano 2+ risultati,
+    // il modello DEVE passare 'data' come IDENTIFIER (data della prenotazione
+    // esistente da modificare, NON nuova data). Per cambiare la data in flow
+    // multi-result serve una call in due passi: prima identify, poi modify.
+    // In flow single-result (majority case) il comportamento è INVARIATO.
+    let base;
+    if (Array.isArray(this._lastFound)) {
+      const paramData = data && String(data).trim();
+      if (!paramData) {
+        return {
+          aggiornata: false,
+          motivo: 'multi_result_serve_data',
+          messaggio: 'Ci sono più prenotazioni per questo nome. Il modello deve passare il parametro "data" (YYYY-MM-DD) per specificare quale modificare.',
+        };
+      }
+      const dateISO = this._normDate(paramData);
+      base = this._lastFound.find(r => {
+        const rDate = (r.date || r.data || '').toString().substring(0, 10);
+        return rDate === dateISO;
+      });
+      if (!base) {
+        return {
+          aggiornata: false,
+          motivo: 'data_non_corrisponde',
+          messaggio: `Nessuna prenotazione trovata per la data ${dateISO}.`,
+        };
+      }
+      // In multi-result, `data` è stato usato come IDENTIFIER — non è nuovo valore.
+      // Azzero data per evitare che venga trattato come "cambia a nuova data".
+      data = undefined;
+    } else {
+      base = this._lastFound;
+    }
+
     // v7.7.20-DEBUG: log tattici per capire perché modifica non aggiorna DB
     console.log('[_toolModifica DEBUG] args:', JSON.stringify({nome, data, ora, persone, note}));
     console.log('[_toolModifica DEBUG] _lastFound:', JSON.stringify(base));
@@ -2484,19 +2569,49 @@ Non prendere prenotazioni.`;
     return { aggiornata: false, motivo: r?.message || 'modifica non riuscita' };
   }
 
-  async _toolCancella(_args) {
-    const r = this._lastFound;
-    if (!r?.eventId) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
+  async _toolCancella(args = {}) {
+    // v7.7.32 FIX B09-009: accetto nome+data dal modello per disambiguare multi-result
+    const paramData = args?.data && String(args.data).trim();
+
+    let target = null;
+
+    if (Array.isArray(this._lastFound)) {
+      // MULTI-RESULT: devo filtrare per la data specificata dal modello
+      if (!paramData) {
+        return {
+          cancellata: false,
+          motivo: 'multi_result_serve_data',
+          messaggio: 'Ci sono più prenotazioni per questo nome. Il modello deve passare il parametro "data" (YYYY-MM-DD) per specificare quale cancellare.',
+        };
+      }
+      const dateISO = this._normDate(paramData);
+      target = this._lastFound.find(r => {
+        const rDate = (r.date || r.data || '').toString().substring(0, 10);
+        return rDate === dateISO;
+      });
+      if (!target) {
+        return {
+          cancellata: false,
+          motivo: 'data_non_corrisponde',
+          messaggio: `Nessuna prenotazione trovata per la data ${dateISO}. Date disponibili: ${this._lastFound.map(r => (r.date || r.data || '').toString().substring(0, 10)).join(', ')}`,
+        };
+      }
+    } else {
+      // SINGLE-RESULT (comportamento invariato pre-v7.7.32)
+      target = this._lastFound;
+    }
+
+    if (!target?.eventId) return { cancellata: false, motivo: 'prenotazione non identificata: usa prima trova_prenotazione' };
 
     // v7.6.0: chiamo il backend Postgres via wrapper.
-    //   Uso _lastFound.eventId (UUID Postgres) invece di nome+data+telefono.
+    //   Uso target.eventId (UUID Postgres) invece di nome+data+telefono.
     const res = await cancellaPrenotazioneTool(this.restaurantConfig, {
-      eventId: r.eventId,
+      eventId: target.eventId,
       motivo: 'customer_request',
       source: 'telnyx_cancel',
     }, {
       callId: this.connId,
-      callerPhone: this.callerPhone || r.phone || '',
+      callerPhone: this.callerPhone || target.phone || '',
     });
 
     if (res?.success === true) return { cancellata: true };
