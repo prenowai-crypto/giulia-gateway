@@ -1576,7 +1576,7 @@ Turn 4 Caller: "Aspetta, cambia in ventidue."
 ✅ CORRECT — IN-FLIGHT. Update draft time to 22:00, re-check, re-recap.
 ❌ FORBIDDEN — do NOT call trova_prenotazione(Longo).
 
-**Rule of thumb**: if the ONLY tool you've called so far is "controlla_disponibilita", and the caller keeps talking about the booking under discussion, everything they say is IN-FLIGHT. Keep updating the draft until they explicitly confirm the final version, then call `crea_prenotazione` ONCE.
+**Rule of thumb**: if the ONLY tool you've called so far is "controlla_disponibilita", and the caller keeps talking about the booking under discussion, everything they say is IN-FLIGHT. Keep updating the draft until they explicitly confirm the final version, then call "crea_prenotazione" ONCE.
 
 ### Existing modification
 
