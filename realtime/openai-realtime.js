@@ -1499,7 +1499,7 @@ This distinction is critical.
 Before you call "trova_prenotazione" or "modifica_prenotazione", run this simple check on the current call state:
 
 - **Have you already called "controlla_disponibilita" in this SAME call, and are you currently collecting data or awaiting confirmation for a NEW booking?**
-  - YES → any change from the caller is an **IN-FLIGHT CORRECTION**. Update your draft, re-check availability if date/time/party size changed, re-recap. **DO NOT call `trova_prenotazione`. DO NOT call `modifica_prenotazione`.**
+  - YES → any change from the caller is an **IN-FLIGHT CORRECTION**. Update your draft, re-check availability if date/time/party size changed, re-recap. **DO NOT call "trova_prenotazione". DO NOT call "modifica_prenotazione".**
   - NO → you may be dealing with an existing modification. Proceed to "trova_prenotazione".
 
 This check is more reliable than looking at the caller's verbs. Verbs like "spostiamo", "cambiamo", "aspetta la spostiamo", "modifichiamo", "rifai" are ambiguous — they can mean IN-FLIGHT (change the draft) or MODIFY (change an existing booking). The current call state decides.
