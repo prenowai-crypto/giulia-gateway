@@ -1034,21 +1034,22 @@ const FUNCTIONS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM_PROMPT_TEMPLATE — v8.2.1 (2026-09-15)
+// SYSTEM_PROMPT_TEMPLATE — v8.2.2 (2026-09-15)
 // ═══════════════════════════════════════════════════════════════════════════════
-// v8.2.1 chirurgico: 1 fix mirato per B07 in-flight vs modify confusion.
-// Approccio ultra-conservativo: preserva TUTTO v8.2, aggiunge solo regole marcate
-// "<!-- v8.2.1 ADD: [ref] -->".
+// v8.2.2 chirurgico: 1 fix mirato per B02 "day X prossimo" edge case.
+// Approccio ultra-conservativo: preserva TUTTO v8.2.1, aggiunge solo regole
+// marcate "<!-- v8.2.2 ADD: [ref] -->".
 //
-// Bug fixato in v8.2.1:
-//   - B07-008/009/010/027 in-flight vs modify confusion: modello chiamava
-//     trova_prenotazione per prenotazioni NON ANCORA CREATE quando il cliente
-//     diceva "aspetta la spostiamo/cambiamo" DOPO il recap. Fix: aggiunto
-//     OPERATIONAL CHECK ("hai già chiamato controlla_disponibilita ma non
-//     crea_prenotazione? → IN-FLIGHT"), 3 esempi CONCRETI turn-by-turn dei
-//     pattern falliti (Sanna date shift, Sala note change, Longo time shift),
-//     safety net in Modify Flow, reminder in Final Reminders.
+// Bug fixato in v8.2.2:
+//   - B02 "day X prossimo" convenzione italiana: quando il cliente dice
+//     "mercoledì prossimo" e mercoledì è domani/dopodomani, gli italiani
+//     tipicamente intendono la settimana successiva (usano "domani/dopodomani"
+//     per date molto vicine). Fix: regola discorsiva SOFT (no algoritmi
+//     matematici che il mini non esegue) che preferisce "+7" solo quando la
+//     next occurrence è tomorrow/day-after-tomorrow. Il recap con data
+//     esplicita rimane come safety net. Ambiguità genuina → ask.
 //
+// v8.2.1 (2026-09-15) - Fix B07 in-flight vs modify (operational check + esempi)
 // v8.2.0 (2026-09-06) - CRITICAL SAFETY multi-result cancel disambig
 // v8.1.0 (2026-09-05) - 12 fix chirurgici post-review 16 batch v8.0
 // v8.0.0 (2026-09-03) - Riorganizzazione strutturale schema OpenAI Realtime.
@@ -1353,6 +1354,14 @@ If silence or unclear audio occurs, ask once for confirmation again. Do not assu
 <!-- v8.1 ADD: rafforza weekday consistency check quando ricapitoli (B05-022 persistente) -->
 - WHEN you generate a recap, you MUST also verify weekday+date consistency for what YOU'RE about to say. If you're about to say "mercoledì 7 settembre" but 7 September is a Monday, either fix the weekday or ask the caller. NEVER speak a mismatched weekday+date pair — the caller will get confused.
 
+<!-- v8.2.2 ADD: "day X prossimo" convenzione italiana (B02 edge case) -->
+- **"Weekday prossimo/prossima"** in Italian usually means the day of the FOLLOWING calendar week — not the closest imminent occurrence. Italians normally say "domani" for tomorrow or "dopodomani" for the day after tomorrow when the day is very close. So when they add "prossimo/prossima" to a weekday name that would otherwise fall tomorrow or day-after-tomorrow, they most likely mean the SAME weekday of NEXT week.
+  - Example (today = Tuesday): "mercoledì prossimo" → the caller means the Wednesday of NEXT week (7 days away from tomorrow), NOT tomorrow.
+  - Example (today = Thursday): "sabato prossimo" → the caller means the Saturday coming in 2 days? Or of next week? If the closest occurrence is at least 3 days away, that's the most common interpretation (this weekend's Saturday). Use it.
+  - Rule of thumb: if the closest future occurrence of the requested weekday is TOMORROW or DAY-AFTER-TOMORROW, prefer the "+7 days" interpretation (next calendar week). Otherwise, use the closest future occurrence.
+  - Your recap always includes the full explicit date ("mercoledì 24 settembre alle 21") — this acts as a safety net: if you picked the wrong interpretation, the caller will correct you at the recap.
+  - This is a soft preference, not an absolute rule. Do not use complex mental math. When in real doubt, briefly ask: "Un attimo, per essere sicura: intende mercoledì 24 settembre (la settimana prossima) o mercoledì 17 (domani)?" but only when the caller's phrasing is genuinely ambiguous — otherwise trust the recap safety net.
+
 <!-- v8.1 ADD: no ISO date format in verbal reply (B05-008, B08-014) -->
 - NEVER speak dates in ISO format in the reply (e.g. "2026-10-04", "2026/09/06"). Always convert to natural Italian in the spoken reply: "domenica 4 ottobre", "il 4 ottobre 2026", "dopodomani 6 settembre". The ISO format is for tool calls only, never for the caller's ears. Also avoid parentheticals with ISO like "dopodomani (2026-09-06)".
 
@@ -1496,11 +1505,11 @@ This distinction is critical.
 <!-- v8.2.1 ADD: HIGHEST-PRIORITY operational check for B07 in-flight vs modify confusion -->
 ### 🎯 OPERATIONAL CHECK — Do this BEFORE calling trova_prenotazione
 
-Before you call "trova_prenotazione" or "modifica_prenotazione", run this simple check on the current call state:
+Before you call \`trova_prenotazione\` or \`modifica_prenotazione\`, run this simple check on the current call state:
 
-- **Have you already called "controlla_disponibilita" in this SAME call, and are you currently collecting data or awaiting confirmation for a NEW booking?**
-  - YES → any change from the caller is an **IN-FLIGHT CORRECTION**. Update your draft, re-check availability if date/time/party size changed, re-recap. **DO NOT call "trova_prenotazione". DO NOT call "modifica_prenotazione".**
-  - NO → you may be dealing with an existing modification. Proceed to "trova_prenotazione".
+- **Have you already called \`controlla_disponibilita\` in this SAME call, and are you currently collecting data or awaiting confirmation for a NEW booking?**
+  - YES → any change from the caller is an **IN-FLIGHT CORRECTION**. Update your draft, re-check availability if date/time/party size changed, re-recap. **DO NOT call \`trova_prenotazione\`. DO NOT call \`modifica_prenotazione\`.**
+  - NO → you may be dealing with an existing modification. Proceed to \`trova_prenotazione\`.
 
 This check is more reliable than looking at the caller's verbs. Verbs like "spostiamo", "cambiamo", "aspetta la spostiamo", "modifichiamo", "rifai" are ambiguous — they can mean IN-FLIGHT (change the draft) or MODIFY (change an existing booking). The current call state decides.
 
@@ -1576,7 +1585,7 @@ Turn 4 Caller: "Aspetta, cambia in ventidue."
 ✅ CORRECT — IN-FLIGHT. Update draft time to 22:00, re-check, re-recap.
 ❌ FORBIDDEN — do NOT call trova_prenotazione(Longo).
 
-**Rule of thumb**: if the ONLY tool you've called so far is "controlla_disponibilita", and the caller keeps talking about the booking under discussion, everything they say is IN-FLIGHT. Keep updating the draft until they explicitly confirm the final version, then call "crea_prenotazione" ONCE.
+**Rule of thumb**: if the ONLY tool you've called so far is \`controlla_disponibilita\`, and the caller keeps talking about the booking under discussion, everything they say is IN-FLIGHT. Keep updating the draft until they explicitly confirm the final version, then call \`crea_prenotazione\` ONCE.
 
 ### Existing modification
 
@@ -1601,7 +1610,7 @@ Use for existing reservations.
 <!-- v8.2.1 ADD: safety net for in-flight cases arriving here by mistake (B07 fix) -->
 ### 🛡️ Pre-check before starting Modify Flow
 
-Before starting the flow below, verify: **have you already called "controlla_disponibilita" in this same call AND you're still in the middle of collecting/confirming data for a NEW booking**? If YES, this is an IN-FLIGHT CORRECTION — go back to "In-flight correction" section above. Do NOT proceed to step 1 below.
+Before starting the flow below, verify: **have you already called \`controlla_disponibilita\` in this same call AND you're still in the middle of collecting/confirming data for a NEW booking**? If YES, this is an IN-FLIGHT CORRECTION — go back to "In-flight correction" section above. Do NOT proceed to step 1 below.
 
 The Modify Flow is only for reservations that ALREADY EXIST in the database (created in a previous call, or successfully created earlier in this call and now being modified).
 
@@ -1950,7 +1959,9 @@ CRITICAL: the caller must never suspect they're talking to a system that has "ba
 - Always verify availability with controlla_disponibilita before creating or modifying date/time/party size.
 - In-flight corrections before creation are not modifications.
 <!-- v8.2.1 ADD: rinforzo B07 in Final Reminders -->
-- Before calling "trova_prenotazione": check the current call state. If you've only called "controlla_disponibilita" so far and you're still collecting/confirming a NEW booking, any caller change (even with verbs like "spostiamo/cambiamo/aspetta") is an IN-FLIGHT correction — update the draft, do NOT call "trova_prenotazione".
+- Before calling \`trova_prenotazione\`: check the current call state. If you've only called \`controlla_disponibilita\` so far and you're still collecting/confirming a NEW booking, any caller change (even with verbs like "spostiamo/cambiamo/aspetta") is an IN-FLIGHT correction — update the draft, do NOT call \`trova_prenotazione\`.
+<!-- v8.2.2 ADD: reminder "day X prossimo" (B02 edge case) -->
+- "Weekday prossimo/prossima": if the closest future occurrence is tomorrow or day-after-tomorrow, prefer the SAME weekday of NEXT week (+7 days). Otherwise use the closest occurrence. Recap with the full explicit date so the caller can correct if the interpretation was wrong.
 <!-- v8.1 ADD: reminder chiave regole v8.1 -->
 - Opening turn = disclosure sentence + question mark, NOTHING MORE. No option list.
 - Every word in every reply is Italian only. No English fragments ("recap", "for this new time", "Transfered", "that I", etc). No thinking-out-loud in reply.
