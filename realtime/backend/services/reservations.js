@@ -11,6 +11,8 @@
 
 import { query, withTransaction } from '../db.js';
 import { checkAvailability } from './availability.js';
+// v7.7.33 ADD: email-sender per notifica proprietario in richieste evento (fire-and-forget)
+import { sendOwnerEventEmail } from './email-sender.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -613,6 +615,33 @@ export async function requestBigEvent(tenant, params, meta = {}) {
 
     return reservation;
   });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // v7.7.33 ADD: fire-and-forget email al proprietario (fix blocker evento)
+  // ═════════════════════════════════════════════════════════════════════════
+  // Il job è già stato inserito in sync_jobs dentro la transazione (linee
+  // precedenti). Qui inviamo SUBITO l'email in modo asincrono (non aspettiamo
+  // risposta) così il cliente in chiamata non subisce ritardo. Se l'invio
+  // fallisce, log console (email-sender ha già error handling interno).
+  //
+  // NOTA: manteniamo l'insert in sync_jobs sopra per compatibilità futura con
+  // un worker persistente (Opzione B) che processerà job non ancora spediti.
+  // ═════════════════════════════════════════════════════════════════════════
+  if (tenant.owner_email) {
+    sendOwnerEventEmail(tenant.owner_email, {
+      restaurantName: tenant.restaurant_name || tenant.name || 'Il tuo ristorante',
+      customerName: name,
+      customerPhone: phone || callerPhone || null,
+      customerEmail: email || null,
+      date,
+      time: normalizedTime,
+      people: Number(people),
+      notes: notes || '',
+      timezone: tenant.timezone || 'Europe/Rome',
+    }).catch(err => {
+      console.error(`[requestBigEvent] Fire-and-forget email failed for reservation ${insertedRow.id}:`, err?.message || err);
+    });
+  }
 
   return {
     success: true,
