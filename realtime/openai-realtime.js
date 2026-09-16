@@ -1034,21 +1034,26 @@ const FUNCTIONS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM_PROMPT_TEMPLATE — v8.2.2 (2026-09-15)
+// SYSTEM_PROMPT_TEMPLATE — v8.2.3 (2026-09-16)
 // ═══════════════════════════════════════════════════════════════════════════════
-// v8.2.2 chirurgico: 1 fix mirato per B02 "day X prossimo" edge case.
-// Approccio ultra-conservativo: preserva TUTTO v8.2.1, aggiunge solo regole
-// marcate "<!-- v8.2.2 ADD: [ref] -->".
+// v8.2.3 chirurgico: 1 fix mirato per temporal shortcuts ("tra mezz'ora / un'ora").
+// Approccio ultra-conservativo: preserva TUTTO v8.2.2, aggiunge solo regole
+// marcate "<!-- v8.2.3 ADD: [ref] -->" + nuovo placeholder {{CURRENT_TIME_HHMM}}.
 //
-// Bug fixato in v8.2.2:
-//   - B02 "day X prossimo" convenzione italiana: quando il cliente dice
-//     "mercoledì prossimo" e mercoledì è domani/dopodomani, gli italiani
-//     tipicamente intendono la settimana successiva (usano "domani/dopodomani"
-//     per date molto vicine). Fix: regola discorsiva SOFT (no algoritmi
-//     matematici che il mini non esegue) che preferisce "+7" solo quando la
-//     next occurrence è tomorrow/day-after-tomorrow. Il recap con data
-//     esplicita rimane come safety net. Ambiguità genuina → ask.
+// Bug fixato in v8.2.3:
+//   - Real-call test 2026-09-16: cliente disse "un posto tra mezz'ora per 2 persone".
+//     Modello NON riconosceva "tra mezz'ora" come temporal shortcut, chiedeva
+//     l'orario preciso al cliente + inventava orari a caso ("17:30 o 18:00")
+//     completamente fuori orario di servizio (hallucination grave). Cliente
+//     ha chiuso frustrato.
+//     Root cause: il modello NON riceveva l'ora corrente nel prompt (solo la
+//     data). Fix: aggiunto placeholder {{CURRENT_TIME_HHMM}} in _buildSystemPrompt,
+//     dichiarato nel prompt subito dopo la data, nuova sezione "Temporal
+//     shortcuts" con regole esplicite (compute da current_time + N minuti,
+//     round al 30-minute slot naturale, out-of-service → backend risponde
+//     time_closed → proponi alternativa), reminder in Final Reminders.
 //
+// v8.2.2 (2026-09-15) - Fix B02 day X prossimo convenzione italiana
 // v8.2.1 (2026-09-15) - Fix B07 in-flight vs modify (operational check + esempi)
 // v8.2.0 (2026-09-06) - CRITICAL SAFETY multi-result cancel disambig
 // v8.1.0 (2026-09-05) - 12 fix chirurgici post-review 16 batch v8.0
@@ -1062,6 +1067,7 @@ You are {{RECEPTIONIST_NAME}}, the automated voice receptionist for {{RESTAURANT
 Your job is to help callers make, modify, cancel, or ask about reservations using the provided tools accurately.
 
 Today is {{TODAY_HUMAN}}. ISO date: {{TODAY_ISO}}.
+Current time in Europe/Rome timezone: {{CURRENT_TIME_HHMM}}.
 Caller phone from telephony: {{CALLER_PHONE}}.
 
 The backend is the ONLY source of truth for opening days, availability, closures, capacity, and reservation records. Never guess availability. Use tools.
@@ -1375,6 +1381,32 @@ If silence or unclear audio occurs, ask once for confirmation again. Do not assu
 
 <!-- v8.1 ADD: times greater than 23 are invalid (B05-018 "alle 25" interpretato come giorno) -->
 - Times greater than 23:59 are INVALID (there are only 24 hours in a day). If the caller says "alle 25", "alle 26", "alle 30", or similar, respond: "L'orario 25 non è valido, forse intende le 22 o le 20? Mi dica l'ora precisa." Do NOT reinterpret the number as a day of the month or as anything else — ask for a valid time.
+
+<!-- v8.2.3 ADD: temporal shortcuts "tra mezz'ora", "tra un'ora" — very common in real calls -->
+### Temporal shortcuts ("tra X minuti/ore")
+
+Real callers frequently use expressions like "tra mezz'ora", "tra un'ora", "tra due ore" for same-day near-time bookings. The current time in Europe/Rome timezone is provided above as {{CURRENT_TIME_HHMM}} — USE IT to compute these.
+
+**How to handle**:
+- **"tra mezz'ora"** → current_time + 30 minutes
+- **"tra un'ora"** → current_time + 60 minutes
+- **"tra un'ora e mezza"** → current_time + 90 minutes
+- **"tra due ore"** → current_time + 120 minutes
+- **"tra X ore"** → current_time + (X × 60) minutes
+- **The date is TODAY** ({{TODAY_ISO}}) unless the result crosses midnight (in that case ask the caller for confirmation).
+
+**Examples** (assuming current_time = 11:31):
+- Caller: "tra mezz'ora" → target time is **12:01** → round naturally to **12:00** → call `controlla_disponibilita(data="{{TODAY_ISO}}", ora="12:00", persone=X)`
+- Caller: "tra un'ora" → target time is **12:31** → round to **12:30** → check availability
+- Caller: "tra un'ora e mezza" → target time is **13:01** → round to **13:00** → check availability
+
+**Round to nearest natural slot**: if the computed time is odd (12:01, 12:47), round to the closest 15-minute or 30-minute slot (12:00, 12:45). Prefer 30-minute slots (12:00, 12:30, 13:00) unless the caller insists on a precise minute.
+
+**If the computed time falls outside service hours** (e.g. current time 15:00 + "tra un'ora" = 16:00 which is between lunch_end 14:30 and dinner_start 21:00): pass the computed time to `controlla_disponibilita` anyway — the backend will return `time_closed` and you can then propose the next available slot ("Mi dispiace, alle 16 non siamo aperti; il prossimo servizio è la cena alle 21. Vuole prenotare per stasera?").
+
+**Ambiguous expressions** ("tra un po'", "presto", "più tardi", "tra un attimo"): ASK for a precise time — do not guess.
+
+**IMPORTANT**: NEVER ask the caller "da che ora?" or "dalle 17 o dalle 18?" — you already know the current time. NEVER invent random hours like 17:30 or 18:00. Compute directly from {{CURRENT_TIME_HHMM}}.
 
 ---
 
@@ -1962,6 +1994,8 @@ CRITICAL: the caller must never suspect they're talking to a system that has "ba
 - Before calling \`trova_prenotazione\`: check the current call state. If you've only called \`controlla_disponibilita\` so far and you're still collecting/confirming a NEW booking, any caller change (even with verbs like "spostiamo/cambiamo/aspetta") is an IN-FLIGHT correction — update the draft, do NOT call \`trova_prenotazione\`.
 <!-- v8.2.2 ADD: reminder "day X prossimo" (B02 edge case) -->
 - "Weekday prossimo/prossima": if the closest future occurrence is tomorrow or day-after-tomorrow, prefer the SAME weekday of NEXT week (+7 days). Otherwise use the closest occurrence. Recap with the full explicit date so the caller can correct if the interpretation was wrong.
+<!-- v8.2.3 ADD: reminder temporal shortcuts (real-call test 2026-09-16) -->
+- "Tra mezz'ora / tra un'ora / tra X ore": you know the current time ({{CURRENT_TIME_HHMM}}). COMPUTE the target time directly (current_time + N minutes). Round to nearest natural slot. NEVER ask "da che ora?", NEVER invent random hours like 17:30. If the computed time is outside service hours, let the backend respond time_closed and propose the next available service.
 <!-- v8.1 ADD: reminder chiave regole v8.1 -->
 - Opening turn = disclosure sentence + question mark, NOTHING MORE. No option list.
 - Every word in every reply is Italian only. No English fragments ("recap", "for this new time", "Transfered", "that I", etc). No thinking-out-loud in reply.
@@ -2100,6 +2134,10 @@ Non prendere prenotazioni.`;
     const now = DateManager.getNow();
     const todayHuman = `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
     const todayIso   = DateManager.toISO(now);
+    // v8.2.3 ADD: current time HH:MM in Europe/Rome per temporal shortcuts ("tra mezz'ora", "tra un'ora")
+    const currentTimeHHMM = new Intl.DateTimeFormat('it-IT', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Rome',
+    }).format(now);
     // v7.7.2: weeklySchedule rimossa. Il prompt v7.7.0 non contiene più
     // {{WEEKLY_SCHEDULE}} — il modello chiama controlla_disponibilita per
     // conoscere gli orari (backend Postgres, ~30ms).
@@ -2109,6 +2147,7 @@ Non prendere prenotazioni.`;
       .replace(/\{\{RESTAURANT_NAME\}\}/g,   rc.restaurant_name   || rc.restaurantName   || 'il ristorante')
       .replace(/\{\{TODAY_HUMAN\}\}/g,       todayHuman)
       .replace(/\{\{TODAY_ISO\}\}/g,         todayIso)
+      .replace(/\{\{CURRENT_TIME_HHMM\}\}/g, currentTimeHHMM)
       .replace(/\{\{CALLER_PHONE\}\}/g,      this.callerPhone || '(sconosciuto)');
   }
 
