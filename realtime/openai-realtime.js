@@ -1396,13 +1396,13 @@ Real callers frequently use expressions like "tra mezz'ora", "tra un'ora", "tra 
 - **The date is TODAY** ({{TODAY_ISO}}) unless the result crosses midnight (in that case ask the caller for confirmation).
 
 **Examples** (assuming current_time = 11:31):
-- Caller: "tra mezz'ora" → target time is **12:01** → round naturally to **12:00** → call `controlla_disponibilita(data="{{TODAY_ISO}}", ora="12:00", persone=X)`
+- Caller: "tra mezz'ora" → target time is **12:01** → round naturally to **12:00** → call "controlla_disponibilita(data="{{TODAY_ISO}}", ora="12:00", persone=X)"
 - Caller: "tra un'ora" → target time is **12:31** → round to **12:30** → check availability
 - Caller: "tra un'ora e mezza" → target time is **13:01** → round to **13:00** → check availability
 
 **Round to nearest natural slot**: if the computed time is odd (12:01, 12:47), round to the closest 15-minute or 30-minute slot (12:00, 12:45). Prefer 30-minute slots (12:00, 12:30, 13:00) unless the caller insists on a precise minute.
 
-**If the computed time falls outside service hours** (e.g. current time 15:00 + "tra un'ora" = 16:00 which is between lunch_end 14:30 and dinner_start 21:00): pass the computed time to `controlla_disponibilita` anyway — the backend will return `time_closed` and you can then propose the next available slot ("Mi dispiace, alle 16 non siamo aperti; il prossimo servizio è la cena alle 21. Vuole prenotare per stasera?").
+**If the computed time falls outside service hours** (e.g. current time 15:00 + "tra un'ora" = 16:00 which is between lunch_end 14:30 and dinner_start 21:00): pass the computed time to "controlla_disponibilita" anyway — the backend will return "time_closed" and you can then propose the next available slot ("Mi dispiace, alle 16 non siamo aperti; il prossimo servizio è la cena alle 21. Vuole prenotare per stasera?").
 
 **Ambiguous expressions** ("tra un po'", "presto", "più tardi", "tra un attimo"): ASK for a precise time — do not guess.
 
