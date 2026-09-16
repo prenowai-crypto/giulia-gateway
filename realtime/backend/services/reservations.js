@@ -629,7 +629,7 @@ export async function requestBigEvent(tenant, params, meta = {}) {
   // ═════════════════════════════════════════════════════════════════════════
   if (tenant.owner_email) {
     sendOwnerEventEmail(tenant.owner_email, {
-      restaurantName: tenant.restaurant_name || tenant.name || 'Il tuo ristorante',
+      restaurantName: tenant.restaurantName || tenant.restaurant_name || tenant.name || 'Il tuo ristorante',
       customerName: name,
       customerPhone: phone || callerPhone || null,
       customerEmail: email || null,
