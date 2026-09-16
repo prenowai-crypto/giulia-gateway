@@ -1396,13 +1396,13 @@ Real callers frequently use expressions like "tra mezz'ora", "tra un'ora", "tra 
 - **The date is TODAY** ({{TODAY_ISO}}) unless the result crosses midnight (in that case ask the caller for confirmation).
 
 **Examples** (assuming current_time = 11:31):
-- Caller: "tra mezz'ora" → target time is **12:01** → round naturally to **12:00** → call "controlla_disponibilita(data="{{TODAY_ISO}}", ora="12:00", persone=X)"
+- Caller: "tra mezz'ora" → target time is **12:01** → round naturally to **12:00** → call \`controlla_disponibilita(data="{{TODAY_ISO}}", ora="12:00", persone=X)\`
 - Caller: "tra un'ora" → target time is **12:31** → round to **12:30** → check availability
 - Caller: "tra un'ora e mezza" → target time is **13:01** → round to **13:00** → check availability
 
 **Round to nearest natural slot**: if the computed time is odd (12:01, 12:47), round to the closest 15-minute or 30-minute slot (12:00, 12:45). Prefer 30-minute slots (12:00, 12:30, 13:00) unless the caller insists on a precise minute.
 
-**If the computed time falls outside service hours** (e.g. current time 15:00 + "tra un'ora" = 16:00 which is between lunch_end 14:30 and dinner_start 21:00): pass the computed time to "controlla_disponibilita" anyway — the backend will return "time_closed" and you can then propose the next available slot ("Mi dispiace, alle 16 non siamo aperti; il prossimo servizio è la cena alle 21. Vuole prenotare per stasera?").
+**If the computed time falls outside service hours** (e.g. current time 15:00 + "tra un'ora" = 16:00 which is between lunch_end 14:30 and dinner_start 21:00): pass the computed time to \`controlla_disponibilita\` anyway — the backend will return \`time_closed\` and you can then propose the next available slot ("Mi dispiace, alle 16 non siamo aperti; il prossimo servizio è la cena alle 21. Vuole prenotare per stasera?").
 
 **Ambiguous expressions** ("tra un po'", "presto", "più tardi", "tra un attimo"): ASK for a precise time — do not guess.
 
@@ -2135,9 +2135,15 @@ Non prendere prenotazioni.`;
     const todayHuman = `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
     const todayIso   = DateManager.toISO(now);
     // v8.2.3 ADD: current time HH:MM in Europe/Rome per temporal shortcuts ("tra mezz'ora", "tra un'ora")
+    // v8.2.3.1 FIX (2026-09-16 real-call test): DateManager.getNow() applica un
+    // offset Rome interno — se lo passo a Intl.DateTimeFormat con timeZone Rome,
+    // ottengo DOUBLE SHIFT (+2h extra → modello vedeva 13:39 invece di 11:39).
+    // Fix: uso new Date() puro (che è sempre UTC internamente), Intl.DateTimeFormat
+    // con timeZone Rome fa correttamente il SINGOLO shift UTC → Rome.
+    const nowUtcForClock = new Date();
     const currentTimeHHMM = new Intl.DateTimeFormat('it-IT', {
       hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Rome',
-    }).format(now);
+    }).format(nowUtcForClock);
     // v7.7.2: weeklySchedule rimossa. Il prompt v7.7.0 non contiene più
     // {{WEEKLY_SCHEDULE}} — il modello chiama controlla_disponibilita per
     // conoscere gli orari (backend Postgres, ~30ms).
