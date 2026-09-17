@@ -118,12 +118,15 @@ async function resolveEventIdFromNameDate(tenant, nome, data) {
   }
 
   // Solo nome, no data: chiedi data
+  const dateList = matches.map(m => m.data_iso).join(', ');
   return {
     ok: false,
     reason: 'date_required_for_disambiguation',
-    message: `Trovate ${reservations.length} prenotazioni a nome ${nome}. Specificare la data per cancellare quella corretta.`,
+    message: `MULTI-RESULT: trovate ${reservations.length} prenotazioni a nome ${nome}. RIPROVA IMMEDIATAMENTE cancella_prenotazione passando il parametro "data" con una di queste date ISO esatte: [${dateList}]. NON trasferire al ristorante — riprova la chiamata con "data" specificata. Esempio: cancella_prenotazione(data="${matches[0].data_iso}")`,
     matches,
     count: reservations.length,
+    date_disponibili: matches.map(m => m.data_iso),
+    retry_instruction: `Chiama di nuovo cancella_prenotazione con parametro data="YYYY-MM-DD" usando una data della lista date_disponibili. NON trasferire.`,
   };
 }
 
