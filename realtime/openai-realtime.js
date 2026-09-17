@@ -973,11 +973,12 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'cancella_prenotazione',
-    description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamare SOLO dopo che il cliente ha già dato conferma esplicita (es. "sì confermo", "sì cancella", "esatto grazie"). NON chiedere al cliente di dire una parola specifica come conferma — accetta qualsiasi conferma affermativa naturale.',
+    description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamare SOLO dopo che il cliente ha già dato conferma esplicita (es. "sì confermo", "sì cancella", "esatto grazie"). NON chiedere al cliente di dire una parola specifica come conferma — accetta qualsiasi conferma affermativa naturale. Se trova_prenotazione ha restituito PIÙ prenotazioni per lo stesso nome (multi-result / needs_disambiguation), DEVI passare il parametro "data" con la data ISO YYYY-MM-DD della prenotazione scelta dal cliente per identificare quale cancellare.',
     parameters: {
       type: 'object',
       properties: {
         placeholder: { type: 'string', description: 'Campo tecnico ignorato dal sistema. Passa "confirmed".' },
+        data: { type: 'string', description: 'OPZIONALE — data della prenotazione in formato ISO YYYY-MM-DD (es. "2026-10-10"). OBBLIGATORIA quando trova_prenotazione ha restituito più prenotazioni per lo stesso nome: identifica quale delle prenotazioni multiple cancellare. Non passare in caso di singola prenotazione trovata.' },
       },
       required: ['placeholder'],
       additionalProperties: false,
@@ -1738,9 +1739,9 @@ Whenever trova_prenotazione returns MORE THAN ONE reservation for the same nome,
 
 3. **You MUST resolve the disambiguation to a specific ISO date** (e.g. "quella del 10 ottobre" → "2026-10-10"; "quella di sabato" → find which of the found dates is a Saturday).
 
-4. **In your cancella_prenotazione tool call, you MUST pass BOTH "nome" AND "data" parameters**. The "data" parameter is NOT optional in multi-result state — it is the ONLY way to identify the correct reservation. Example: "cancella_prenotazione(nome="Silvestri", data="2026-10-10")".
+4. **In your cancella_prenotazione tool call, you MUST pass the "data" parameter** with the ISO date (YYYY-MM-DD) of the reservation the caller chose. The "data" parameter IS now available in the tool schema explicitly for this purpose. Example: \`cancella_prenotazione(placeholder="confirmed", data="2026-10-10")\`.
 
-5. **NEVER call cancella_prenotazione with only "nome" ** when trova_prenotazione has returned multiple results — this will cancel the wrong reservation because the backend uses the first-found record (mapped[0]).
+5. **NEVER call cancella_prenotazione without "data"** when trova_prenotazione has returned multiple results — this will cause the wrong reservation to be cancelled. The tool schema now exposes "data" precisely to solve this — USE IT.
 
 **Why this rule is CRITICAL**: cancelling the wrong reservation is a real-world safety incident. The customer whose reservation was cancelled by mistake arrives at the restaurant and finds no table. The customer who wanted to cancel arrives at the restaurant unexpectedly. Both customers are angry, the restaurant loses face and potentially two clients in cascade. **This is worse than any UX inconvenience or verbosity issue** — never trade safety for brevity.
 
