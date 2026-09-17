@@ -973,14 +973,13 @@ const FUNCTIONS = [
   {
     type: 'function',
     name: 'cancella_prenotazione',
-    description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamare SOLO dopo che il cliente ha già dato conferma esplicita (es. "sì confermo", "sì cancella", "esatto grazie"). NON chiedere al cliente di dire una parola specifica come conferma — accetta qualsiasi conferma affermativa naturale. Se trova_prenotazione ha restituito PIÙ prenotazioni per lo stesso nome (multi-result / needs_disambiguation), DEVI passare il parametro "data" con la data ISO YYYY-MM-DD della prenotazione scelta dal cliente per identificare quale cancellare.',
+    description: 'Cancella la prenotazione trovata con trova_prenotazione. Chiamare SOLO dopo che il cliente ha già dato conferma esplicita. IMPORTANTE: se trova_prenotazione ha restituito PIÙ prenotazioni (needs_disambiguation=true), DEVI passare il parametro "data" con la data ISO YYYY-MM-DD della prenotazione scelta dal cliente — altrimenti la cancellazione fallirà con errore date_required_for_disambiguation. Se trova_prenotazione ha restituito UNA sola prenotazione, chiama senza parametri.',
     parameters: {
       type: 'object',
       properties: {
-        placeholder: { type: 'string', description: 'Campo tecnico ignorato dal sistema. Passa "confirmed".' },
-        data: { type: 'string', description: 'OPZIONALE — data della prenotazione in formato ISO YYYY-MM-DD (es. "2026-10-10"). OBBLIGATORIA quando trova_prenotazione ha restituito più prenotazioni per lo stesso nome: identifica quale delle prenotazioni multiple cancellare. Non passare in caso di singola prenotazione trovata.' },
+        data: { type: 'string', description: 'Data della prenotazione in formato ISO YYYY-MM-DD (es. "2026-10-10"). OBBLIGATORIA quando trova_prenotazione ha restituito multi-result (needs_disambiguation=true): copia il valore data_iso della prenotazione scelta dal cliente. OMETTERE quando trova_prenotazione ha restituito una sola prenotazione.' },
       },
-      required: ['placeholder'],
+      required: [],
       additionalProperties: false,
     },
   },
@@ -1742,6 +1741,67 @@ Whenever trova_prenotazione returns MORE THAN ONE reservation for the same nome,
 4. **In your cancella_prenotazione tool call, you MUST pass the "data" parameter** with the ISO date (YYYY-MM-DD) of the reservation the caller chose. The "data" parameter IS now available in the tool schema explicitly for this purpose. Example: \`cancella_prenotazione(placeholder="confirmed", data="2026-10-10")\`.
 
 5. **NEVER call cancella_prenotazione without "data"** when trova_prenotazione has returned multiple results — this will cause the wrong reservation to be cancelled. The tool schema now exposes "data" precisely to solve this — USE IT.
+
+<!-- v8.2.3.3 ADD: CONCRETE turn-by-turn example (approach that worked for B07 v8.2.1) -->
+
+### 🎯 CONCRETE EXAMPLE — Multi-result cancel (Silvestri pattern)
+
+**Setup**: caller wants to cancel a reservation. There are 2 Silvestri bookings (10 Oct and 11 Oct).
+
+**Turn 1** — Caller: "Vorrei cancellare la prenotazione a nome Silvestri"
+
+**You call**: \`trova_prenotazione(nome="Silvestri")\`
+
+**Tool returns** (multi-result state activated):
+\`\`\`
+{
+  "trovata": true,
+  "count": 2,
+  "needs_disambiguation": true,
+  "prenotazioni": [
+    { "data_iso": "2026-10-10", "data_naturale": "sabato 10 ottobre", "ora_short": "21:00", ... },
+    { "data_iso": "2026-10-11", "data_naturale": "domenica 11 ottobre", "ora_short": "21:00", ... }
+  ]
+}
+\`\`\`
+
+**You say**: "Ho trovato due prenotazioni a nome Silvestri: sabato 10 ottobre alle 21 per 2 persone, e domenica 11 ottobre alle 21 per 3 persone. Quale desidera cancellare?"
+
+**Turn 2** — Caller: "Quella del 10 ottobre"
+
+✅ **CORRECT next action** (mandatory):
+- Look at the "prenotazioni" array from the previous tool result
+- Find the one matching "10 ottobre" → its \`data_iso\` is \`"2026-10-10"\`
+- Call: \`cancella_prenotazione(data="2026-10-10")\` ← DATA MUST BE PASSED, from the data_iso field
+- Do NOT pass "nome" (not in schema, ignored)
+- Do NOT trasferisci_al_ristorante
+- Do NOT ask "confermi?" first — the caller already chose
+
+**Tool returns**: \`{ "cancellata": true }\`
+
+**You say**: "Prenotazione del 10 ottobre cancellata. A presto!"
+
+---
+
+❌ **FORBIDDEN behaviors** (DO NOT DO):
+- ❌ \`cancella_prenotazione(nome="Silvestri")\` without data → error "date_required_for_disambiguation"
+- ❌ \`cancella_prenotazione(placeholder="confirmed")\` without data → same error
+- ❌ \`trasferisci_al_ristorante(...)\` before trying cancel with data → transfers unnecessarily, poor UX
+- ❌ Asking "confermi la cancellazione della 10 ottobre?" and then transferring instead of just cancelling → caller already chose, just cancel
+
+---
+
+### 🎯 What to do if tool returns "date_required_for_disambiguation"
+
+If somehow you called \`cancella_prenotazione\` without \`data\` in multi-result state and got back:
+\`\`\`
+{ "cancellata": false, "reason": "date_required_for_disambiguation", "date_disponibili": ["2026-10-10", "2026-10-11"] }
+\`\`\`
+
+**IMMEDIATELY RETRY** the same tool call adding \`data\` from the caller's choice. Do NOT transfer to restaurant. Do NOT apologize. Just retry:
+- Look at the caller's most recent choice ("quella del 10 ottobre" → \`"2026-10-10"\`)
+- Call \`cancella_prenotazione(data="2026-10-10")\` again
+- If successful, confirm the cancellation to the caller
 
 **Why this rule is CRITICAL**: cancelling the wrong reservation is a real-world safety incident. The customer whose reservation was cancelled by mistake arrives at the restaurant and finds no table. The customer who wanted to cancel arrives at the restaurant unexpectedly. Both customers are angry, the restaurant loses face and potentially two clients in cascade. **This is worse than any UX inconvenience or verbosity issue** — never trade safety for brevity.
 
